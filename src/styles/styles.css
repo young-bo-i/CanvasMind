@@ -6,21 +6,21 @@
     font-display: swap;
     font-family: Montserrat;
     font-weight: 400;
-    src: url(//lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/common/font/Montserrat-Regular.20250416.subset.ttf)
+    src: url(/fonts/Montserrat-Regular.20250416.subset.ttf)
 }
 
 @font-face {
     font-display: swap;
     font-family: Montserrat;
     font-weight: 500;
-    src: url(//lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/common/font/Montserrat-Medium.20250416.subset.ttf)
+    src: url(/fonts/Montserrat-Medium.20250416.subset.ttf)
 }
 
 @font-face {
     font-display: swap;
     font-family: Montserrat;
     font-weight: 600;
-    src: url(//lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/common/font/Montserrat-SemiBold.20250416.subset.ttf)
+    src: url(/fonts/Montserrat-SemiBold.20250416.subset.ttf)
 }
 
 @font-face {
@@ -28,21 +28,21 @@
     font-family: Inter;
     font-style: "normal";
     font-weight: 600;
-    src: url(//lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/common/font/Inter-Regular.subset.ttf)
+    src: url(/fonts/Inter-Regular.subset.ttf)
 }
 
 @font-face {
     font-display: swap;
     font-family: Founder Yashi Black;
     font-weight: 400;
-    src: url(//lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/common/font/FZYASHJW-Regular.20251015.subset.ttf)
+    src: url(/fonts/FZYASHJW-Regular.20251015.subset.ttf)
 }
 
 @font-face {
     font-display: swap;
     font-family: Founder Yashi Black;
     font-weight: 600;
-    src: url(//lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/common/font/FZYASHJW-Demibold.20251015.subset.ttf)
+    src: url(/fonts/FZYASHJW-Demibold.20251015.subset.ttf)
 }
 
 :export {
