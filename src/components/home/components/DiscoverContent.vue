@@ -1,5 +1,9 @@
 <template>
   <div class="discover-masonry-viewport">
+    <!-- 空状态提示 -->
+    <div v-if="!feedItems.length" class="discover-empty">
+      <p class="discover-empty__text">{{ emptyText }}</p>
+    </div>
     <div
       class="masonry-layout-ynW6QL masonry-layout discover-masonry-shell"
       :style="{ height: `${scrollHeight}px` }"
@@ -9,8 +13,9 @@
         class="masonry-layout-scroll-content-clXJoF discover-masonry-track"
         :style="{ height: `${scrollHeight}px`, maxHeight: 'none' }"
       >
-      <!-- 顶部大卡：固定占位，占两列宽 -->
+      <!-- 顶部 banner 已移除（只展示用户作品瀑布流） -->
       <div
+        v-if="false"
         class="masonry-layout-item-J63wqA masonry-layout-item discover-masonry-hero"
         data-index="0"
         data-col="0"
@@ -98,7 +103,7 @@
       <!-- Feed：位置由图片 natural 尺寸换算高度 + 最短列堆叠 -->
       <div
         v-for="(item, index) in feedItems"
-        :key="item.src"
+        :key="item.id || item.src"
         class="masonry-layout-item-J63wqA masonry-layout-item"
         :data-index="index + 1"
         :style="feedTileStyle(index)"
@@ -114,7 +119,18 @@
           <div class="content-TIH4aR">
             <div class="container-bG3PQ9">
               <div style="transition:opacity 300ms;opacity:1">
+                <video
+                  v-if="item.isVideo"
+                  class="cover-W9HnBB discover-masonry-cover"
+                  :src="item.videoUrl"
+                  :poster="item.src || undefined"
+                  muted
+                  playsinline
+                  preload="metadata"
+                  @loadedmetadata="onFeedVideoLoad($event, index)"
+                ></video>
                 <img
+                  v-else
                   data-apm-action="feed-item-image"
                   elementtiming
                   :fetchpriority="index < 4 ? 'high' : 'low'"
@@ -126,6 +142,12 @@
                   @load="onFeedImgLoad($event, index)"
                   @error="onFeedImgError(index)"
                 >
+                <!-- 视频角标 -->
+                <span v-if="item.isVideo" class="discover-feed-video-badge" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M8 5v14l11-7L8 5Z" fill="currentColor"></path>
+                  </svg>
+                </span>
               </div>
             </div>
             <!-- 鼠标移入时显示的作品信息层 -->
@@ -189,11 +211,18 @@ import {
   masonryScrollHeight,
 } from '@/components/home/discoverMasonryLayout'
 import { listAssetItems } from '@/api/asset-items'
-import { AUTH_LOGIN_SUCCESS_EVENT } from '@/stores/auth'
+import { AUTH_LOGIN_SUCCESS_EVENT, useAuthStore } from '@/stores/auth'
 import { buildAssetUrl } from '@/api/http'
 import discoverContent from '@/data/homeDiscoverContent.json'
 
 const emit = defineEmits(['open-work-detail'])
+
+// filterType：all=全部 / image=仅图片 / video=仅视频（由 TabsSection 的当前 tab 决定）
+const props = defineProps({
+  filterType: { type: String, default: 'all' },
+})
+
+const authStore = useAuthStore()
 
 // 解析类似 9:16、2/3、1x1 的比例字符串，转换成布局可用的宽高比。
 const parseAspectRatioSize = (value) => {
@@ -221,30 +250,37 @@ const resolveLayoutSize = ({ width, height, aspectRatio }) => {
   return parseAspectRatioSize(aspectRatio)
 }
 
-const buildFeedItemFromAsset = (item) => ({
-  id: item.id,
-  src: buildAssetUrl(item.previewUrl || item.fileUrl),
-  alt: item.title || item.promptText || item.id,
-  promptText: item.promptText,
-  user: {
-    id: item.owner?.id || '',
-    name: item.owner?.name || '创作者',
-    avatarSrc: buildAssetUrl(item.owner?.avatarSrc || ''),
-  },
-  favoriteCount: item.favoriteCount || 0,
-  layoutSize: resolveLayoutSize({
-    width: item.width,
-    height: item.height,
-    aspectRatio: item.aspectRatio,
-  }),
-  detail: {
-    createDate: item.createdAt,
-    aiGeneratedText: '内容由 AI 生成',
-    promptTipLabel: '图片提示词',
-    modelLabel: item.modelLabel || '图片模型',
-    aspectRatioLabel: item.aspectRatio || '1:1',
-  },
-})
+const buildFeedItemFromAsset = (item) => {
+  const isVideo = item.assetType === 'video'
+  return {
+    id: item.id,
+    isVideo,
+    // 图片用预览图；视频优先用封面/缩略图作为海报，没有则用视频本身（由 <video> 渲染首帧）
+    src: buildAssetUrl(isVideo ? (item.coverUrl || item.thumbnailUrl || item.previewUrl || '') : (item.previewUrl || item.fileUrl)),
+    videoUrl: isVideo ? buildAssetUrl(item.fileUrl) : '',
+    createdAt: item.createdAt,
+    alt: item.title || item.promptText || item.id,
+    promptText: item.promptText,
+    user: {
+      id: item.owner?.id || '',
+      name: item.owner?.name || '创作者',
+      avatarSrc: buildAssetUrl(item.owner?.avatarSrc || ''),
+    },
+    favoriteCount: item.favoriteCount || 0,
+    layoutSize: resolveLayoutSize({
+      width: item.width,
+      height: item.height,
+      aspectRatio: item.aspectRatio,
+    }),
+    detail: {
+      createDate: item.createdAt,
+      aiGeneratedText: '内容由 AI 生成',
+      promptTipLabel: isVideo ? '视频提示词' : '图片提示词',
+      modelLabel: item.modelLabel || (isVideo ? '视频模型' : '图片模型'),
+      aspectRatioLabel: item.aspectRatio || '1:1',
+    },
+  }
+}
 
 const buildFallbackFeedItems = () => (
   discoverContent.feedItems.map((item) => ({
@@ -292,9 +328,14 @@ function formatFavoriteCount(count) {
   return String(count)
 }
 
-const feedItems = ref(
-  shuffleArray(buildFallbackFeedItems()),
-)
+const feedItems = ref([])
+
+// 空状态文案（按当前筛选类型）
+const emptyText = computed(() => {
+  if (props.filterType === 'image') return '还没有图片作品，去生成你的第一张图片吧～'
+  if (props.filterType === 'video') return '还没有视频作品，去生成你的第一个视频吧～'
+  return '还没有作品，去创作你的第一个作品吧～'
+})
 
 /** 每张图 natural 尺寸；未拿到真实尺寸时回退到接口/配置提供的比例提示 */
 const feedNaturalSizes = ref(
@@ -320,6 +361,14 @@ function onFeedImgLoad(ev, index) {
   if (!el || !el.naturalWidth || !el.naturalHeight) return
   const next = feedNaturalSizes.value.slice()
   next[index] = { w: el.naturalWidth, h: el.naturalHeight }
+  feedNaturalSizes.value = next
+}
+
+function onFeedVideoLoad(ev, index) {
+  const el = ev.target
+  if (!el || !el.videoWidth || !el.videoHeight) return
+  const next = feedNaturalSizes.value.slice()
+  next[index] = { w: el.videoWidth, h: el.videoHeight }
   feedNaturalSizes.value = next
 }
 
@@ -363,30 +412,49 @@ onMounted(() => {
   }
 })
 
+// 首页展示「当前登录用户」自己生成的图片 + 视频，按时间倒序。未登录则清空（区域由 home 隐藏）。
 const loadDiscoverFeedItems = async () => {
-  try {
-    const assets = await listAssetItems({
-      scope: 'feed',
-      assetType: 'image',
-      take: 80,
-    })
+  if (!authStore.isLoggedIn.value) {
+    feedItems.value = []
+    return
+  }
 
-    if (assets.length) {
-      feedItems.value = shuffleArray(assets.map(buildFeedItemFromAsset))
-      return
+  try {
+    // 按当前 tab 过滤类型加载。接口一次只返回一种类型，全部=图片/视频各拉一次合并。
+    let assets = []
+    if (props.filterType === 'image') {
+      assets = await listAssetItems({ scope: 'mine', assetType: 'image', take: 80 })
+    } else if (props.filterType === 'video') {
+      assets = await listAssetItems({ scope: 'mine', assetType: 'video', take: 80 })
+    } else {
+      const [images, videos] = await Promise.all([
+        listAssetItems({ scope: 'mine', assetType: 'image', take: 60 }),
+        listAssetItems({ scope: 'mine', assetType: 'video', take: 60 }),
+      ])
+      assets = [...images, ...videos]
     }
 
-    // 接口返回空数据时，仍保持首页图片的随机展示效果。
-    feedItems.value = shuffleArray(buildFallbackFeedItems())
+    feedItems.value = assets
+      .map(buildFeedItemFromAsset)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   } catch (error) {
-    console.warn('读取首页瀑布流失败，继续使用本地 JSON 数据。', error)
-    // 接口失败回退本地数据时，同样保持随机顺序，避免被固定顺序覆盖。
-    feedItems.value = shuffleArray(buildFallbackFeedItems())
+    console.warn('读取我的作品失败。', error)
+    feedItems.value = []
   }
 }
 
 onMounted(async () => {
   await loadDiscoverFeedItems()
+})
+
+// 登录态变化（登入/登出）时重新加载或清空。
+watch(() => authStore.isLoggedIn.value, () => {
+  void loadDiscoverFeedItems()
+})
+
+// 切换 全部/图片/视频 tab 时重新加载。
+watch(() => props.filterType, () => {
+  void loadDiscoverFeedItems()
 })
 
 onMounted(() => {
@@ -421,7 +489,11 @@ onBeforeUnmount(() => {
   }
 })
 
-const masonryMetrics = computed(() => computeMasonryMetrics(trackWidth.value))
+const masonryMetrics = computed(() => {
+  // 顶部 banner 已移除：把 heroRect 置零，让瀑布流从顶部铺满、不留空位。
+  const metrics = computeMasonryMetrics(trackWidth.value)
+  return { ...metrics, heroRect: { left: 0, top: 0, width: 0, height: 0 } }
+})
 
 const feedLayouts = computed(() =>
   buildFeedLayoutsFromSizes(feedDisplaySizes.value, masonryMetrics.value),
@@ -542,6 +614,37 @@ function openWorkDetailFromCarousel(item, index) {
 
 .discover-masonry-cover {
   object-fit: cover;
+}
+
+.discover-feed-video-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  pointer-events: none;
+}
+
+.discover-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  padding: 60px 16px;
+  text-align: center;
+}
+
+.discover-empty__text {
+  color: var(--text-tertiary, #6b7785);
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .cover-container-zfPgao {

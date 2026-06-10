@@ -72,26 +72,12 @@
       </div>
     </div>
 
-    <!-- Tabs Content -->
+    <!-- Tabs Content：单个瀑布流，按当前 tab（全部/图片/视频）过滤 -->
     <div class="lv-tabs-content lv-tabs-content-horizontal">
-      <div class="lv-tabs-content-inner" :style="{ marginLeft: contentMargin }">
-        <div
-          v-for="(tab, index) in tabs"
-          :key="index"
-          :class="['lv-tabs-content-item', { 'lv-tabs-content-item-active': activeTab === index }]"
-          role="tabpanel"
-          :tabindex="activeTab === index ? 0 : -1"
-          :id="`lv-tabs-0-panel-${index}`"
-          :aria-labelledby="`lv-tabs-0-tab-${index}`"
-          :aria-hidden="activeTab !== index"
-        >
+      <div class="lv-tabs-content-inner">
+        <div class="lv-tabs-content-item lv-tabs-content-item-active" role="tabpanel">
           <div data-apm-action="tab-pane" class="lv-tabs-pane">
-            <slot :name="`tab-${index}`" :tab="tab">
-              <!-- 默认内容 -->
-              <div v-if="index === 0">
-                <DiscoverContent @open-work-detail="$emit('open-work-detail', $event)" />
-              </div>
-            </slot>
+            <DiscoverContent :filter-type="activeFilterType" @open-work-detail="$emit('open-work-detail', $event)" />
           </div>
         </div>
       </div>
@@ -107,9 +93,9 @@ const props = defineProps({
   tabs: {
     type: Array,
     default: () => [
-      { label: '发现' },
-      { label: '短片' },
-      { label: '活动' }
+      { label: '全部' },
+      { label: '图片' },
+      { label: '视频' }
     ]
   }
 })
@@ -129,9 +115,8 @@ const inkStyle = computed(() => {
   }
 })
 
-const contentMargin = computed(() => {
-  return `${-activeTab.value * 100}%`
-})
+// 当前 tab → 内容过滤类型：全部 / 图片 / 视频
+const activeFilterType = computed(() => ['all', 'image', 'video'][activeTab.value] || 'all')
 
 const changeTab = (index) => {
   activeTab.value = index

@@ -9,8 +9,9 @@
               <HomeHeader/>
             </div>
 
-            <!-- Tabs 区域 -->
+            <!-- Tabs 区域（未登录隐藏） -->
             <TabsSection
+              v-if="isHomeFeedVisible"
               @tab-change="handleTabChange"
               @search="handleSearch"
               @open-work-detail="handleOpenWorkDetail"
@@ -54,6 +55,11 @@ import TabsSection from '@components/home/components/TabsSection.vue'
 const HomeDetailModalFrom = defineAsyncComponent(() => import('@components/home/components/HomeDetailModalFrom.vue'))
 import HomeFooter from '@components/home/components/HomeFooter.vue'
 import { applyAssetAction } from '@/api/asset-items'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+// 未登录时隐藏首页「我的作品」展示区
+const isHomeFeedVisible = computed(() => authStore.isLoggedIn.value)
 
 const handleTabChange = (index) => {
   console.log('Tab changed to:', index)

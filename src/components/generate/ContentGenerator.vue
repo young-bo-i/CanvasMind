@@ -1084,8 +1084,9 @@ onUnmounted(() => {
               <div class="reference-group-hover-trigger-YTDCQf"></div>
               <div class="reference-group-content-ztz9q2 expanded-hIAQK3">
                 <div v-for="(frame, idx) in videoKeyframeImages" :key="idx"
-                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx">
-                  <div class="reference-upload-h7tmnr light-Bis76t">
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx"
+                     :style="`--index-in-group:${idx};--rotate:8deg`">
+                  <div class="reference-upload-h7tmnr light-Bis76t" style="--rotate:-8deg">
                     <img :src="frame" :alt="`第${idx + 1}帧`" class="generator-reference-preview-image">
                     <button type="button" class="generator-reference-clear-btn" @click.stop="removeVideoKeyframe(idx)">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1096,8 +1097,9 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div v-if="videoKeyframeImages.length < VIDEO_KEYFRAME_LIMIT"
-                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoKeyframeImages.length">
-                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoKeyframePicker">
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoKeyframeImages.length"
+                     :style="`--index-in-group:${videoKeyframeImages.length};--rotate:8deg`">
+                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoKeyframePicker" style="--rotate:-8deg">
                     <svg class="icon-TrJRuq" fill="none" height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
                       <path clip-rule="evenodd" d="M10.8 20a1.2 1.2 0 0 0 2.4 0v-6.8H20a1.2 1.2 0 1 0 0-2.4h-6.8V4a1.2 1.2 0 0 0-2.4 0v6.8H4a1.2 1.2 0 0 0 0 2.4h6.8V20Z" fill="currentColor" fill-rule="evenodd"></path>
                     </svg>
@@ -1119,8 +1121,9 @@ onUnmounted(() => {
               <div class="reference-group-hover-trigger-YTDCQf"></div>
               <div class="reference-group-content-ztz9q2 expanded-hIAQK3">
                 <div v-for="(material, idx) in videoReferenceImages" :key="idx"
-                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx">
-                  <div class="reference-upload-h7tmnr light-Bis76t">
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx"
+                     :style="`--index-in-group:${idx};--rotate:8deg`">
+                  <div class="reference-upload-h7tmnr light-Bis76t" style="--rotate:-8deg">
                     <img :src="material" alt="参考素材" class="generator-reference-preview-image">
                     <button type="button" class="generator-reference-clear-btn" @click.stop="removeVideoReference(idx)">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1130,8 +1133,9 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div v-if="videoReferenceImages.length < VIDEO_REFERENCE_LIMIT"
-                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoReferenceImages.length">
-                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoReferencePicker">
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoReferenceImages.length"
+                     :style="`--index-in-group:${videoReferenceImages.length};--rotate:8deg`">
+                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoReferencePicker" style="--rotate:-8deg">
                     <svg class="icon-TrJRuq" fill="none" height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
                       <path clip-rule="evenodd" d="M10.8 20a1.2 1.2 0 0 0 2.4 0v-6.8H20a1.2 1.2 0 1 0 0-2.4h-6.8V4a1.2 1.2 0 0 0-2.4 0v6.8H4a1.2 1.2 0 0 0 0 2.4h6.8V20Z" fill="currentColor" fill-rule="evenodd"></path>
                     </svg>
