@@ -1,0 +1,54 @@
+name: 同步上游 CanvasMind
+
+# 把上游 xpnobug/CanvasMind 的 master 同步到本仓库的 upstream-sync 分支，
+# 并在有新提交时自动开一个 PR（upstream-sync -> master）供我们审阅合并。
+# master 始终是我们自己的改造分支，绝不被直接覆盖。
+on:
+  schedule:
+    - cron: '0 18 * * *'   # 每天 UTC 18:00（北京时间次日 02:00）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: 同步 upstream/master 并创建 PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出本仓库（全历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Git 身份
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 拉取上游并更新 upstream-sync 分支
+        run: |
+          git remote add upstream https://github.com/xpnobug/CanvasMind.git
+          git fetch upstream master
+          # upstream-sync 永远是上游 master 的镜像（强制对齐）。
+          git checkout -B upstream-sync upstream/master
+          git push origin upstream-sync --force
+
+      - name: 创建/更新同步 PR（upstream-sync -> master）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 统计 upstream-sync 相对 master 的领先提交数。
+          AHEAD=$(git rev-list --count origin/master..upstream-sync)
+          echo "upstream-sync 相对 master 领先 ${AHEAD} 个提交"
+          if [ "${AHEAD}" -gt 0 ]; then
+            gh pr create \
+              --base master \
+              --head upstream-sync \
+              --title "同步上游 CanvasMind 更新（${AHEAD} 个新提交）" \
+              --body "由 upstream-sync workflow 自动同步 upstream/master（xpnobug/CanvasMind）。\n\n请审阅与我们 master 改造的冲突后再合并。" \
+              || echo "PR 可能已存在，跳过创建。"
+          else
+            echo "无新提交，跳过创建 PR。"
+          fi

@@ -124,6 +124,13 @@ jobs:
             EOF
             
             ls -la
+
+            # 登录 GHCR 以拉取私有镜像。
+            # 若已把 GHCR 包设为 Public，可不配置 GHCR_PAT，此步会自动跳过。
+            if [ -n "${{ secrets.GHCR_PAT }}" ]; then
+              echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME || github.repository_owner }}" --password-stdin
+            fi
+
             # 清理历史遗留的同名容器，避免旧部署方式残留导致 compose 重建失败。
             docker rm -f canana-vue-app || true
             docker compose pull

@@ -1,7 +1,8 @@
 services:
   # 应用服务，同时承载前端与后端。
   app:
-    image: couei/canana-vue:latest
+    # 默认拉取本仓库 GHCR 镜像；可通过 APP_IMAGE 覆盖具体 tag。
+    image: ${APP_IMAGE:-ghcr.io/young-bo-i/canvasmind:latest}
     container_name: canana-vue-app
     restart: unless-stopped
     env_file:

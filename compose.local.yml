@@ -1,0 +1,72 @@
+# 本地开发 / 自测编排：MariaDB + Redis + 从本仓库源码构建的应用。
+# 用途：测试我们自己 master 分支上的改造（而不是拉远程镜像）。
+#
+# 用法：
+#   docker compose -f compose.local.yml --env-file .env.local up -d --build   # 构建并启动
+#   docker compose -f compose.local.yml --env-file .env.local logs -f app     # 看日志
+#   docker compose -f compose.local.yml --env-file .env.local down            # 停（保留数据）
+#   docker compose -f compose.local.yml --env-file .env.local down -v         # 停并清库
+#
+# 注：纯前端/后端热重载开发请直接用 `npm run dev`（前端 5010 / 后端 5409）。
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: canvasmind-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: canvasmind123
+      MARIADB_DATABASE: canana_mind
+    ports:
+      - "13306:3306"   # 宿主机 13306 可直连数据库排查
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: canvasmind-redis
+    restart: unless-stopped
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    # 从本地源码构建（测试我们自己的改造）。
+    build:
+      context: .
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_PROVIDER_DEFAULT_BASE_URL: "https://api.chatfire.site/v1"
+    image: canvasmind-local:dev
+    container_name: canvasmind-app
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./.env.local
+    ports:
+      - "5409:5409"
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:' + (process.env.SERVER_PORT || 5409) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  mariadb_data:
+  uploads_data:
