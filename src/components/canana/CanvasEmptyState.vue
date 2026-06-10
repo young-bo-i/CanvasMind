@@ -34,25 +34,25 @@ const loadAssets = async () => {
     mockAssets.value = [
       {
         id: '1',
-        url: 'https://p26-dreamina-sign.byteimg.com/tos-cn-i-tb4s082cfz/003c91f7f32947c6874aaab9d79778cb~tplv-tb4s082cfz-aigc_resize_mark:640:640.jpeg?lk3s=43402efa&x-expires=1769425200&x-signature=zaZPRco%2BPmSEZK3jJDy6tg9rM%2BA%3D&format=.jpeg',
+        url: '/placeholder.svg',
         type: 'image',
         name: '示例图片1'
       },
       {
         id: '2',
-        url: 'https://p26-dreamina-sign.byteimg.com/tos-cn-i-tb4s082cfz/003c91f7f32947c6874aaab9d79778cb~tplv-tb4s082cfz-aigc_resize_mark:640:640.jpeg?lk3s=43402efa&x-expires=1769425200&x-signature=zaZPRco%2BPmSEZK3jJDy6tg9rM%2BA%3D&format=.jpeg',
+        url: '/placeholder.svg',
         type: 'image',
         name: '示例图片2'
       },
       {
         id: '3',
-        url: 'https://p26-dreamina-sign.byteimg.com/tos-cn-i-tb4s082cfz/003c91f7f32947c6874aaab9d79778cb~tplv-tb4s082cfz-aigc_resize_mark:640:640.jpeg?lk3s=43402efa&x-expires=1769425200&x-signature=zaZPRco%2BPmSEZK3jJDy6tg9rM%2BA%3D&format=.jpeg',
+        url: '/placeholder.svg',
         type: 'image',
         name: '示例图片3'
       },
       {
         id: '4',
-        url: 'https://p26-dreamina-sign.byteimg.com/tos-cn-i-tb4s082cfz/003c91f7f32947c6874aaab9d79778cb~tplv-tb4s082cfz-aigc_resize_mark:640:640.jpeg?lk3s=43402efa&x-expires=1769425200&x-signature=zaZPRco%2BPmSEZK3jJDy6tg9rM%2BA%3D&format=.jpeg',
+        url: '/placeholder.svg',
         type: 'image',
         name: '示例图片4'
       }
@@ -88,7 +88,7 @@ const handleTabChange = (tabKey: string) => {
               <div class="section-_nkEz9">
                 <div class="section-icon-ki8oMA attach-file-HZXGRe">
                   <img
-                    src="https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/canvas-empty-creation-dark.42e6b1d1.png"
+                    src="/placeholder.svg"
                     alt="creation icon"
                     class="image-xfuWXV"
                   >
@@ -133,7 +133,7 @@ const handleTabChange = (tabKey: string) => {
               <div class="section-_nkEz9">
                 <div class="section-icon-ki8oMA agent-onJGaN">
                   <img
-                    src="https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/canvas-empty-agent-chat-dark.2dd77709.png"
+                    src="/placeholder.svg"
                     alt="agent chat icon"
                     class="image-xfuWXV"
                   >

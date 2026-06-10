@@ -114,10 +114,10 @@ const sendMessage = () => {
       summary: (content || '图片生成').slice(0, 10) + '...',
       collapsed: false,
       images: [
-        `https://picsum.photos/200/267?random=${Date.now()}`,
-        `https://picsum.photos/200/267?random=${Date.now() + 1}`,
-        `https://picsum.photos/200/267?random=${Date.now() + 2}`,
-        `https://picsum.photos/200/267?random=${Date.now() + 3}`,
+        `/placeholder.svg)}`,
+        `/placeholder.svg) + 1}`,
+        `/placeholder.svg) + 2}`,
+        `/placeholder.svg) + 3}`,
       ],
       totalCount: 4
     })
@@ -196,10 +196,10 @@ watch(() => props.initialMessage, (newMessage) => {
         summary: newMessage.slice(0, 10) + '...',
         collapsed: false,
         images: [
-          `https://picsum.photos/200/267?random=${Date.now()}`,
-          `https://picsum.photos/200/267?random=${Date.now() + 1}`,
-          `https://picsum.photos/200/267?random=${Date.now() + 2}`,
-          `https://picsum.photos/200/267?random=${Date.now() + 3}`,
+          `/placeholder.svg)}`,
+          `/placeholder.svg) + 1}`,
+          `/placeholder.svg) + 2}`,
+          `/placeholder.svg) + 3}`,
         ],
         totalCount: 4
       })

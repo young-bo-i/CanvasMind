@@ -502,8 +502,6 @@ MIT
 - [Element Plus 文档](https://element-plus.org/)
 - [Tailwind CSS 文档](https://tailwindcss.com/)
 - [Prisma 文档](https://www.prisma.io/docs)
-- [即梦AI](https://jimeng.jianying.com/) - 字节跳动AI创作平台
-- [Dreamina](https://www.capcut.com/ai-tool/platform) - 剪映AI创作工具
 ---
 
 **CanvasMind** - 让 AI 创作更简单 🎨✨

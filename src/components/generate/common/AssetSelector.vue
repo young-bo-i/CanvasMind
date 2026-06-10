@@ -47,7 +47,7 @@ const props = withDefaults(defineProps<Props>(), {
     { key: 'favorite', label: '收藏' }
   ],
   title: '资产选取',
-  emptyImage: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/empty-image-dark.6e788cae.png',
+  emptyImage: '/placeholder.svg',
   emptyText: '暂未找到相关内容'
 })
 

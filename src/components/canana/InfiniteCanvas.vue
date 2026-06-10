@@ -32,18 +32,18 @@ const images = ref([])
 
 // 模拟数据
 const mockImages = [
-  { id: 1, src: 'https://picsum.photos/seed/a1/1728/2304', w: 1728, h: 2304 },
-  { id: 2, src: 'https://picsum.photos/seed/a2/1728/2304', w: 1728, h: 2304 },
-  { id: 3, src: 'https://picsum.photos/seed/a3/1728/2304', w: 1728, h: 2304 },
-  { id: 4, src: 'https://picsum.photos/seed/a4/1728/2304', w: 1728, h: 2304 },
-  { id: 5, src: 'https://picsum.photos/seed/a5/1728/2304', w: 1728, h: 2304 },
-  { id: 6, src: 'https://picsum.photos/seed/a6/1728/2304', w: 1728, h: 2304 },
-  { id: 7, src: 'https://picsum.photos/seed/a7/1728/2304', w: 1728, h: 2304 },
-  { id: 8, src: 'https://picsum.photos/seed/a8/1728/2304', w: 1728, h: 2304 },
-  { id: 9, src: 'https://picsum.photos/seed/a9/1728/2304', w: 1728, h: 2304 },
-  { id: 10, src: 'https://picsum.photos/seed/a10/1728/2304', w: 1728, h: 2304 },
-  { id: 11, src: 'https://picsum.photos/seed/a11/1728/2304', w: 1728, h: 2304 },
-  { id: 12, src: 'https://picsum.photos/seed/a12/1728/2304', w: 1728, h: 2304 },
+  { id: 1, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 2, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 3, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 4, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 5, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 6, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 7, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 8, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 9, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 10, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 11, src: '/placeholder.svg', w: 1728, h: 2304 },
+  { id: 12, src: '/placeholder.svg', w: 1728, h: 2304 },
 ]
 
 let mockIndex = 0

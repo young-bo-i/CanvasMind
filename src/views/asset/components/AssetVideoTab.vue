@@ -72,7 +72,7 @@
         </div>
         <div class="video-cv8">
           <div class="empty-page-ij3">
-            <img src="https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/empty-image-dark.6e788cae.png" class="image-eyv">
+            <img src="/placeholder.svg" class="image-eyv">
             <div class="description-96w">暂无相关资产</div>
           </div>
         </div>

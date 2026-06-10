@@ -28,7 +28,7 @@ const imageModelOptions = [
     seedreamVersion: 'Seedream 4.5',
     isNew: true,
     description: '强化一致性、风格与图文响应',
-    thumbnail: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/model/4.5.webp'
+    thumbnail: '/placeholder.svg'
   },
   { 
     id: 'v4.1', 
@@ -37,7 +37,7 @@ const imageModelOptions = [
     seedreamVersion: 'Seedream 4.0 Design',
     isNew: true,
     description: '更专业的创意、美学和一致性保持',
-    thumbnail: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/model/4.1.webp'
+    thumbnail: '/placeholder.svg'
   },
   { 
     id: 'v4.0', 
@@ -46,7 +46,7 @@ const imageModelOptions = [
     seedreamVersion: 'Seedream 4.0',
     isNew: false,
     description: '支持多参考图、系列组图生成',
-    thumbnail: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/model/4.0.webp'
+    thumbnail: '/placeholder.svg'
   },
   { 
     id: 'v3.1', 
@@ -55,7 +55,7 @@ const imageModelOptions = [
     seedreamVersion: 'Seedream 3.1',
     isNew: false,
     description: '丰富的美学多样性，画面更鲜明生动',
-    thumbnail: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/model/3.1.webp'
+    thumbnail: '/placeholder.svg'
   },
   { 
     id: 'v3.0', 
@@ -64,7 +64,7 @@ const imageModelOptions = [
     seedreamVersion: 'Seedream 3.0',
     isNew: false,
     description: '影视质感，文字更准，直出2k高清图',
-    thumbnail: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/model/3.0.webp'
+    thumbnail: '/placeholder.svg'
   },
   { 
     id: 'v2.0-pro', 
@@ -74,7 +74,7 @@ const imageModelOptions = [
     seedreamVersion: 'Seedream 2.0 Pro',
     isNew: false,
     description: '极具想象力，擅长写真摄影',
-    thumbnail: 'https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/model/2.0.webp'
+    thumbnail: '/placeholder.svg'
   }
 ]
 const selectedImageModel = ref('v4.5')

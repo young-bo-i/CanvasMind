@@ -77,7 +77,7 @@
               </div>
               <div class="canvasCard-yoo cavasNewCard-xsi">
                 <div class="image-d9m">
-                  <div class="image-grw"><img src="https://p3-dreamina-sign.byteimg.com/tos-cn-i-tb4s082cfz/42b6674b5ee448c7a0a0381f024d0886~tplv-tb4s082cfz-resize:360:360.webp?lk3s=ad9f132c&x-expires=1800684352&x-signature=hdKXYk6L1fBOeSNVVjzcwnCjGC4%3D"></div>
+                  <div class="image-grw"><img src="/placeholder.svg"></div>
                   <div class="fa-9r8 hideFavorite-znw">
                     <svg width="16" height="16" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" fill="none" role="presentation" xmlns="http://www.w3.org/2000/svg">
                       <g>

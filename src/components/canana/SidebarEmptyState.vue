@@ -20,7 +20,7 @@ const handleUpload = () => {
         <div class="section-RHLADZ">
           <div class="section-icon-nU4hZM attach-file-zDAqLM">
             <img
-              src="https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/canvas-empty-creation-dark.42e6b1d1.png"
+              src="/placeholder.svg"
               alt="creation icon"
               class="image-UEhyr6"
             >
@@ -50,7 +50,7 @@ const handleUpload = () => {
         <div class="section-RHLADZ">
           <div class="section-icon-nU4hZM agent-SXIEyw">
             <img
-              src="https://lf3-lv-buz.vlabstatic.com/obj/image-lvweb-buz/ies/lvweb/dreamina_cn/static/image/canvas-empty-agent-chat-dark.2dd77709.png"
+              src="/placeholder.svg"
               alt="agent chat icon"
               class="image-UEhyr6"
             >
