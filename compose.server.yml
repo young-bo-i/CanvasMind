@@ -55,6 +55,12 @@ services:
       - "${APP_PORT:-5409}:5409"
     volumes:
       - uploads_data:/app/uploads
+    networks:
+      # default：内部网，app 借此访问 mariadb/redis
+      - default
+      # lobe_external：外部反代(lobe-caddy)所在网络，让 Caddy 能 reverse_proxy canvasmind-app:5409
+      # 写进 compose 后，每次 --force-recreate 都会自动接上，不用再手动 docker network connect
+      - lobe_external
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5409/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 30s
@@ -66,3 +72,10 @@ volumes:
   mariadb_data:
   redis_data:
   uploads_data:
+
+networks:
+  # 外部已存在的 lobe-caddy 网络（由 lobehub 那套 compose 创建）。
+  # 若你的 Caddy 网络名不同，改这里的 name 即可。
+  lobe_external:
+    external: true
+    name: lobehub_lobe-network
