@@ -36,8 +36,10 @@ echo "▶ 拉取最新镜像 ..."
 docker compose -f "$COMPOSE_FILE" pull
 
 # 3) 停旧容器、用新镜像起新容器（数据卷保留，不加 -v）
-echo "▶ 停止并重启容器 ..."
-docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+# 关键：--force-recreate —— :latest 的 tag 字符串不变时，普通 up -d 不会重建容器，
+# 会一直沿用旧镜像。强制重建确保真正换成刚 pull 的新镜像。
+echo "▶ 停止并重启容器（强制用新镜像重建）..."
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans
 
 # 4) 清理悬空旧镜像，释放磁盘
 echo "▶ 清理旧镜像 ..."
