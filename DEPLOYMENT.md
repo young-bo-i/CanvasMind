@@ -50,30 +50,46 @@ ghcr.io/young-bo-i/canvasmind:sha-<commit>
 
 > 注意：`VITE_*` 是**构建期**变量，改动需重新构建镜像才生效。
 
-## 线上部署
+## 线上部署（在自己的 Linux 服务器手动启动）
 
-### 方式 A：自动部署（`.github/workflows/deploy.yml`）
+CI 只负责**构建镜像**，部署由你在服务器上手动执行。
 
-镜像构建成功后自动 SSH 到服务器执行 `docker compose pull && up -d`。需在仓库 **Secrets** 配置：
-
-`SERVER_HOST`、`SERVER_USERNAME`、`SERVER_SSH_KEY`、`SERVER_PORT`（可选，默认 22）、`DEPLOY_PATH`、
-`DATABASE_URL`、`PROVIDER_CONFIG_SECRET`、`STORAGE_CONFIG_SECRET`、`CORS_ALLOWED_ORIGINS`、`VITE_API_BASE_URL`、
-`REDIS_ENABLED`、`REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE`。
-
-> 若 GHCR 包为 Private，另配 `GHCR_USERNAME` + `GHCR_PAT`（含 `read:packages` 的 PAT），部署脚本会自动登录。
-
-服务器上需要外部的 MySQL/MariaDB 与（可选）Redis —— 生产 `docker-compose.yml` 只起 app 容器，DB 走 `DATABASE_URL`。
-
-### 方式 B：服务器手动部署
+### 推荐：自包含一键起（app + MariaDB + Redis）
 
 ```bash
-# 服务器上准备 docker-compose.yml 与 .env（参考 .env.docker.example）
-docker login ghcr.io                # 若包为 Private
-docker compose pull
-docker compose up -d --force-recreate --remove-orphans
+# 服务器上任意目录
+mkdir -p /opt/canvasmind && cd /opt/canvasmind
+
+# 拉取编排与环境模板
+curl -fsSLO https://raw.githubusercontent.com/young-bo-i/CanvasMind/master/compose.server.yml
+curl -fsSL  https://raw.githubusercontent.com/young-bo-i/CanvasMind/master/.env.server.example -o .env
+
+# 改 .env：数据库密码、加密密钥(openssl rand -hex 32)、CORS 访问地址
+vi .env
+
+# 启动（包已 Public，无需 docker login）
+docker compose -f compose.server.yml up -d
+
+# 查看
+docker compose -f compose.server.yml ps
+docker compose -f compose.server.yml logs -f app
 ```
 
-镜像 tag 可用环境变量覆盖：`APP_IMAGE=ghcr.io/young-bo-i/canvasmind:v1.0.2 docker compose up -d`
+访问 `http://<服务器IP或域名>:5409`，首屏走"首次安装"设管理员（用户名 4–32 位、密码 8–64 位）。
+
+升级到最新镜像：
+
+```bash
+docker compose -f compose.server.yml pull && docker compose -f compose.server.yml up -d
+```
+
+固定版本：在 `.env` 把 `APP_IMAGE` 改成 `ghcr.io/young-bo-i/canvasmind:v1.0.2` 或 `:sha-xxxxxxx`。
+
+### 备选：已有外部 MySQL/Redis
+
+用仓库根目录的 `docker-compose.yml`（只起 app 容器），DB/Redis 走 `.env` 里的 `DATABASE_URL` / `REDIS_*` 指向你的外部服务。
+
+> 生产建议在前面再挂一层 Nginx/Caddy 反代做 HTTPS，把 5409 收到内网。
 
 ## 本地自测
 

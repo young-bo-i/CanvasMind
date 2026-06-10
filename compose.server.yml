@@ -1,0 +1,68 @@
+# 线上服务器自包含部署：app(GHCR 镜像) + MariaDB + Redis。
+# 镜像由 GitHub Actions 自动构建并推到 GHCR，这里只负责"在服务器上启动运行"。
+#
+# 服务器上用法：
+#   1) 准备目录，放入本文件与 .env（由 .env.server.example 复制后修改）
+#   2) docker compose -f compose.server.yml up -d
+#   3) 访问 http://<服务器IP或域名>:5409 ，首屏走"首次安装"设管理员
+#
+# 升级到最新镜像：
+#   docker compose -f compose.server.yml pull && docker compose -f compose.server.yml up -d
+#
+# 包已设为 Public，故无需 docker login 即可拉取。
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: canvasmind-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?需在 .env 设置 MYSQL_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-canana_mind}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: canvasmind-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/young-bo-i/canvasmind:latest}
+    container_name: canvasmind-app
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    ports:
+      - "${APP_PORT:-5409}:5409"
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5409/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  mariadb_data:
+  redis_data:
+  uploads_data:
