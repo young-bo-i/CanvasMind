@@ -97,7 +97,7 @@ const readAllowedOrigins = () => {
 // 读取前端运行时公开配置。
 const readRuntimeClientConfig = () => ({
   VITE_API_BASE_URL: String(process.env.VITE_API_BASE_URL || '').trim(),
-  VITE_PROVIDER_DEFAULT_BASE_URL: String(process.env.VITE_PROVIDER_DEFAULT_BASE_URL || 'https://api.chatfire.site/v1').trim(),
+  VITE_PROVIDER_DEFAULT_BASE_URL: String(process.env.VITE_PROVIDER_DEFAULT_BASE_URL || '').trim(),
 })
 
 const resolveRedisStartupSummary = () => {

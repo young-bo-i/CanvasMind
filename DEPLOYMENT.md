@@ -67,7 +67,7 @@ ghcr.io/young-bo-i/canvasmind:sha-<commit>
 | 变量 | 说明 | 默认 |
 |---|---|---|
 | `VITE_API_BASE_URL` | 前端访问后端地址；**同域部署留空**走同源 | 空 |
-| `VITE_PROVIDER_DEFAULT_BASE_URL` | 默认上游厂商地址 | `https://api.chatfire.site/v1` |
+| `VITE_PROVIDER_DEFAULT_BASE_URL` | 默认上游厂商地址（构建期变量） | 留空（上游在后台 provider 配置） |
 
 > 注意：`VITE_*` 是**构建期**变量，改动需重新构建镜像才生效。
 

@@ -27,7 +27,7 @@ jobs:
       # 在仓库 Settings → Secrets and variables → Variables 配置：
       #   VITE_API_BASE_URL / VITE_PROVIDER_DEFAULT_BASE_URL
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-      VITE_PROVIDER_DEFAULT_BASE_URL: ${{ vars.VITE_PROVIDER_DEFAULT_BASE_URL || 'https://api.chatfire.site/v1' }}
+      VITE_PROVIDER_DEFAULT_BASE_URL: ${{ vars.VITE_PROVIDER_DEFAULT_BASE_URL || '' }}
 
     steps:
       - name: 检出代码

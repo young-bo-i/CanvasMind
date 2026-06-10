@@ -388,7 +388,7 @@ const goHome = async () => {
 }
 
 const openDocumentation = () => {
-  window.open('https://github.com/xpnobug/CanvasMind', '_blank', 'noopener,noreferrer')
+  window.open('https://github.com/young-bo-i/CanvasMind', '_blank', 'noopener,noreferrer')
 }
 
 const goDashboard = async () => {

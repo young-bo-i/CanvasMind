@@ -25,7 +25,7 @@ WORKDIR /app
 
 # 接收前端构建期变量。
 ARG VITE_API_BASE_URL=
-ARG VITE_PROVIDER_DEFAULT_BASE_URL=https://api.chatfire.site/v1
+ARG VITE_PROVIDER_DEFAULT_BASE_URL=
 
 # 将前端构建变量注入到 Vite 构建环境。
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
