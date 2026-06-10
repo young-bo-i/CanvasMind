@@ -1,0 +1,266 @@
+<template>
+  <div class="responsive-container-msS_cP responsive-container-NBoaUU">
+    <div class="content-DPogfx ai-generated-record-content-hg5EL8">
+      <div v-if="time" class="group-title">{{ time }}</div>
+      <div class="image-record">
+        <div class="record-header">
+          <RecordPromptReferenceHeader
+            :prompt="prompt"
+            :model="model"
+            :ratio="ratio"
+            :resolution="resolution"
+            :duration="duration"
+            :feature="feature"
+            :reference-images="referenceImages"
+          />
+        </div>
+        <div class="record-box-wrapper">
+          <!-- 错误状态 -->
+          <div v-if="error" class="image-error-container">
+            <div class="image-error-content">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>{{ error }}</span>
+            </div>
+          </div>
+          <!-- 已停止 -->
+          <div v-else-if="stopped" class="image-error-container">
+            <div class="image-error-content">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M8 8h8v8H8zM21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>已停止生成</span>
+            </div>
+          </div>
+          <!-- 生成完成：播放视频 -->
+          <div v-else-if="done && videos.length" class="image-record-content">
+            <div class="video-record-grid">
+              <div v-for="(url, i) in videos" :key="i" class="video-record-item">
+                <video :src="url" class="video-result-player" controls preload="metadata" playsinline></video>
+              </div>
+            </div>
+          </div>
+          <!-- 加载中 -->
+          <div v-else class="image-record-content">
+            <div class="video-record-grid">
+              <div class="video-record-item video-record-item--loading">
+                <div class="loading-container-VeCJoq">
+                  <div class="animation-wrapper">
+                    <video class="loading-animation" autoplay loop muted preload="auto" :src="loadingVideoUrl"></video>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="progress-badge-RuihdC progress-badge-RQDqWu">
+              {{ currentProgress }}% {{ currentProgressText || '造梦中' }}
+            </div>
+            <button class="stop-generate-button-canana" type="button" @click="$emit('stop')">
+              停止生成
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
+import loadingVideoUrl from '@/assets/animations/record-loading-animation.mp4'
+import RecordPromptReferenceHeader from './RecordPromptReferenceHeader.vue'
+
+const props = defineProps({
+  time: { type: String, default: '' },
+  prompt: { type: String, default: '' },
+  model: { type: String, default: '视频生成' },
+  ratio: { type: String, default: '16:9' },
+  resolution: { type: String, default: '720P' },
+  duration: { type: String, default: '' },
+  feature: { type: String, default: '' },
+  referenceImages: { type: Array as PropType<string[]>, default: () => [] },
+  progress: { type: Number, default: 0 },
+  progressText: { type: String, default: '' },
+  done: { type: Boolean, default: false },
+  stopped: { type: Boolean, default: false },
+  /** 生成的视频 URL 列表 */
+  videos: { type: Array as PropType<string[]>, default: () => [] },
+  error: { type: String, default: '' },
+})
+
+defineEmits(['stop'])
+
+const currentProgress = ref(props.progress)
+const currentProgressText = ref(props.progressText)
+let timer: ReturnType<typeof setInterval> | null = null
+
+// 当父级已经通过 SSE 提供明确进度时，不再使用本地假进度动画。
+const hasControlledProgress = () => Number(props.progress) > 0 || Boolean(String(props.progressText || '').trim())
+
+const startTimer = () => {
+  if (hasControlledProgress()) {
+    return
+  }
+  timer = setInterval(() => {
+    if (currentProgress.value < 99) {
+      const remaining = 99 - currentProgress.value
+      const step = Math.max(1, Math.floor(remaining * 0.05))
+      currentProgress.value = Math.min(99, currentProgress.value + step)
+    }
+  }, 1000)
+}
+
+const stopTimer = () => {
+  if (timer) { clearInterval(timer); timer = null }
+}
+
+watch(() => props.done, (val) => { if (val) stopTimer() })
+watch(() => props.error, (val) => { if (val) stopTimer() })
+watch(() => props.stopped, (val) => { if (val) stopTimer() })
+
+watch(() => props.progress, (val) => {
+  currentProgress.value = Number.isFinite(Number(val)) ? Number(val) : 0
+  if (hasControlledProgress()) {
+    stopTimer()
+  } else if (!props.done && !props.error && !props.stopped && !timer) {
+    startTimer()
+  }
+})
+
+watch(() => props.progressText, (val) => {
+  currentProgressText.value = val || ''
+  if (hasControlledProgress()) {
+    stopTimer()
+  } else if (!props.done && !props.error && !props.stopped && !timer) {
+    startTimer()
+  }
+})
+
+onMounted(() => {
+  if (!props.done && !props.error && !props.stopped) startTimer()
+})
+
+onUnmounted(() => {
+  stopTimer()
+})
+</script>
+
+<style scoped>
+@import "@/views/generate/components/generate-agent-record.css";
+
+.video-record-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.video-record-item {
+  position: relative;
+  width: 100%;
+  min-height: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-block-primary-default, rgba(204, 221, 255, .06));
+}
+
+.video-record-item--loading {
+  min-height: 260px;
+}
+
+.video-result-player {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  border-radius: 8px;
+  background: #000;
+}
+
+/* 加载动画覆盖层 */
+.loading-container-VeCJoq {
+  border-radius: 2px;
+  height: 100%;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.animation-wrapper {
+  background-color: var(--bg-mask-60);
+  height: 100%;
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.loading-animation {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 进度徽章 */
+.progress-badge-RuihdC {
+  align-items: center;
+  background: var(--bg-block-primary-default, rgba(204, 221, 255, .08));
+  border-radius: 6px;
+  color: var(--text-primary);
+  display: flex;
+  font-family: PingFang SC, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  padding: 2px 7px 2px 8px;
+}
+
+.image-record-content .progress-badge-RQDqWu {
+  left: 8px;
+  position: absolute;
+  top: 8px;
+}
+
+/* 错误状态 */
+.image-error-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 24px;
+}
+
+.image-error-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--functional-danger, #f53f3f);
+  font-size: 14px;
+}
+
+.stop-generate-button-canana {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  bottom: 16px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  height: 32px;
+  justify-content: center;
+  left: 50%;
+  padding: 0 14px;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+
+.stop-generate-button-canana:hover {
+  background: rgba(0, 0, 0, 0.58);
+}
+</style>

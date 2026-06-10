@@ -74,7 +74,7 @@ interface TaskLifecycleContext {
   resolveGenerationPointCost: (input: {
     providerId: string
     modelKey: string
-    endpointType: 'chat' | 'image'
+    endpointType: 'chat' | 'image' | 'video'
     capabilityFlags?: ModelCapabilityFlags | null
   }) => Promise<BillingDetail>
   consumeGenerationPoints: (input: {
@@ -82,7 +82,7 @@ interface TaskLifecycleContext {
     pointCost: number
     sourceId: string
     associationNo: string
-    endpointType: 'chat' | 'image'
+    endpointType: 'chat' | 'image' | 'video'
     providerId: string
     modelKey: string
     modelName: string
@@ -173,13 +173,17 @@ const resolveTaskBillingTarget = (
   const providerId = String((payload.requestBody || {}).providerId || '').trim()
   const modelKey = String(payload.modelKey || '').trim()
   const isImageTask = strategyKey === 'image'
+  const isVideoTask = strategyKey === 'video'
 
   if (!providerId) {
     throw new GenerationTaskRequestError(400, '未匹配到后台模型配置，请先在后台配置可用模型')
   }
 
   if (!modelKey) {
-    throw new GenerationTaskRequestError(400, isImageTask ? '缺少图片模型标识' : '缺少对话模型标识')
+    throw new GenerationTaskRequestError(
+      400,
+      isVideoTask ? '缺少视频模型标识' : isImageTask ? '缺少图片模型标识' : '缺少对话模型标识',
+    )
   }
 
   return {
@@ -385,6 +389,85 @@ export const startGenerationTask = async (
         strategyKey: strategy.key,
         skill: payload.skill,
         modelKey: payload.modelKey,
+      })
+      context.runTaskInBackground(task, payload)
+      return createdRecord
+    }
+
+    if (strategy.key === 'video') {
+      concurrencySlots = await context.acquireTaskConcurrencySlots({
+        userId: currentUserId,
+        providerId,
+        skillKey,
+      })
+
+      const billingDetail = await context.resolveGenerationPointCost({
+        providerId,
+        modelKey,
+        endpointType: 'video',
+      })
+      const associationNo = context.buildGatewayAssociationNo()
+      const pointLog = billingDetail.pointCost > 0
+        ? await context.consumeGenerationPoints({
+          userId: currentUserId,
+          pointCost: billingDetail.pointCost,
+          sourceId: associationNo,
+          associationNo,
+          endpointType: 'video',
+          providerId,
+          modelKey,
+          modelName: billingDetail.modelName,
+          metaJson: {
+            source: 'generation-task',
+            taskType: 'video',
+          },
+        })
+        : null
+
+      const createdRecord = await context.createGenerationRecord(buildInitialRecordPayload(payload), currentUserId)
+      await context.attachGenerationPointRecordId({
+        associationNo,
+        userId: currentUserId,
+        generationRecordId: createdRecord.id,
+      })
+      await context.completeIdempotencyKey(idempotencyKey, idempotencyClaim.token, {
+        recordId: createdRecord.id,
+      })
+
+      const task: RunningGenerationTask = {
+        recordId: createdRecord.id,
+        userId: currentUserId,
+        type: 'video',
+        strategyKey: strategy.key,
+        abortController: new AbortController(),
+        associationNo,
+        billedEndpointType: 'video',
+        billedPointCost: pointLog ? billingDetail.pointCost : 0,
+        billedProviderId: providerId,
+        billedModelKey: modelKey,
+        billedModelName: billingDetail.modelName,
+        refundCommitted: false,
+        concurrencySlots,
+      }
+
+      context.setLocalRunningTask(task)
+      await context.syncSharedTaskRuntime(task, 'queued', { skillKey })
+      context.emitTaskStreamEvent(createdRecord.id, {
+        type: 'progress',
+        recordId: createdRecord.id,
+        done: false,
+        stopped: false,
+        record: createdRecord,
+        stage: 'queued',
+        message: '视频任务已创建，等待服务端执行',
+      })
+      context.logGenerationTask('task_created', {
+        recordId: createdRecord.id,
+        userId: currentUserId,
+        type: payload.type,
+        strategyKey: strategy.key,
+        providerId,
+        modelKey,
       })
       context.runTaskInBackground(task, payload)
       return createdRecord

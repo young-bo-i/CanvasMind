@@ -115,10 +115,19 @@ const inputValue = ref('')
 const imageReferenceImages = ref<string[]>([])
 const videoFirstFrameImage = ref('')
 const videoLastFrameImage = ref('')
+// 视频「功能」（由 VideoToolbar 反应式同步）：omni-reference / first-last-frame / multi-frame
+const videoFeature = ref('omni-reference')
+// 全能参考：1–12 个参考素材；智能多帧：多关键帧
+const videoReferenceImages = ref<string[]>([])
+const videoKeyframeImages = ref<string[]>([])
 const imageReferenceInputRef = ref<HTMLInputElement | null>(null)
 const videoFirstFrameInputRef = ref<HTMLInputElement | null>(null)
 const videoLastFrameInputRef = ref<HTMLInputElement | null>(null)
+const videoReferenceInputRef = ref<HTMLInputElement | null>(null)
+const videoKeyframeInputRef = ref<HTMLInputElement | null>(null)
 const IMAGE_REFERENCE_LIMIT = 9
+const VIDEO_REFERENCE_LIMIT = 12
+const VIDEO_KEYFRAME_LIMIT = 8
 
 // 登录态与全局登录弹窗。
 const authStore = useAuthStore()
@@ -317,12 +326,21 @@ const handleSubmit = () => {
   } else if (currentType.value === 'video' && videoToolbarRef.value) {
     const toolbar = videoToolbarRef.value
     const sizeConfig = toolbar.getCurrentSizeConfig()
+    const feature = String(toolbar.currentFeature || videoFeature.value || 'omni-reference')
+    // 按功能收集参考素材：首尾帧=[首帧,尾帧]；智能多帧=关键帧列表；全能参考=参考素材列表
+    const videoReferences = feature === 'first-last-frame'
+      ? [videoFirstFrameImage.value, videoLastFrameImage.value].filter(Boolean)
+      : feature === 'multi-frame'
+        ? [...videoKeyframeImages.value]
+        : [...videoReferenceImages.value]
     emit('send', message, currentType.value, {
       model: toolbar.getCurrentModelLabel(),
+      modelKey: toolbar.currentModelVersion || '',
       ratio: toolbar.currentSize,
       resolution: sizeConfig.quality,
       duration: toolbar.currentDuration,
-      feature: toolbar.currentFeature
+      feature,
+      referenceImages: videoReferences,
     })
   } else if (currentType.value === 'agent') {
     const toolbar = agentToolbarExpandRef.value || agentToolbarRef.value
@@ -354,6 +372,8 @@ const applyDraft = async (payload: GeneratorDraftPayload) => {
   expand()
 
   inputValue.value = String(payload.prompt || '')
+  videoReferenceImages.value = []
+  videoKeyframeImages.value = []
 
   if (nextType === 'image' || nextType === 'agent') {
     imageReferenceImages.value = Array.isArray(payload.referenceImages)
@@ -444,6 +464,12 @@ const placeholder = computed(() => {
     case 'image':
       return '请描述你想生成的图片'
     case 'video':
+      if (videoFeature.value === 'omni-reference') {
+        return '上传1–12个参考素材、输入文字，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @视频1 的动作，音色参考 @音频1。'
+      }
+      if (videoFeature.value === 'multi-frame') {
+        return '请添加智能多帧的镜头'
+      }
       return '输入文字，描述你想创作的画面内容、运动方式等。例如：一个3D形象的小男孩，在公园滑滑板。'
     case 'digital-human':
       return '请描述数字人内容'
@@ -531,6 +557,12 @@ const collapsedReferenceRecordText = computed(() => {
   }
 
   if (currentType.value === 'video') {
+    if (videoFeature.value === 'omni-reference' && videoReferenceImages.value.length) {
+      return `参考素材 ${videoReferenceImages.value.length} 个`
+    }
+    if (videoFeature.value === 'multi-frame' && videoKeyframeImages.value.length) {
+      return `关键帧 ${videoKeyframeImages.value.length} 个`
+    }
     const parts: string[] = []
     if (videoFirstFrameImage.value) {
       parts.push('首帧')
@@ -713,6 +745,8 @@ const clearCollapsedReferences = () => {
   if (currentType.value === 'video') {
     videoFirstFrameImage.value = ''
     videoLastFrameImage.value = ''
+    videoReferenceImages.value = []
+    videoKeyframeImages.value = []
   }
 }
 
@@ -726,6 +760,36 @@ const openVideoFirstFramePicker = () => {
 
 const openVideoLastFramePicker = () => {
   videoLastFrameInputRef.value?.click()
+}
+
+// 全能参考：多素材上传（最多 12）
+const openVideoReferencePicker = () => {
+  videoReferenceInputRef.value?.click()
+}
+
+const handleVideoReferenceChange = async (event: Event) => {
+  const imageDataList = await resolveSelectedImageDataList(event)
+  if (!imageDataList.length) return
+  videoReferenceImages.value = [...videoReferenceImages.value, ...imageDataList].slice(0, VIDEO_REFERENCE_LIMIT)
+}
+
+const removeVideoReference = (index: number) => {
+  videoReferenceImages.value = videoReferenceImages.value.filter((_, currentIndex) => currentIndex !== index)
+}
+
+// 智能多帧：多关键帧上传
+const openVideoKeyframePicker = () => {
+  videoKeyframeInputRef.value?.click()
+}
+
+const handleVideoKeyframeChange = async (event: Event) => {
+  const imageDataList = await resolveSelectedImageDataList(event)
+  if (!imageDataList.length) return
+  videoKeyframeImages.value = [...videoKeyframeImages.value, ...imageDataList].slice(0, VIDEO_KEYFRAME_LIMIT)
+}
+
+const removeVideoKeyframe = (index: number) => {
+  videoKeyframeImages.value = videoKeyframeImages.value.filter((_, currentIndex) => currentIndex !== index)
 }
 
 // ========== 调整大小手柄逻辑 ==========
@@ -900,8 +964,10 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 视频模式：首尾帧上传 -->
+        <!-- 视频模式：按功能切换上传区 -->
         <div v-else-if="currentType === 'video'" :class="['references-vWIzeo', { 'collapsed-_VpN2b': isCollapsed && !isSidebar }]">
+          <!-- 首尾帧 -->
+          <template v-if="videoFeature === 'first-last-frame'">
           <!-- 首帧上传 -->
           <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar }]"
                style="--reference-count:1;--reference-item-width:48px;--reference-item-gap:4px">
@@ -1008,6 +1074,76 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          </template>
+
+          <!-- 智能多帧 -->
+          <template v-else-if="videoFeature === 'multi-frame'">
+            <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar }]"
+                 :style="`--reference-count:${videoKeyframeImages.length + 1};--reference-item-width:48px;--reference-item-gap:4px`">
+              <div class="reference-group-background-f6pFpT"></div>
+              <div class="reference-group-hover-trigger-YTDCQf"></div>
+              <div class="reference-group-content-ztz9q2 expanded-hIAQK3">
+                <div v-for="(frame, idx) in videoKeyframeImages" :key="idx"
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx">
+                  <div class="reference-upload-h7tmnr light-Bis76t">
+                    <img :src="frame" :alt="`第${idx + 1}帧`" class="generator-reference-preview-image">
+                    <button type="button" class="generator-reference-clear-btn" @click.stop="removeVideoKeyframe(idx)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                      </svg>
+                    </button>
+                    <div class="label-O_5YLx">第{{ idx + 1 }}帧</div>
+                  </div>
+                </div>
+                <div v-if="videoKeyframeImages.length < VIDEO_KEYFRAME_LIMIT"
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoKeyframeImages.length">
+                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoKeyframePicker">
+                    <svg class="icon-TrJRuq" fill="none" height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
+                      <path clip-rule="evenodd" d="M10.8 20a1.2 1.2 0 0 0 2.4 0v-6.8H20a1.2 1.2 0 1 0 0-2.4h-6.8V4a1.2 1.2 0 0 0-2.4 0v6.8H4a1.2 1.2 0 0 0 0 2.4h6.8V20Z" fill="currentColor" fill-rule="evenodd"></path>
+                    </svg>
+                    <div class="label-O_5YLx">第{{ videoKeyframeImages.length + 1 }}帧</div>
+                    <input accept="image/jpeg,.jpeg,image/jpg,.jpg,image/png,.png,image/webp,.webp,image/bmp,.bmp"
+                           class="file-input sf-hidden" ref="videoKeyframeInputRef" type="file" multiple
+                           @change="handleVideoKeyframeChange">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 全能参考 -->
+          <template v-else>
+            <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar }]"
+                 :style="`--reference-count:${videoReferenceImages.length + 1};--reference-item-width:48px;--reference-item-gap:4px`">
+              <div class="reference-group-background-f6pFpT"></div>
+              <div class="reference-group-hover-trigger-YTDCQf"></div>
+              <div class="reference-group-content-ztz9q2 expanded-hIAQK3">
+                <div v-for="(material, idx) in videoReferenceImages" :key="idx"
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx">
+                  <div class="reference-upload-h7tmnr light-Bis76t">
+                    <img :src="material" alt="参考素材" class="generator-reference-preview-image">
+                    <button type="button" class="generator-reference-clear-btn" @click.stop="removeVideoReference(idx)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div v-if="videoReferenceImages.length < VIDEO_REFERENCE_LIMIT"
+                     class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoReferenceImages.length">
+                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoReferencePicker">
+                    <svg class="icon-TrJRuq" fill="none" height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
+                      <path clip-rule="evenodd" d="M10.8 20a1.2 1.2 0 0 0 2.4 0v-6.8H20a1.2 1.2 0 1 0 0-2.4h-6.8V4a1.2 1.2 0 0 0-2.4 0v6.8H4a1.2 1.2 0 0 0 0 2.4h6.8V20Z" fill="currentColor" fill-rule="evenodd"></path>
+                    </svg>
+                    <div class="label-O_5YLx">参考内容</div>
+                    <input accept="image/jpeg,.jpeg,image/jpg,.jpg,image/png,.png,image/webp,.webp,image/bmp,.bmp"
+                           class="file-input sf-hidden" ref="videoReferenceInputRef" type="file" multiple
+                           @change="handleVideoReferenceChange">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
 
         <!-- 主内容区域 -->
@@ -1219,7 +1355,7 @@ onUnmounted(() => {
               <ImageToolbar v-else-if="currentType === 'image'" ref="imageToolbarRef" :placement="popupPlacement" :icon-only="isSidebar" />
 
               <!-- 视频生成工具栏 -->
-              <VideoToolbar v-else-if="currentType === 'video'" ref="videoToolbarRef" :placement="popupPlacement" :icon-only="isSidebar" />
+              <VideoToolbar v-else-if="currentType === 'video'" ref="videoToolbarRef" :placement="popupPlacement" :icon-only="isSidebar" @feature-change="videoFeature = $event" />
 
               <!-- 数字人/动作模仿工具栏 -->
               <DigitalHumanToolbar v-else :placement="popupPlacement" :icon-only="isSidebar" />

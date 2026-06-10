@@ -1,7 +1,7 @@
 import { getGenerationRecordById, createGenerationRecord, updateGenerationRecord } from '../generation-records/service'
 import type { GenerationRecordPayload } from '../generation-records/shared'
 import type { GenerationTaskStartPayload, GenerationTaskStreamEvent } from './shared'
-import { resolveGatewayProviderUpstream } from '../provider-config/service'
+import { resolveGatewayProviderUpstream, resolveVideoProviderUpstream } from '../provider-config/service'
 import { resolveImageModelMaxImagesPerRequest } from '../provider-config/model-service'
 import {
   attachGenerationPointRecordId,
@@ -55,6 +55,7 @@ import {
 import { GenerationTaskRequestError } from './shared'
 import { getGenerationTaskExecutionStrategy, type TaskAbortReason } from './execution-strategies'
 import { executeImageTask } from './image-task-executor'
+import { executeVideoTask } from './video-task-executor'
 import { executeAgentChatTaskFlow } from './agent-chat-task-executor'
 import { executeAgentWorkspaceTaskFlow } from './agent-workspace-task-executor'
 import { executeResearchTaskFlow } from '../research/executor'
@@ -85,6 +86,7 @@ import {
 } from './task-runtime-governor'
 import {
   fetchWithBurstRateRetry,
+  sleepWithAbortSignal,
   extractChatTextFromNonStreamResponse,
   extractChatTextFromJsonPayload,
   extractChatReasoningFromJsonPayload,
@@ -164,6 +166,7 @@ const buildGatewayAssociationNo = () => {
 // 统一构造任务执行策略上下文，先把停止/失败收口逻辑从中心 service 中迁出。
 const buildTaskExecutionStrategyContext = () => ({
   executeImageGenerationTask,
+  executeVideoGenerationTask,
   executeAgentChatTask,
   executeAgentWorkspaceTask,
   executeResearchReportTask,
@@ -214,6 +217,53 @@ const executeImageGenerationTask = async (task: RunningGenerationTask, payload: 
         logGenerationTask,
       }),
     }),
+    buildInitialRecordPayload,
+    updateGenerationRecord,
+    getGenerationRecordById,
+    emitTaskStreamEvent: (recordId, event) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
+    logGenerationTask,
+  })
+}
+
+// 统一的视频上游 JSON 请求（带 Bearer、外部 signal 转发、JSON 解析）。
+const fetchVideoUpstreamJson = async (input: {
+  url: string
+  method: 'GET' | 'POST'
+  apiKey?: string
+  body?: Record<string, unknown>
+  signal: AbortSignal
+}) => {
+  const headers: Record<string, string> = {}
+  if (input.apiKey) {
+    headers.Authorization = `Bearer ${input.apiKey}`
+  }
+  if (input.method === 'POST') {
+    headers['Content-Type'] = 'application/json'
+  }
+  const response = await fetch(input.url, {
+    method: input.method,
+    headers,
+    body: input.method === 'POST' && input.body ? JSON.stringify(input.body) : undefined,
+    signal: input.signal,
+  })
+  const rawText = await response.text().catch(() => '')
+  let data: any = null
+  try {
+    data = rawText ? JSON.parse(rawText) : null
+  } catch {
+    data = null
+  }
+  return { status: response.status, ok: response.ok, data, rawText }
+}
+
+const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: GenerationTaskStartPayload) => {
+  await executeVideoTask(task, payload, {
+    syncSharedTaskRuntime,
+    ensureTaskNotAborted: (runningTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
+    emitTaskProgressEvent: (recordId, input) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
+    sleepWithAbortSignal,
+    resolveVideoProviderUpstream,
+    fetchUpstreamJson: fetchVideoUpstreamJson,
     buildInitialRecordPayload,
     updateGenerationRecord,
     getGenerationRecordById,

@@ -76,6 +76,8 @@ export interface AdminProviderPayload {
   supportedTypes?: string[]
   isEnabled?: boolean
   sortOrder?: number
+  // 厂商扩展配置（含视频协议标记与自定义异步视频字段）。
+  extraJson?: Record<string, unknown> | null
 }
 
 const getLegacyDefaultConfigRecord = () => prisma.aiProviderConfig.findFirst({
@@ -114,6 +116,20 @@ const normalizeSupportedTypes = (input?: string[]) => {
   return Array.from(new Set(normalizedValues.length ? normalizedValues : DEFAULT_SUPPORTED_TYPES))
 }
 
+// 归一化厂商扩展配置：保留 JSON 对象，校验视频协议取值。空对象视为无扩展。
+const normalizeProviderExtraJson = (input: unknown): Record<string, unknown> => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {}
+  }
+  const source = input as Record<string, unknown>
+  const result: Record<string, unknown> = { ...source }
+  const protocol = String(source.videoProtocol || '').trim()
+  if (protocol) {
+    result.videoProtocol = protocol === 'chengmeng-async' ? 'chengmeng-async' : 'openai-async'
+  }
+  return result
+}
+
 const normalizeProviderPayload = (payload: AdminProviderPayload, options: { isCreate: boolean }) => {
   const code = normalizeCode(String(payload.code || ''))
   const name = String(payload.name || '').trim()
@@ -146,6 +162,7 @@ const normalizeProviderPayload = (payload: AdminProviderPayload, options: { isCr
     supportedTypes: normalizeSupportedTypes(payload.supportedTypes),
     isEnabled: payload.isEnabled !== false,
     sortOrder: Number.isFinite(Number(payload.sortOrder)) ? Number(payload.sortOrder) : 0,
+    extraJson: normalizeProviderExtraJson(payload.extraJson),
     isCreate: options.isCreate,
   }
 }
@@ -164,6 +181,7 @@ const buildProviderListItem = (provider: {
   videoEndpoint: string
   defaultChatModel: string | null
   supportedTypesJson: unknown
+  extraJson?: unknown
   isEnabled: boolean
   sortOrder: number
   createdAt: Date
@@ -196,6 +214,9 @@ const buildProviderListItem = (provider: {
     videoEndpoint: provider.videoEndpoint,
     defaultChatModel: provider.defaultChatModel || '',
     supportedTypes,
+    extraJson: (provider.extraJson && typeof provider.extraJson === 'object' && !Array.isArray(provider.extraJson))
+      ? provider.extraJson as Record<string, unknown>
+      : {},
     isEnabled: provider.isEnabled,
     sortOrder: provider.sortOrder,
     modelCount,
@@ -379,6 +400,7 @@ export const createAdminProvider = async (payload: AdminProviderPayload) => {
       videoEndpoint: normalizedPayload.videoEndpoint,
       defaultChatModel: normalizedPayload.defaultChatModel || null,
       supportedTypesJson: normalizedPayload.supportedTypes,
+      extraJson: normalizedPayload.extraJson as any,
       isEnabled: normalizedPayload.isEnabled,
       sortOrder: normalizedPayload.sortOrder,
       isBuiltIn: false,
@@ -429,6 +451,7 @@ export const updateAdminProvider = async (id: string, payload: AdminProviderPayl
       videoEndpoint: normalizedPayload.videoEndpoint,
       defaultChatModel: normalizedPayload.defaultChatModel || null,
       supportedTypesJson: normalizedPayload.supportedTypes,
+      extraJson: normalizedPayload.extraJson as any,
       isEnabled: normalizedPayload.isEnabled,
       sortOrder: normalizedPayload.sortOrder,
     },
@@ -625,6 +648,61 @@ export const resolveGatewayProviderUpstream = async (input: {
     apiKey: decryptProviderApiKey(provider.apiKeyEncrypted),
     endpoint,
     modelCapabilityJson,
+  }
+}
+
+// 解析视频厂商上游：返回 baseUrl/apiKey/videoEndpoint 以及 extraJson（含协议标记与自定义异步字段），
+// 供 video-task-executor 做 submit+poll 协议分支。
+export const resolveVideoProviderUpstream = async (input: {
+  providerId: string
+  modelKey: string
+}) => {
+  const providerId = String(input.providerId || '').trim()
+  const modelKey = String(input.modelKey || '').trim()
+
+  if (!providerId) {
+    throw new Error('缺少厂商 ID')
+  }
+
+  const provider = await prisma.aiProvider.findUnique({
+    where: { id: providerId },
+  })
+
+  if (!provider || !provider.isEnabled) {
+    throw new Error('厂商不可用或未启用')
+  }
+
+  let modelDefaultParams: Record<string, unknown> | null = null
+  if (modelKey) {
+    const model = await prisma.aiModel.findFirst({
+      where: {
+        providerId,
+        isEnabled: true,
+        modelKey,
+        category: 'VIDEO',
+      },
+      select: { id: true, defaultParamsJson: true },
+    })
+
+    if (!model) {
+      throw new Error('视频模型不存在或未启用')
+    }
+
+    modelDefaultParams = (model.defaultParamsJson && typeof model.defaultParamsJson === 'object' && !Array.isArray(model.defaultParamsJson))
+      ? model.defaultParamsJson as Record<string, unknown>
+      : null
+  }
+
+  const extraJson = (provider.extraJson && typeof provider.extraJson === 'object' && !Array.isArray(provider.extraJson))
+    ? provider.extraJson as Record<string, unknown>
+    : null
+
+  return {
+    baseUrl: provider.baseUrl,
+    apiKey: decryptProviderApiKey(provider.apiKeyEncrypted),
+    videoEndpoint: provider.videoEndpoint,
+    extraJson,
+    modelDefaultParams,
   }
 }
 

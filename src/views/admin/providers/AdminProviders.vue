@@ -222,6 +222,33 @@
             <input id="provider-video-endpoint" v-model.trim="providerForm.videoEndpoint" class="admin-input" type="text" placeholder="/videos">
           </div>
 
+          <div v-if="providerForm.supportedTypes.includes('VIDEO')" class="admin-form__field admin-form__field--full">
+            <label class="admin-form__label" for="provider-video-protocol">视频协议</label>
+            <select id="provider-video-protocol" v-model="videoExtraForm.videoProtocol" class="admin-input">
+              <option value="openai-async">OpenAI 兼容（默认：POST 视频端点 + 轮询 /:id）</option>
+              <option value="chengmeng-async">自定义：chengmeng 异步（POST /api/tasks + 轮询 /api/tasks/:taskNo）</option>
+            </select>
+          </div>
+
+          <template v-if="providerForm.supportedTypes.includes('VIDEO') && videoExtraForm.videoProtocol === 'chengmeng-async'">
+            <div class="admin-form__field">
+              <label class="admin-form__label" for="provider-video-submit-path">提交端点</label>
+              <input id="provider-video-submit-path" v-model.trim="videoExtraForm.submitPath" class="admin-input" type="text" placeholder="/api/tasks">
+            </div>
+            <div class="admin-form__field">
+              <label class="admin-form__label" for="provider-video-status-path">查询端点（:taskNo 占位）</label>
+              <input id="provider-video-status-path" v-model.trim="videoExtraForm.statusPath" class="admin-input" type="text" placeholder="/api/tasks/:taskNo">
+            </div>
+            <div class="admin-form__field">
+              <label class="admin-form__label" for="provider-video-group-id">group_id</label>
+              <input id="provider-video-group-id" v-model.trim="videoExtraForm.groupId" class="admin-input" type="text" placeholder="如 8">
+            </div>
+            <div class="admin-form__field">
+              <label class="admin-form__label" for="provider-video-size">尺寸 size</label>
+              <input id="provider-video-size" v-model.trim="videoExtraForm.size" class="admin-input" type="text" placeholder="large">
+            </div>
+          </template>
+
           <div class="admin-form__field">
             <label class="admin-form__label" for="provider-default-chat-model">默认对话模型</label>
             <input id="provider-default-chat-model" v-model.trim="providerForm.defaultChatModel" class="admin-input" type="text" placeholder="例如: gpt-4.1-mini">
@@ -555,6 +582,7 @@ import {
   type AdminProviderDetail,
   type AdminProviderItem,
   type AdminProviderPayload,
+  type ProviderVideoExtraConfig,
 } from '@/api/admin-providers'
 import {
   batchUpsertAdminProviderModels,
@@ -661,6 +689,28 @@ const providerForm = reactive<AdminProviderPayload>({
   sortOrder: 0,
 })
 
+// 视频协议扩展配置（存入厂商 extraJson）；与 providerForm 分开以避免 null 绑定。
+const buildDefaultVideoExtra = (): ProviderVideoExtraConfig => ({
+  videoProtocol: 'openai-async',
+  submitPath: '/api/tasks',
+  statusPath: '/api/tasks/:taskNo',
+  groupId: '',
+  size: 'large',
+})
+const videoExtraForm = reactive<ProviderVideoExtraConfig>(buildDefaultVideoExtra())
+
+const applyVideoExtraForm = (extra?: ProviderVideoExtraConfig | null) => {
+  const defaults = buildDefaultVideoExtra()
+  const source = extra && typeof extra === 'object' ? extra : {}
+  videoExtraForm.videoProtocol = source.videoProtocol === 'chengmeng-async' ? 'chengmeng-async' : 'openai-async'
+  videoExtraForm.submitPath = String(source.submitPath || defaults.submitPath)
+  videoExtraForm.statusPath = String(source.statusPath || defaults.statusPath)
+  videoExtraForm.groupId = String(source.groupId || '')
+  videoExtraForm.size = String(source.size || defaults.size)
+  videoExtraForm.pollIntervalMs = source.pollIntervalMs
+  videoExtraForm.pollTimeoutMs = source.pollTimeoutMs
+}
+
 const modelForm = reactive({
   category: 'CHAT' as AdminModelCategory,
   label: '',
@@ -752,6 +802,7 @@ const resetProviderForm = () => {
   providerForm.supportedTypes = ['CHAT']
   providerForm.isEnabled = true
   providerForm.sortOrder = 0
+  applyVideoExtraForm(null)
 }
 
 // 编辑厂商时统一把接口返回值灌入表单，避免字段遗漏。
@@ -770,6 +821,7 @@ const applyProviderForm = (provider: AdminProviderDetail) => {
   providerForm.supportedTypes = Array.isArray(provider.supportedTypes) ? [...provider.supportedTypes] : ['CHAT']
   providerForm.isEnabled = provider.isEnabled
   providerForm.sortOrder = provider.sortOrder
+  applyVideoExtraForm(provider.extraJson)
 }
 
 const stringifyJson = (value: Record<string, any> | null | undefined) => {
@@ -933,6 +985,7 @@ const buildProviderPayload = (): AdminProviderPayload => ({
   videoEndpoint: providerForm.videoEndpoint,
   defaultChatModel: providerForm.defaultChatModel,
   supportedTypes: providerForm.supportedTypes,
+  extraJson: { ...videoExtraForm },
   isEnabled: Boolean(providerForm.isEnabled),
   sortOrder: Number(providerForm.sortOrder) || 0,
 })

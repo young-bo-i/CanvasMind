@@ -141,7 +141,7 @@ export interface AgentWorkspaceModelPlanResult {
   rawTextPreview?: string
 }
 
-const sleepWithAbortSignal = async (signal: AbortSignal, durationMs: number) => {
+export const sleepWithAbortSignal = async (signal: AbortSignal, durationMs: number) => {
   if (durationMs <= 0) {
     return
   }

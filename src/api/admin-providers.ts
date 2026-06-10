@@ -1,6 +1,20 @@
 import { buildApiUrl } from './http'
 import { readApiData } from './response'
 
+// 厂商扩展配置：视频协议标记 + 自定义异步视频(chengmeng)字段。
+export interface ProviderVideoExtraConfig {
+  videoProtocol?: 'openai-async' | 'chengmeng-async'
+  submitPath?: string
+  statusPath?: string
+  groupId?: string
+  size?: string
+  pollIntervalMs?: number
+  pollTimeoutMs?: number
+  minDuration?: number
+  maxDuration?: number
+  [key: string]: unknown
+}
+
 export interface AdminProviderItem {
   id: string
   code: string
@@ -15,6 +29,7 @@ export interface AdminProviderItem {
   videoEndpoint: string
   defaultChatModel: string
   supportedTypes: string[]
+  extraJson?: ProviderVideoExtraConfig | null
   isEnabled: boolean
   sortOrder: number
   modelCount: number
@@ -41,6 +56,7 @@ export interface AdminProviderPayload {
   videoEndpoint: string
   defaultChatModel: string
   supportedTypes: string[]
+  extraJson?: ProviderVideoExtraConfig | null
   isEnabled: boolean
   sortOrder: number
 }

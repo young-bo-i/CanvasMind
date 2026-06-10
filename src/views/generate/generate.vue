@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import ContentGenerator from '../../components/generate/ContentGenerator.vue'
 import ImageLoadingRecord from '../../components/generate/common/ImageLoadingRecord.vue'
+import VideoLoadingRecord from '../../components/generate/common/VideoLoadingRecord.vue'
 import AgentLoadingRecord from '../../components/generate/common/AgentLoadingRecord.vue'
 import ImagePreview from '@/components/ImagePreview.vue'
 import { getAgentModel } from '@/api/agent'
@@ -104,6 +105,8 @@ interface GeneratingRecord {
   /** 思考结束时间戳（毫秒）。完成态时设置，用于 UI 显示固定耗时。 */
   thinkingEndedAt?: number
   images: string[]
+  /** 视频生成结果 URL 列表（来自 record.outputs 中 outputType==='video'）。 */
+  videos?: string[]
   done: boolean
   stopped?: boolean
   progressStage?: string
@@ -1733,6 +1736,10 @@ const syncRecordWithPersisted = (record: GeneratingRecord, saved: PersistedGener
       ? 100
       : Math.max(record.progressPercent || 0, mapTaskStageToProgressPercent(record.progressStage))
   record.images = Array.isArray(saved.images) ? [...saved.images] : []
+  // 视频结果走 outputs（outputType==='video'），而非 images。
+  record.videos = Array.isArray(saved.outputs)
+      ? saved.outputs.filter(output => output.outputType === 'video' && output.url).map(output => String(output.url))
+      : []
   if (Array.isArray(saved.referenceImages) && saved.referenceImages.length) {
     record.referenceImages = [...saved.referenceImages]
   } else if (!Array.isArray(record.referenceImages)) {
@@ -2597,13 +2604,13 @@ const handleSend = async (message: string, type: CreationType, options?: { model
     images: [],
     done: false,
     stopped: false,
-    progressStage: recordType === 'image' ? 'queued' : recordType === 'research' ? 'intake' : undefined,
-    progressMessage: recordType === 'image'
+    progressStage: recordType === 'image' || recordType === 'video' ? 'queued' : recordType === 'research' ? 'intake' : undefined,
+    progressMessage: recordType === 'image' || recordType === 'video'
         ? resolveTaskStageLabel('queued', '任务已创建，等待服务端执行')
         : recordType === 'research'
           ? resolveTaskStageLabel('intake', '研究任务已创建，等待服务端执行')
           : undefined,
-    progressPercent: recordType === 'image' ? 5 : recordType === 'research' ? 8 : 0,
+    progressPercent: recordType === 'image' || recordType === 'video' ? 5 : recordType === 'research' ? 8 : 0,
     error: '',
     agentRun: recordType === 'agent' && shouldUseAgentWorkspaceFlow(normalizedSkill)
         ? buildAgentPendingRun(
@@ -2646,6 +2653,8 @@ const handleSend = async (message: string, type: CreationType, options?: { model
   } else if (record.type === 'image') {
     // 一次对话内按用户设定的 count 生成 N 张图：单条 record 携带 N 个 GenerationOutput。
     void startImageGenerationTask(generatingRecords.value[0])
+  } else if (record.type === 'video') {
+    void startVideoGenerationTask(generatingRecords.value[0])
   }
 }
 
@@ -2878,6 +2887,59 @@ const startImageGenerationTask = async (record: GeneratingRecord) => {
     )
     record.progressPercent = 100
     record.error = formatGenerationError(error instanceof Error ? error.message : '', '图片生成失败')
+  }
+}
+
+// 视频生成同样提交到服务端异步任务（submit+poll），由后端按厂商协议执行并通过 SSE 回推进度。
+const startVideoGenerationTask = async (record: GeneratingRecord) => {
+  try {
+    const { providerId, modelKey: requestModelKey } = resolveGenerationTaskModel({
+      modelKey: record.modelKey,
+      category: 'VIDEO',
+      missingModelMessage: '未匹配到有效视频模型，请先检查后台模型配置',
+    })
+
+    const referenceImages = Array.isArray(record.referenceImages)
+      ? record.referenceImages.map(item => String(item || '').trim()).filter(Boolean)
+      : []
+
+    const saved = await createGenerationTask({
+      sessionId: record.sessionId,
+      source: 'generate',
+      type: 'video',
+      prompt: record.prompt,
+      model: record.model,
+      modelKey: requestModelKey,
+      ratio: record.ratio,
+      resolution: record.resolution,
+      duration: record.duration,
+      feature: record.feature,
+      skill: record.skill,
+      referenceImages,
+      requestBody: {
+        providerId,
+        model: requestModelKey,
+        prompt: record.prompt,
+        ratio: record.ratio,
+        resolution: record.resolution,
+        duration: record.duration,
+        feature: record.feature,
+        images: referenceImages,
+      },
+    })
+
+    syncRecordWithPersisted(record, saved)
+    connectGenerationTaskStream(record)
+  } catch (error: unknown) {
+    record.done = true
+    record.stopped = false
+    record.progressStage = 'failed'
+    record.progressMessage = resolveTaskStageLabel(
+        'failed',
+        formatGenerationError(error instanceof Error ? error.message : '', '视频生成失败'),
+    )
+    record.progressPercent = 100
+    record.error = formatGenerationError(error instanceof Error ? error.message : '', '视频生成失败')
   }
 }
 
@@ -3128,6 +3190,24 @@ onUnmounted(() => {
                     :thinking-content="record.thinkingContent || ''"
                     :thinking-started-at="record.thinkingStartedAt"
                     :thinking-ended-at="record.thinkingEndedAt"
+                />
+                <VideoLoadingRecord
+                    v-else-if="record.type === 'video'"
+                    :time="record.time"
+                    :prompt="record.prompt"
+                    :model="record.model"
+                    :ratio="record.ratio"
+                    :resolution="record.resolution"
+                    :duration="record.duration"
+                    :feature="record.feature"
+                    :reference-images="record.referenceImages || []"
+                    :progress="record.progressPercent || 0"
+                    :progress-text="record.progressMessage || ''"
+                    :done="record.done"
+                    :stopped="Boolean(record.stopped)"
+                    :videos="record.videos || []"
+                    :error="record.error ? formatGenerationError(record.error, '视频生成失败') : ''"
+                    @stop="handleStopImageGeneration(record)"
                 />
                 <ImageLoadingRecord
                     v-else

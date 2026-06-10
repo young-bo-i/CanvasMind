@@ -12,7 +12,7 @@ export type { GenerationTaskFailureCode } from '@/shared/generation-task-stream'
 export interface GenerationTaskStartPayload {
   sessionId?: string
   source?: string
-  type: 'image' | 'agent' | 'research'
+  type: 'image' | 'video' | 'agent' | 'research'
   requestMode?: 'image-generation' | 'image-edit'
   prompt: string
   model?: string
@@ -34,7 +34,7 @@ interface RequestOptions {
 export interface ResolvedGenerationTaskModelInput {
   modelKey?: string
   fallbackModelKey?: string
-  category: 'CHAT' | 'IMAGE'
+  category: 'CHAT' | 'IMAGE' | 'VIDEO'
   missingProviderMessage?: string
   missingModelMessage?: string
 }
