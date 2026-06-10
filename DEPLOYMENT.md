@@ -28,6 +28,27 @@ git checkout master && git merge upstream-sync   # 解决冲突后提交
 
 remote 约定：`origin` = 我们的 fork，`upstream` = xpnobug 原仓库。
 
+## 运维脚本（ops/）
+
+| 脚本 | 在哪运行 | 作用 |
+|---|---|---|
+| `ops/trigger-build.sh` | 本地/开发机 | 触发 GitHub 构建并推镜像到 GHCR |
+| `ops/server-update.sh` | 线上服务器 | 拉最新镜像 → 停旧起新 → 健康检查（不动数据） |
+
+```bash
+# 本地：触发打包（优先用 gh workflow_dispatch，不产生提交）
+bash ops/trigger-build.sh
+bash ops/trigger-build.sh --tag v1.0.3   # 打版本 tag 触发，产出 :v1.0.3
+bash ops/trigger-build.sh --push         # 没装/没登录 gh 时，用空提交触发
+
+# 服务器：更新到最新镜像并重启
+cd /opt/canvasmind && bash ops/server-update.sh
+# 或：DEPLOY_DIR=/opt/canvasmind bash ops/server-update.sh
+```
+
+> `trigger-build.sh` 默认走 GitHub CLI（`gh auth login` 一次即可），无 gh 时加 `--push`。
+> `server-update.sh` 若部署目录是 git 克隆会 `git pull`，否则只刷新 `compose.server.yml`；镜像本身通过 `docker compose pull` 更新。
+
 ## 镜像构建（CI）
 
 `.github/workflows/docker-image.yml`：push 到 `master` / 打 `v*` tag / 手动触发时，构建多架构镜像并推送到 **GHCR**：
