@@ -33,3 +33,5 @@ package-lock.json
 .kiro/
 .env.development
 .env.production
+.env
+.env.server
