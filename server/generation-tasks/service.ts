@@ -269,7 +269,7 @@ const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: 
   const videoContext = {
     syncSharedTaskRuntime,
     ensureTaskNotAborted: (runningTask: RunningGenerationTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
-    emitTaskProgressEvent: (recordId: string, input: { stage: string; stopped?: boolean; message?: string }) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
+    emitTaskProgressEvent: (recordId: string, input: { stage: string; stopped?: boolean; message?: string; progressPercent?: number }) => emitTaskProgressEvent(recordId, { ...input, message: input.message || '' }, taskEventEmitterContext),
     sleepWithAbortSignal,
     resolveVideoProviderUpstream,
     fetchUpstreamJson: fetchVideoUpstreamJson,

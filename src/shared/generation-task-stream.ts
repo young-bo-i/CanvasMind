@@ -66,6 +66,8 @@ export interface GenerationTaskStreamEventBase<TRecord = unknown> {
   record?: TRecord | null
   stage?: string
   message?: string
+  /** 进度百分比(0-100)：来自上游真实进度(如视频 progress 字段)，前端优先用它驱动进度条。 */
+  progressPercent?: number
   delta?: string
   content?: string
   /** thinking_delta 事件用：本次新增的思考片段。 */

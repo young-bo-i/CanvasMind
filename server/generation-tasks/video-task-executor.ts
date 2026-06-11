@@ -51,6 +51,7 @@ export interface VideoTaskExecutorContext {
     stage: string
     stopped?: boolean
     message?: string
+    progressPercent?: number
   }) => void
   sleepWithAbortSignal: (signal: AbortSignal, durationMs: number) => Promise<void>
   resolveVideoProviderUpstream: (input: { providerId: string; modelKey: string }) => Promise<ResolvedVideoProviderUpstream>
@@ -74,8 +75,8 @@ export interface VideoTaskExecutorContext {
 type VideoProtocol = 'openai-async' | 'chengmeng-async'
 
 const DEFAULT_POLL_INTERVAL_MS = 3000
-// 视频上游(尤其排队)常超过 8 分钟；放宽默认超时，仍可经 extraJson.pollTimeoutMs 覆盖。
-const DEFAULT_POLL_TIMEOUT_MS = 20 * 60 * 1000
+// 视频上游(尤其排队)常超过数十分钟；放宽默认超时，仍可经 extraJson.pollTimeoutMs 覆盖。
+const DEFAULT_POLL_TIMEOUT_MS = 60 * 60 * 1000
 // 轮询期间允许的连续错误次数（网络抖动 / 上游偶发 5xx）；超过才判任务失败。
 const DEFAULT_MAX_POLL_ERRORS = 5
 
@@ -380,6 +381,16 @@ interface PollOutcome {
   resultUrl: string
   statusText: string
   failureReason?: string
+  // 上游真实进度百分比(0-100)，如有则用于驱动前端进度条。
+  progressPercent?: number
+}
+
+// 从上游响应里取进度百分比（兼容 progress / percent / data.progress 等），裁剪到 0-100。
+const extractProgressPercent = (data: any): number | undefined => {
+  const raw = data?.progress ?? data?.percent ?? data?.data?.progress ?? data?.data?.percent
+  const num = Number(raw)
+  if (!Number.isFinite(num)) return undefined
+  return Math.max(0, Math.min(100, Math.round(num)))
 }
 
 // 从上游状态响应中尽力提取失败原因（兼容 error / error.message / failure_reason 等常见字段）。
@@ -462,6 +473,7 @@ const queryVideoTask = async (
       resultUrl,
       statusText: status,
       failureReason: cmFailureReason,
+      progressPercent: extractProgressPercent(result.data),
     }
   }
 
@@ -508,6 +520,7 @@ const queryVideoTask = async (
     resultUrl,
     statusText: status,
     failureReason,
+    progressPercent: extractProgressPercent(result.data),
   }
 }
 
@@ -678,6 +691,7 @@ const pollVideoTask = async (
     context.emitTaskProgressEvent(task.recordId, {
       stage: 'polling_upstream',
       message: `视频生成中…（第 ${pollCount} 次查询，状态：${outcome.statusText || 'pending'}）`,
+      progressPercent: outcome.progressPercent,
     })
 
     if (Date.now() - startedAt > pollTimeoutMs) {

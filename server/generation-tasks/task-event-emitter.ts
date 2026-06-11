@@ -50,6 +50,7 @@ export const emitTaskProgressEvent = (
     done?: boolean
     stopped?: boolean
     record?: Record<string, unknown> | null
+    progressPercent?: number
   },
   context: TaskEventEmitterContext,
 ) => {
@@ -61,6 +62,7 @@ export const emitTaskProgressEvent = (
     stage: input.stage,
     message: input.message,
     record: input.record,
+    progressPercent: typeof input.progressPercent === 'number' ? input.progressPercent : undefined,
   }, context)
 }
 

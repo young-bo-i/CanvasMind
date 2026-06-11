@@ -2173,9 +2173,13 @@ const handleGenerationTaskStreamEvent = (recordId: string, streamEvent: Generati
     targetRecord.error = ''
     targetRecord.progressStage = event.stage || targetRecord.progressStage || 'queued'
     targetRecord.progressMessage = resolveTaskStageLabel(event.stage, event.message)
+    // 上游有真实进度(如视频 progress 字段)就优先用它驱动进度条；否则退回按阶段估算。
+    const upstreamPercent = typeof event.progressPercent === 'number' && event.progressPercent > 0
+        ? Math.min(99, Math.round(event.progressPercent))
+        : 0
     targetRecord.progressPercent = Math.max(
         targetRecord.progressPercent || 0,
-        mapTaskStageToProgressPercent(event.stage),
+        upstreamPercent || mapTaskStageToProgressPercent(event.stage),
     )
     if (isImageTaskRecord) {
       stageConversationChanged = upsertRecordStageConversation(
