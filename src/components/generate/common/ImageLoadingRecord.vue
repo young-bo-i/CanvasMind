@@ -13,6 +13,7 @@
             :duration="duration"
             :feature="feature"
             :reference-images="referenceImages"
+            @reuse="$emit('make-same')"
           />
         </div>
         <div
@@ -292,7 +293,7 @@ const props = defineProps({
   conversationEntries: { type: Array as PropType<ConversationEntry[]>, default: () => [] }
 })
 
-const emit = defineEmits(['edit', 'regenerate', 'more', 'preview', 'stop'])
+const emit = defineEmits(['edit', 'regenerate', 'more', 'preview', 'stop', 'make-same'])
 
 const handlePreview = (index: number) => {
   emit('preview', index)

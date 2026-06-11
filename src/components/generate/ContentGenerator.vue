@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useLoginModalStore } from '@/stores/login-modal'
 import { useSystemSettingsStore } from '@/stores/system-settings'
 import { getModelByName } from '@/config/models'
+import { uploadStorageFile } from '@/api/storage'
 import type { ModelCapabilityFlags } from '@/shared/provider-capability'
 
 // 导入子组件
@@ -355,8 +356,8 @@ const handleSubmit = () => {
     emit('send', message, currentType.value)
   }
 
-  // 清空输入
-  inputValue.value = ''
+  // 提交后保留输入内容（提示词 + 参考素材 + 模型/比例/时长等设置），便于在上次基础上微调再次生成（对齐即梦）。
+  // 参考素材与工具栏设置本就保持不变，这里不再清空提示词。
 }
 
 // 是否禁用提交按钮
@@ -383,8 +384,23 @@ const applyDraft = async (payload: GeneratorDraftPayload) => {
     videoLastFrameImage.value = ''
   } else if (nextType === 'video') {
     imageReferenceImages.value = []
-    videoFirstFrameImage.value = String(payload.referenceImages?.[0] || '')
-    videoLastFrameImage.value = String(payload.referenceImages?.[1] || '')
+    // 按功能把扁平的 referenceImages 还原到对应槽位（首尾帧 / 智能多帧 / 全能参考），否则全能参考会丢失。
+    const refs = (Array.isArray(payload.referenceImages) ? payload.referenceImages : [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+    const feature = String(payload.feature || 'omni-reference')
+    if (feature === 'first-last-frame') {
+      videoFirstFrameImage.value = refs[0] || ''
+      videoLastFrameImage.value = refs[1] || ''
+    } else if (feature === 'multi-frame') {
+      videoFirstFrameImage.value = ''
+      videoLastFrameImage.value = ''
+      videoKeyframeImages.value = refs.slice(0, VIDEO_KEYFRAME_LIMIT)
+    } else {
+      videoFirstFrameImage.value = ''
+      videoLastFrameImage.value = ''
+      videoReferenceImages.value = refs.slice(0, VIDEO_REFERENCE_LIMIT)
+    }
   } else {
     imageReferenceImages.value = []
     videoFirstFrameImage.value = ''
@@ -682,51 +698,103 @@ const getImageReferenceCollapsedOffset = (index: number) =>
 const getImageReferenceUploadCollapsedOffset = () =>
   getImageReferenceLayoutConfig().uploadCollapsedOffset
 
-const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader()
-  reader.onload = () => resolve(String(reader.result || ''))
-  reader.onerror = () => reject(new Error('读取参考图失败'))
-  reader.readAsDataURL(file)
-})
+// 参考素材槽位。omni(全能参考)接受 图/视频/音频；其余为图片帧。
+type ReferenceSlot = 'image-ref' | 'first-frame' | 'last-frame' | 'keyframe' | 'omni'
 
-const resolveSelectedImageDataList = async (event: Event) => {
+const slotAcceptsMedia = (slot: ReferenceSlot) => slot === 'omni'
+
+const fileMatchesSlot = (file: File, slot: ReferenceSlot) => {
+  const t = String(file.type || '').toLowerCase()
+  if (slotAcceptsMedia(slot)) {
+    return t.startsWith('image/') || t.startsWith('video/') || t.startsWith('audio/')
+  }
+  return t.startsWith('image/')
+}
+
+// 正在上传参考素材。
+const referenceUploading = ref(false)
+
+// 上传到本地存储，返回可引用 URL（替代 base64 内联，避免视频/音频超体积，并对齐 Seedance 的 URL 引用）。
+const uploadReferenceFiles = async (files: File[]): Promise<string[]> => {
+  if (!files.length) return []
+  referenceUploading.value = true
+  try {
+    const results = await Promise.all(files.map(async (file) => {
+      try {
+        const saved = await uploadStorageFile(file, 'reference')
+        return String(saved?.publicUrl || '')
+      } catch {
+        return ''
+      }
+    }))
+    return results.filter(Boolean)
+  } finally {
+    referenceUploading.value = false
+  }
+}
+
+// 把选中/拖入的文件按槽位类型校验后上传，写入对应参考 state。点击与拖拽共用。
+const applyFilesToSlot = async (rawFiles: File[], slot: ReferenceSlot) => {
+  const files = rawFiles.filter(file => fileMatchesSlot(file, slot))
+  if (!files.length) return
+  const urls = await uploadReferenceFiles(files)
+  if (!urls.length) return
+  if (slot === 'image-ref') {
+    imageReferenceImages.value = [...imageReferenceImages.value, ...urls].slice(0, IMAGE_REFERENCE_LIMIT)
+  } else if (slot === 'first-frame') {
+    videoFirstFrameImage.value = urls[0]
+  } else if (slot === 'last-frame') {
+    videoLastFrameImage.value = urls[0]
+  } else if (slot === 'keyframe') {
+    videoKeyframeImages.value = [...videoKeyframeImages.value, ...urls].slice(0, VIDEO_KEYFRAME_LIMIT)
+  } else if (slot === 'omni') {
+    videoReferenceImages.value = [...videoReferenceImages.value, ...urls].slice(0, VIDEO_REFERENCE_LIMIT)
+  }
+}
+
+const handleSlotInputChange = async (event: Event, slot: ReferenceSlot) => {
   const input = event.target as HTMLInputElement | null
   const files = Array.from(input?.files || [])
-  if (!files.length) {
-    return [] as string[]
-  }
-
-  try {
-    return (await Promise.all(files.map(file => readFileAsDataUrl(file)))).filter(Boolean)
-  } finally {
-    if (input) {
-      input.value = ''
-    }
-  }
+  if (input) input.value = ''
+  await applyFilesToSlot(files, slot)
 }
 
-const handleImageReferenceChange = async (event: Event) => {
-  const imageDataList = await resolveSelectedImageDataList(event)
-  if (!imageDataList.length) {
-    return
-  }
-
-  imageReferenceImages.value = [...imageReferenceImages.value, ...imageDataList].slice(0, IMAGE_REFERENCE_LIMIT)
+// 拖拽高亮态(逐槽位)。
+const dragOverSlot = ref<ReferenceSlot | ''>('')
+const onSlotDragOver = (slot: ReferenceSlot) => { dragOverSlot.value = slot }
+const onSlotDragLeave = (slot: ReferenceSlot) => { if (dragOverSlot.value === slot) dragOverSlot.value = '' }
+const onSlotDrop = async (event: DragEvent, slot: ReferenceSlot) => {
+  dragOverSlot.value = ''
+  const files = Array.from(event.dataTransfer?.files || [])
+  await applyFilesToSlot(files, slot)
 }
+
+// 按 URL 后缀推断参考素材类型，用于切换 缩略图/视频/音频 渲染。
+const VIDEO_REF_EXTENSIONS = ['mp4', 'mov', 'webm', 'm4v', 'avi', 'mkv']
+const AUDIO_REF_EXTENSIONS = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac']
+const refKind = (url: string): 'image' | 'video' | 'audio' => {
+  const clean = String(url || '').split('?')[0].split('#')[0].toLowerCase()
+  const ext = clean.includes('.') ? clean.slice(clean.lastIndexOf('.') + 1) : ''
+  if (clean.startsWith('data:video') || VIDEO_REF_EXTENSIONS.includes(ext)) return 'video'
+  if (clean.startsWith('data:audio') || AUDIO_REF_EXTENSIONS.includes(ext)) return 'audio'
+  return 'image'
+}
+
+// 从 URL 取末段文件名，用于音频 chip 展示。
+const refFileName = (url: string): string => {
+  const clean = String(url || '').split('?')[0].split('#')[0]
+  const seg = clean.slice(clean.lastIndexOf('/') + 1)
+  return seg || '音频'
+}
+
+const handleImageReferenceChange = (event: Event) => handleSlotInputChange(event, 'image-ref')
 
 const removeImageReference = (index: number) => {
   imageReferenceImages.value = imageReferenceImages.value.filter((_, currentIndex) => currentIndex !== index)
 }
 
-const handleVideoFirstFrameChange = async (event: Event) => {
-  const imageDataList = await resolveSelectedImageDataList(event)
-  videoFirstFrameImage.value = imageDataList[0] || ''
-}
-
-const handleVideoLastFrameChange = async (event: Event) => {
-  const imageDataList = await resolveSelectedImageDataList(event)
-  videoLastFrameImage.value = imageDataList[0] || ''
-}
+const handleVideoFirstFrameChange = (event: Event) => handleSlotInputChange(event, 'first-frame')
+const handleVideoLastFrameChange = (event: Event) => handleSlotInputChange(event, 'last-frame')
 
 const clearVideoFirstFrame = () => {
   videoFirstFrameImage.value = ''
@@ -767,11 +835,7 @@ const openVideoReferencePicker = () => {
   videoReferenceInputRef.value?.click()
 }
 
-const handleVideoReferenceChange = async (event: Event) => {
-  const imageDataList = await resolveSelectedImageDataList(event)
-  if (!imageDataList.length) return
-  videoReferenceImages.value = [...videoReferenceImages.value, ...imageDataList].slice(0, VIDEO_REFERENCE_LIMIT)
-}
+const handleVideoReferenceChange = (event: Event) => handleSlotInputChange(event, 'omni')
 
 const removeVideoReference = (index: number) => {
   videoReferenceImages.value = videoReferenceImages.value.filter((_, currentIndex) => currentIndex !== index)
@@ -782,11 +846,7 @@ const openVideoKeyframePicker = () => {
   videoKeyframeInputRef.value?.click()
 }
 
-const handleVideoKeyframeChange = async (event: Event) => {
-  const imageDataList = await resolveSelectedImageDataList(event)
-  if (!imageDataList.length) return
-  videoKeyframeImages.value = [...videoKeyframeImages.value, ...imageDataList].slice(0, VIDEO_KEYFRAME_LIMIT)
-}
+const handleVideoKeyframeChange = (event: Event) => handleSlotInputChange(event, 'keyframe')
 
 const removeVideoKeyframe = (index: number) => {
   videoKeyframeImages.value = videoKeyframeImages.value.filter((_, currentIndex) => currentIndex !== index)
@@ -903,9 +963,13 @@ onUnmounted(() => {
                 <div style="transition:none;opacity:1;width:100%;height:100%">
                   <div
                     class="reference-upload-Yi4KkS mini-tVZaR4 generator-reference-upload-mini"
-                    :class="{ 'generator-reference-upload-mini--disabled disabled-wEh7Oq': imageReferenceCount >= IMAGE_REFERENCE_LIMIT }"
+                    :class="{ 'generator-reference-upload-mini--disabled disabled-wEh7Oq': imageReferenceCount >= IMAGE_REFERENCE_LIMIT, 'reference-upload--dragover': dragOverSlot === 'image-ref' }"
                     :style="{ '--rotate': '0deg' }"
                     @click.stop="imageReferenceCount < IMAGE_REFERENCE_LIMIT && openImageReferencePicker()"
+                    @dragover.prevent="onSlotDragOver('image-ref')"
+                    @dragenter.prevent="onSlotDragOver('image-ref')"
+                    @dragleave="onSlotDragLeave('image-ref')"
+                    @drop.prevent="onSlotDrop($event, 'image-ref')"
                   >
                     <svg class="icon-cWdiC3 generator-reference-upload-mini__icon" fill="none" height="1em"
                          preserveAspectRatio="xMidYMid meet"
@@ -936,7 +1000,12 @@ onUnmounted(() => {
                    data-index="0"
                    style="--index-in-group:0;--rotate:8deg">
                 <div class="reference-upload-h7tmnr light-Bis76t"
+                     :class="{ 'reference-upload--dragover': dragOverSlot === 'image-ref' }"
                      @click.stop="openImageReferencePicker"
+                     @dragover.prevent="onSlotDragOver('image-ref')"
+                     @dragenter.prevent="onSlotDragOver('image-ref')"
+                     @dragleave="onSlotDragLeave('image-ref')"
+                     @drop.prevent="onSlotDrop($event, 'image-ref')"
                      style="--rotate:-8deg">
                   <svg class="icon-TrJRuq" fill="none" height="1em"
                        preserveAspectRatio="xMidYMid meet"
@@ -978,7 +1047,12 @@ onUnmounted(() => {
                    data-index="0"
                    style="--index-in-group:0;--rotate:8deg">
                 <div class="reference-upload-h7tmnr light-Bis76t"
+                     :class="{ 'reference-upload--dragover': dragOverSlot === 'first-frame' }"
                      @click.stop="openVideoFirstFramePicker"
+                     @dragover.prevent="onSlotDragOver('first-frame')"
+                     @dragenter.prevent="onSlotDragOver('first-frame')"
+                     @dragleave="onSlotDragLeave('first-frame')"
+                     @drop.prevent="onSlotDrop($event, 'first-frame')"
                      style="--rotate:-8deg">
                   <template v-if="videoFirstFrameImage">
                     <img :src="videoFirstFrameImage" alt="首帧参考图" class="generator-reference-preview-image">
@@ -1040,7 +1114,12 @@ onUnmounted(() => {
                    data-index="0"
                    style="--index-in-group:0;--rotate:-5deg">
                 <div class="reference-upload-h7tmnr light-Bis76t"
+                     :class="{ 'reference-upload--dragover': dragOverSlot === 'last-frame' }"
                      @click.stop="openVideoLastFramePicker"
+                     @dragover.prevent="onSlotDragOver('last-frame')"
+                     @dragenter.prevent="onSlotDragOver('last-frame')"
+                     @dragleave="onSlotDragLeave('last-frame')"
+                     @drop.prevent="onSlotDrop($event, 'last-frame')"
                      style="--rotate:5deg">
                   <template v-if="videoLastFrameImage">
                     <img :src="videoLastFrameImage" alt="尾帧参考图" class="generator-reference-preview-image">
@@ -1078,16 +1157,21 @@ onUnmounted(() => {
 
           <!-- 智能多帧 -->
           <template v-else-if="videoFeature === 'multi-frame'">
-            <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar }]"
-                 :style="`--reference-count:${videoKeyframeImages.length + 1};--reference-item-width:48px;--reference-item-gap:4px`">
+            <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar, 'generator-ref-deck--fanned': dragOverSlot === 'keyframe' }]"
+                 :style="`--reference-count:${videoKeyframeImages.length + 1};--reference-item-width:48px;--reference-item-gap:4px`"
+                 @dragover.prevent="onSlotDragOver('keyframe')"
+                 @dragenter.prevent="onSlotDragOver('keyframe')"
+                 @dragleave="onSlotDragLeave('keyframe')"
+                 @drop.prevent="onSlotDrop($event, 'keyframe')">
               <div class="reference-group-background-f6pFpT"></div>
               <div class="reference-group-hover-trigger-YTDCQf"></div>
               <div class="reference-group-content-ztz9q2 expanded-hIAQK3">
                 <div v-for="(frame, idx) in videoKeyframeImages" :key="idx"
                      class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx"
-                     :style="`--index-in-group:${idx};--rotate:8deg`">
-                  <div class="reference-upload-h7tmnr light-Bis76t" style="--rotate:-8deg">
-                    <img :src="frame" :alt="`第${idx + 1}帧`" class="generator-reference-preview-image">
+                     :style="`--index-in-group:${idx}`">
+                  <div class="reference-upload-h7tmnr light-Bis76t" :style="`--rotate:${idx % 2 ? -7 : 7}deg`">
+                    <video v-if="refKind(frame) === 'video'" :src="frame" class="generator-reference-preview-image" muted playsinline preload="metadata"></video>
+                    <img v-else :src="frame" :alt="`第${idx + 1}帧`" class="generator-reference-preview-image">
                     <button type="button" class="generator-reference-clear-btn" @click.stop="removeVideoKeyframe(idx)">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
@@ -1099,12 +1183,15 @@ onUnmounted(() => {
                 <div v-if="videoKeyframeImages.length < VIDEO_KEYFRAME_LIMIT"
                      class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoKeyframeImages.length"
                      :style="`--index-in-group:${videoKeyframeImages.length};--rotate:8deg`">
-                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoKeyframePicker" style="--rotate:-8deg">
+                  <div class="reference-upload-h7tmnr light-Bis76t"
+                       :class="{ 'reference-upload--dragover': dragOverSlot === 'keyframe' }"
+                       @click.stop="openVideoKeyframePicker"
+                       style="--rotate:-8deg">
                     <svg class="icon-TrJRuq" fill="none" height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
                       <path clip-rule="evenodd" d="M10.8 20a1.2 1.2 0 0 0 2.4 0v-6.8H20a1.2 1.2 0 1 0 0-2.4h-6.8V4a1.2 1.2 0 0 0-2.4 0v6.8H4a1.2 1.2 0 0 0 0 2.4h6.8V20Z" fill="currentColor" fill-rule="evenodd"></path>
                     </svg>
                     <div class="label-O_5YLx">第{{ videoKeyframeImages.length + 1 }}帧</div>
-                    <input accept="image/jpeg,.jpeg,image/jpg,.jpg,image/png,.png,image/webp,.webp,image/bmp,.bmp"
+                    <input accept="image/*,video/*"
                            class="file-input sf-hidden" ref="videoKeyframeInputRef" type="file" multiple
                            @change="handleVideoKeyframeChange">
                   </div>
@@ -1115,16 +1202,28 @@ onUnmounted(() => {
 
           <!-- 全能参考 -->
           <template v-else>
-            <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar }]"
-                 :style="`--reference-count:${videoReferenceImages.length + 1};--reference-item-width:48px;--reference-item-gap:4px`">
+            <div :class="['reference-group-_DAGw1', { 'collapsed-J9LsWu': isCollapsed && !isSidebar, 'generator-ref-deck--fanned': dragOverSlot === 'omni' }]"
+                 :style="`--reference-count:${videoReferenceImages.length + 1};--reference-item-width:48px;--reference-item-gap:4px`"
+                 @dragover.prevent="onSlotDragOver('omni')"
+                 @dragenter.prevent="onSlotDragOver('omni')"
+                 @dragleave="onSlotDragLeave('omni')"
+                 @drop.prevent="onSlotDrop($event, 'omni')">
               <div class="reference-group-background-f6pFpT"></div>
               <div class="reference-group-hover-trigger-YTDCQf"></div>
               <div class="reference-group-content-ztz9q2 expanded-hIAQK3">
                 <div v-for="(material, idx) in videoReferenceImages" :key="idx"
                      class="reference-item-aI97LK expanded-fVSy9S" :data-index="idx"
-                     :style="`--index-in-group:${idx};--rotate:8deg`">
-                  <div class="reference-upload-h7tmnr light-Bis76t" style="--rotate:-8deg">
-                    <img :src="material" alt="参考素材" class="generator-reference-preview-image">
+                     :style="`--index-in-group:${idx}`">
+                  <div class="reference-upload-h7tmnr light-Bis76t" :style="`--rotate:${idx % 2 ? -7 : 7}deg`">
+                    <video v-if="refKind(material) === 'video'" :src="material" class="generator-reference-preview-image" muted playsinline preload="metadata"></video>
+                    <div v-else-if="refKind(material) === 'audio'" class="generator-reference-audio-chip" :title="refFileName(material)">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 18V5l12-2v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                        <circle cx="6" cy="18" r="3" stroke="currentColor" stroke-width="2"></circle>
+                        <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2"></circle>
+                      </svg>
+                    </div>
+                    <img v-else :src="material" alt="参考素材" class="generator-reference-preview-image">
                     <button type="button" class="generator-reference-clear-btn" @click.stop="removeVideoReference(idx)">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
@@ -1135,12 +1234,15 @@ onUnmounted(() => {
                 <div v-if="videoReferenceImages.length < VIDEO_REFERENCE_LIMIT"
                      class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoReferenceImages.length"
                      :style="`--index-in-group:${videoReferenceImages.length};--rotate:8deg`">
-                  <div class="reference-upload-h7tmnr light-Bis76t" @click.stop="openVideoReferencePicker" style="--rotate:-8deg">
+                  <div class="reference-upload-h7tmnr light-Bis76t"
+                       :class="{ 'reference-upload--dragover': dragOverSlot === 'omni' }"
+                       @click.stop="openVideoReferencePicker"
+                       style="--rotate:-8deg">
                     <svg class="icon-TrJRuq" fill="none" height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
                       <path clip-rule="evenodd" d="M10.8 20a1.2 1.2 0 0 0 2.4 0v-6.8H20a1.2 1.2 0 1 0 0-2.4h-6.8V4a1.2 1.2 0 0 0-2.4 0v6.8H4a1.2 1.2 0 0 0 0 2.4h6.8V20Z" fill="currentColor" fill-rule="evenodd"></path>
                     </svg>
                     <div class="label-O_5YLx">参考内容</div>
-                    <input accept="image/jpeg,.jpeg,image/jpg,.jpg,image/png,.png,image/webp,.webp,image/bmp,.bmp"
+                    <input accept="image/*,video/*,audio/*"
                            class="file-input sf-hidden" ref="videoReferenceInputRef" type="file" multiple
                            @change="handleVideoReferenceChange">
                   </div>
@@ -1718,6 +1820,85 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
   border-radius: inherit;
+}
+
+/* 拖拽悬停高亮（所有上传位通用） */
+.dimension-layout-FUl4Nj .reference-upload--dragover {
+  outline: 2px dashed var(--color-primary, #7c5cff);
+  outline-offset: -2px;
+  background: rgba(124, 92, 255, 0.12);
+}
+
+/* 音频参考占位 chip */
+.dimension-layout-FUl4Nj .generator-reference-audio-chip {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  color: var(--color-primary, #7c5cff);
+  background: rgba(124, 92, 255, 0.12);
+}
+
+/* 已上传的视频参考缩略图：很窄的小白边（与结果视图一致），叠压时分隔更清晰；不影响「+」上传位 */
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P) .reference-upload-h7tmnr:has(> .generator-reference-preview-image),
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P) .reference-upload-h7tmnr:has(> .generator-reference-audio-chip) {
+  border: 1px solid rgba(255, 255, 255, 0.9);
+}
+
+/* ============================================================
+   视频参考素材（全能参考 / 智能多帧）：左侧「重叠堆叠」展示，hover 或拖拽悬停时横向展开。
+   取代 styles.css 中 expanded-fVSy9S 的「永久横排」(其溢出 48px 容器盖住提示词)。对齐即梦交互。
+   仅作用于视频参考(references-vWIzeo 且无 references-Gf5d1P)、展开态(非 collapsed)；
+   图片/智能体模式、折叠条不受影响。首尾帧为单图分组(index=0)，本规则对其等价于不偏移，保持原样。
+   ============================================================ */
+/* 容器预留「堆叠后的实际宽度」(48px + 6px·(数量-1))，使提示词从堆叠区右侧开始，静止态不被遮挡 */
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P):not(.collapsed-_VpN2b) .reference-group-content-ztz9q2 {
+  width: calc(var(--reference-item-width) + 6px * max(var(--reference-count, 1) - 1, 0));
+}
+/* 默认：按层级轻微错位 + z 轴叠放，形成卡片堆（旋转由卡片自身 --rotate 提供） */
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P):not(.collapsed-_VpN2b) .reference-item-aI97LK.expanded-fVSy9S {
+  transform: translateX(calc(6px * var(--index-in-group)));
+  z-index: calc(var(--index-in-group, 0) + 1);
+}
+/* hover / 拖拽悬停：横向展开全部缩略图（展开态覆盖在文案上方，属交互态，可接受） */
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P):not(.collapsed-_VpN2b) .reference-group-_DAGw1:hover .reference-item-aI97LK.expanded-fVSy9S,
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P):not(.collapsed-_VpN2b) .reference-group-_DAGw1.generator-ref-deck--fanned .reference-item-aI97LK.expanded-fVSy9S {
+  transform: translateX(calc((var(--reference-item-width) + var(--reference-item-gap)) * var(--index-in-group)));
+}
+/* 展开态把卡片摆正（去掉堆叠旋转），更接近即梦平铺一行 */
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P):not(.collapsed-_VpN2b) .reference-group-_DAGw1:hover .reference-upload-h7tmnr,
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P):not(.collapsed-_VpN2b) .reference-group-_DAGw1.generator-ref-deck--fanned .reference-upload-h7tmnr {
+  transform: none;
+}
+/* 删除按钮：默认隐藏，仅 hover 到某张卡片时在其右上角浮现（对齐即梦） */
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P) .reference-upload-h7tmnr .generator-reference-clear-btn {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+}
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P) .reference-upload-h7tmnr:hover .generator-reference-clear-btn {
+  opacity: 1;
+  visibility: visible;
+}
+.dimension-layout-FUl4Nj .references-vWIzeo:not(.references-Gf5d1P) .reference-upload-h7tmnr .generator-reference-clear-btn:hover {
+  background: rgba(0, 0, 0, 0.78);
 }
 
 .dimension-layout-FUl4Nj .references-Gf5d1P {

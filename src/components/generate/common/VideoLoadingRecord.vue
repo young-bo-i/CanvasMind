@@ -12,6 +12,7 @@
             :duration="duration"
             :feature="feature"
             :reference-images="referenceImages"
+            @reuse="$emit('make-same')"
           />
         </div>
         <div class="record-box-wrapper">

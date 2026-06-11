@@ -212,9 +212,32 @@ const scrollContainerRef = ref<HTMLElement | null>(null)
 let lastScrollTop = 0
 let touchLastY = 0
 
+// 滚轮/触摸是否落在「内部可滚动元素」（如展开的提示词框）上、且其仍能在该方向继续滚动。
+// 列表外层用 capture 接管滚轮，会抢走所有滚轮事件；命中内部可滚动元素时让其原生滚动、列表不劫持。
+const innerScrollableCanScroll = (startNode: EventTarget | null, deltaY: number): boolean => {
+  const container = scrollContainerRef.value
+  let node = startNode as HTMLElement | null
+  while (node && node !== container) {
+    if (node.nodeType === 1) {
+      const overflowY = window.getComputedStyle(node).overflowY
+      const scrollable = (overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1
+      if (scrollable) {
+        const atTop = node.scrollTop <= 0
+        const atBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 1
+        if (deltaY > 0 && !atBottom) return true
+        if (deltaY < 0 && !atTop) return true
+      }
+    }
+    node = node.parentElement
+  }
+  return false
+}
+
 const handleWheel = (event: WheelEvent) => {
   const target = scrollContainerRef.value
   if (!target) return
+  // 命中内部可滚动元素（展开的提示词框等）则交给它原生滚动，外层列表不劫持。
+  if (innerScrollableCanScroll(event.target, event.deltaY)) return
   event.stopImmediatePropagation()
   event.preventDefault()
   target.scrollTop -= event.deltaY
@@ -230,6 +253,8 @@ const handleTouchMove = (event: TouchEvent) => {
   const currentY = event.touches[0]?.clientY ?? touchLastY
   const deltaY = touchLastY - currentY
   touchLastY = currentY
+  // 命中内部可滚动元素则交给其原生滚动，外层列表不劫持。
+  if (innerScrollableCanScroll(event.target, deltaY)) return
   event.stopImmediatePropagation()
   event.preventDefault()
   target.scrollTop -= deltaY

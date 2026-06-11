@@ -3259,6 +3259,7 @@ onUnmounted(() => {
           <ContentGenerator
               ref="contentGeneratorRef"
               :default-expanded="true"
+              :collapsible="false"
               @send="handleSend"
           />
         </template>
@@ -3360,6 +3361,7 @@ onUnmounted(() => {
                     @regenerate="handleRegenerateImageRecord(record)"
                     @more="handleOpenImageRecordMore(record)"
                     @stop="handleStopImageGeneration(record)"
+                    @make-same="handleMakeSameRecord(record)"
                 />
               </div>
               <div
@@ -3379,6 +3381,7 @@ onUnmounted(() => {
           <ContentGenerator
               ref="contentGeneratorRef"
               :default-expanded="true"
+              :collapsible="false"
               @send="handleSend"
           />
           <div style=height:1px></div>

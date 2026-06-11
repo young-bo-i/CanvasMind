@@ -172,6 +172,78 @@ interface VideoRequestParams {
   resolution: string
   durationSeconds: number
   images: string[]
+  // 生成功能（first-last-frame / multi-frame / omni-reference…），决定参考素材的 role 映射。
+  feature: string
+}
+
+// 按 URL 后缀粗判参考素材类型，用于 content-array 模式分流图/视频/音频项。
+const REF_VIDEO_EXT = /\.(mp4|mov|webm|m4v|avi|mkv)(\?|#|$)/i
+const REF_AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg|flac)(\?|#|$)/i
+const detectRefKind = (url: string): 'image' | 'video' | 'audio' => {
+  const u = String(url || '')
+  if (REF_VIDEO_EXT.test(u) || /^data:video/i.test(u)) return 'video'
+  if (REF_AUDIO_EXT.test(u) || /^data:audio/i.test(u)) return 'audio'
+  return 'image'
+}
+
+// 按 Seedance 官方「通用」格式构造 content 数组：[{type:'text',text}, ...{type:'image_url',image_url:{url},role}]。
+// role 与媒体项字段均可经 extraJson 配置，避免上游字段不一致导致 400；音频默认不下发（Seedance 视频不吃音频）。
+const buildVideoContentArray = (
+  body: Record<string, unknown>,
+  params: VideoRequestParams,
+  refs: string[],
+  extraJson: Record<string, unknown> | null,
+) => {
+  const contentField = readStringExtra(extraJson, 'contentField', 'content')
+  const firstFrameRole = readStringExtra(extraJson, 'firstFrameRole', 'first_frame')
+  const lastFrameRole = readStringExtra(extraJson, 'lastFrameRole', 'last_frame')
+  const referenceRole = readStringExtra(extraJson, 'referenceRole', 'reference_image')
+  const audioRole = readStringExtra(extraJson, 'audioRole', 'audio_reference')
+  // 视频参考默认接受、音频参考默认不下发；均可经 extraJson 覆盖。
+  const acceptVideoRef = readExtra(extraJson, 'acceptVideoRef') !== false
+  const acceptAudioRef = readExtra(extraJson, 'acceptAudioRef') === true
+  const videoItemType = readStringExtra(extraJson, 'videoItemType', 'video_url')
+  const audioItemType = readStringExtra(extraJson, 'audioItemType', 'input_audio')
+  const paramsInPrompt = readExtra(extraJson, 'paramsInPrompt') === true
+
+  // 文本项：可选把比例/分辨率/时长以 --params 形式拼进 prompt（部分厂商靠此解析）。
+  let text = params.prompt
+  if (paramsInPrompt) {
+    const tokens: string[] = []
+    if (params.ratio) tokens.push(`--ratio ${params.ratio}`)
+    if (params.resolution) tokens.push(`--resolution ${params.resolution}`)
+    if (params.durationSeconds) tokens.push(`--duration ${params.durationSeconds}`)
+    if (tokens.length) text = `${text} ${tokens.join(' ')}`.trim()
+  }
+
+  const content: Array<Record<string, unknown>> = []
+  if (text) content.push({ type: 'text', text })
+
+  // 首尾帧按图片出现顺序定 role（仅统计图片项，避免被视频/音频项打乱）。
+  const isFirstLast = params.feature === 'first-last-frame'
+  let imageSeq = 0
+  for (const url of refs) {
+    const kind = detectRefKind(url)
+    if (kind === 'audio') {
+      if (!acceptAudioRef) continue
+      content.push({ type: audioItemType, [audioItemType]: { url }, role: audioRole })
+      continue
+    }
+    if (kind === 'video') {
+      if (!acceptVideoRef) continue
+      content.push({ type: videoItemType, [videoItemType]: { url }, role: referenceRole })
+      continue
+    }
+    const role = isFirstLast ? (imageSeq === 0 ? firstFrameRole : lastFrameRole) : referenceRole
+    imageSeq += 1
+    content.push({ type: 'image_url', image_url: { url }, role })
+  }
+
+  body[contentField] = content
+  // prompt 已并入 content；默认移除顶层 prompt 避免重复，可经 keepTopLevelPrompt 保留。
+  if (readExtra(extraJson, 'keepTopLevelPrompt') !== true) {
+    delete body.prompt
+  }
 }
 
 // 提交任务，返回上游任务号。
@@ -184,6 +256,21 @@ const submitVideoTask = async (
 ): Promise<string> => {
   const { baseUrl, apiKey, videoEndpoint, extraJson } = upstream
   const trimmedBase = baseUrl.replace(/\/+$/, '')
+
+  // 参考素材如为本地 /uploads 相对路径，上游无法回源拉取，需拼成「公网可访问」的绝对地址；
+  // 优先 extraJson.publicAssetBaseUrl，其次环境变量 PUBLIC_ASSET_BASE_URL / PUBLIC_BASE_URL；
+  // 对象存储已是绝对 URL、http(s)/data: 原样透传。
+  const assetBaseUrl = (readStringExtra(extraJson, 'publicAssetBaseUrl', '')
+    || String(process.env.PUBLIC_ASSET_BASE_URL || process.env.PUBLIC_BASE_URL || '').trim()
+  ).replace(/\/+$/, '')
+  const toUpstreamRef = (url: string): string => {
+    const u = String(url || '').trim()
+    if (!u) return ''
+    if (/^(https?:|data:)/i.test(u)) return u
+    if (!assetBaseUrl) return u
+    return `${assetBaseUrl}/${u.replace(/^\/+/, '')}`
+  }
+  const upstreamRefs = params.images.map(toUpstreamRef).filter(Boolean)
 
   if (protocol === 'chengmeng-async') {
     const submitPath = readStringExtra(extraJson, 'submitPath', '/api/tasks')
@@ -202,7 +289,7 @@ const submitVideoTask = async (
       },
     }
     if (groupId) body.group_id = groupId
-    if (params.images.length) body.images = params.images
+    if (upstreamRefs.length) body.images = upstreamRefs
 
     const result = await context.fetchUpstreamJson({
       url: `${trimmedBase}/${submitPath.replace(/^\/+/, '')}`,
@@ -235,7 +322,28 @@ const submitVideoTask = async (
   if (params.ratio && ratioField) body[ratioField] = params.ratio
   // OpenAI/Sora 兼容视频接口的 seconds 是字符串（如 "4"/"8"）；发数字会被上游拒绝(invalid_request)。
   if (params.durationSeconds) body.seconds = String(params.durationSeconds)
-  if (params.images.length) body.input_reference = params.images[0]
+
+  // 参考素材下发模式：
+  //  - input_reference（默认，OpenAI/Sora 兼容，仅单图）
+  //  - content-array（Seedance 官方通用格式：content 数组 + image_url(role)）
+  //  - images（直接数组）
+  const referenceMode = readStringExtra(extraJson, 'referenceMode', 'input_reference')
+  if (upstreamRefs.length && referenceMode === 'content-array') {
+    buildVideoContentArray(body, params, upstreamRefs, extraJson)
+  } else if (upstreamRefs.length && referenceMode === 'images') {
+    body.images = upstreamRefs
+  } else if (upstreamRefs.length) {
+    body.input_reference = upstreamRefs[0]
+  }
+
+  // 记录实际下发的参考素材形态，便于定位「相对 /uploads 路径上游无法回源」等问题。
+  context.logGenerationTask('video_task:submit_body', {
+    referenceMode,
+    refCount: upstreamRefs.length,
+    refSample: upstreamRefs.slice(0, 3).map(url => url.slice(0, 140)),
+    assetBaseUrl: assetBaseUrl || '(none)',
+    isRelativeRef: upstreamRefs.some(url => url.startsWith('/')),
+  })
 
   const result = await context.fetchUpstreamJson({
     url: `${trimmedBase}/${endpoint.replace(/^\/+/, '')}`,
@@ -259,6 +367,35 @@ interface PollOutcome {
   failed: boolean
   resultUrl: string
   statusText: string
+  failureReason?: string
+}
+
+// 从上游状态响应中尽力提取失败原因（兼容 error / error.message / failure_reason 等常见字段）。
+const extractFailureReason = (data: any, rawText?: string): string => {
+  if (data && typeof data === 'object') {
+    const candidates = [
+      data.error?.message,
+      typeof data.error === 'string' ? data.error : undefined,
+      data.error?.code,
+      data.failure_reason,
+      data.failureReason,
+      data.fail_reason,
+      data.status_reason,
+      data.reason,
+      data.detail,
+      data.message,
+      data.data?.error?.message,
+      typeof data.data?.error === 'string' ? data.data?.error : undefined,
+      data.data?.failure_reason,
+      data.data?.fail_reason,
+      data.data?.message,
+    ]
+    for (const candidate of candidates) {
+      const text = String(candidate ?? '').trim()
+      if (text) return text.slice(0, 300)
+    }
+  }
+  return String(rawText || '').replace(/\s+/g, ' ').trim().slice(0, 300)
 }
 
 // 单次查询任务状态。
@@ -297,11 +434,22 @@ const queryVideoTask = async (
         rawSnippet: String(result.rawText || JSON.stringify(result.data) || '').slice(0, 800),
       })
     }
+    const cmFailed = failedStatuses.includes(status)
+    const cmFailureReason = cmFailed ? extractFailureReason(result.data, result.rawText) : undefined
+    if (cmFailed) {
+      context.logGenerationTask('video_task:upstream_failed', {
+        taskNo,
+        status,
+        failureReason: cmFailureReason,
+        rawSnippet: String(result.rawText || JSON.stringify(result.data) || '').slice(0, 1000),
+      })
+    }
     return {
       done: Boolean(resultUrl) && (completedStatuses.includes(status) || !status),
-      failed: failedStatuses.includes(status),
+      failed: cmFailed,
       resultUrl,
       statusText: status,
+      failureReason: cmFailureReason,
     }
   }
 
@@ -330,11 +478,24 @@ const queryVideoTask = async (
     })
   }
 
+  // 上游报失败：记录原始响应与失败原因，并向上抛出，便于定位（如参考图无法回源、内容审核等）。
+  const failed = failedStatuses.includes(status)
+  const failureReason = failed ? extractFailureReason(result.data, result.rawText) : undefined
+  if (failed) {
+    context.logGenerationTask('video_task:upstream_failed', {
+      taskNo,
+      status,
+      failureReason,
+      rawSnippet: String(result.rawText || JSON.stringify(result.data) || '').slice(0, 1000),
+    })
+  }
+
   return {
     done: Boolean(resultUrl) && (completedStatuses.includes(status) || !status),
-    failed: failedStatuses.includes(status),
+    failed,
     resultUrl,
     statusText: status,
+    failureReason,
   }
 }
 
@@ -377,6 +538,7 @@ export const executeVideoTask = async (
     resolution: String(requestBody.resolution || payload.resolution || '').trim(),
     durationSeconds: parseDurationSeconds(requestBody.duration || payload.duration),
     images: referenceImages,
+    feature: String(requestBody.feature || payload.feature || '').trim(),
   }
 
   context.logGenerationTask('video_task:submit_start', {
@@ -483,7 +645,17 @@ const pollVideoTask = async (
     }
 
     if (outcome.failed) {
-      throw new Error(`视频生成失败（上游状态：${outcome.statusText || 'unknown'}）`)
+      const reasonSuffix = outcome.failureReason ? `：${outcome.failureReason}` : ''
+      // 参考图为本地相对地址且未配置公网基址时，上游大概率因无法回源拉取而失败——给出可操作提示。
+      const hasRelativeRef = params.images.some(url => String(url || '').startsWith('/'))
+      const hasAssetBase = Boolean(
+        String(readStringExtra(upstream.extraJson, 'publicAssetBaseUrl', '')).trim()
+        || String(process.env.PUBLIC_ASSET_BASE_URL || process.env.PUBLIC_BASE_URL || '').trim(),
+      )
+      const refHint = hasRelativeRef && !hasAssetBase
+        ? '（参考图为本地 /uploads 相对地址，云端上游无法回源拉取；请在厂商 extraJson 配 publicAssetBaseUrl，或设置环境变量 PUBLIC_ASSET_BASE_URL 为公网可访问地址）'
+        : ''
+      throw new Error(`视频生成失败（上游状态：${outcome.statusText || 'unknown'}）${reasonSuffix}${refHint}`)
     }
     if (outcome.done && outcome.resultUrl) {
       resultUrl = outcome.resultUrl
@@ -575,6 +747,7 @@ export const resumeVideoTask = async (
     resolution: String(payload.resolution || '').trim(),
     durationSeconds: Number(savedVideoTask.durationSeconds) || 0,
     images: [],
+    feature: String(payload.feature || '').trim(),
   }
 
   context.logGenerationTask('video_task:resume', {
