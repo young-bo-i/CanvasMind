@@ -389,6 +389,8 @@ const applyDraft = async (payload: GeneratorDraftPayload) => {
       .map(item => String(item || '').trim())
       .filter(Boolean)
     const feature = String(payload.feature || 'omni-reference')
+    // 同步驱动模板渲染的 videoFeature（否则复用「做同款/引用」后会渲染另一功能的空槽位，参考图看似丢失）。
+    videoFeature.value = feature
     if (feature === 'first-last-frame') {
       videoFirstFrameImage.value = refs[0] || ''
       videoLastFrameImage.value = refs[1] || ''
@@ -438,6 +440,8 @@ const applyDraft = async (payload: GeneratorDraftPayload) => {
         toolbar.currentFeature = payload.feature
       }
     }
+    // 工具栏挂载时可能以默认值回吐 feature-change 覆盖 videoFeature，这里在最后再次对齐，确保渲染与发送都用复用的功能。
+    videoFeature.value = String(payload.feature || videoFeature.value || 'omni-reference')
     return
   }
 
