@@ -693,9 +693,17 @@ export const resolveVideoProviderUpstream = async (input: {
       : null
   }
 
-  const extraJson = (provider.extraJson && typeof provider.extraJson === 'object' && !Array.isArray(provider.extraJson))
+  const providerExtraJson = (provider.extraJson && typeof provider.extraJson === 'object' && !Array.isArray(provider.extraJson))
     ? provider.extraJson as Record<string, unknown>
     : null
+
+  // 合并：厂商 extraJson 为基底，模型 defaultParamsJson 覆盖在上（模型级优先）。
+  // 这样 referenceMode / paramsInPrompt / publicAssetBaseUrl / ratioField 等视频下发配置，
+  // 既能配在厂商 extraJson，也能直接写进「模型」的 defaultParamsJson（后台模型表单是自由 JSON 文本框，便于按模型配置）。
+  const extraJson: Record<string, unknown> = {
+    ...(providerExtraJson || {}),
+    ...(modelDefaultParams || {}),
+  }
 
   return {
     baseUrl: provider.baseUrl,
