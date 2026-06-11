@@ -24,8 +24,8 @@
               </svg>
               <span>{{ error }}</span>
             </div>
-            <!-- 可能只是上游排队慢：让用户主动再查一次上游结果 -->
-            <button type="button" class="video-requery-button" :disabled="requerying" @click="$emit('requery')">
+            <!-- 仅超时才给：可能只是上游排队慢，让用户主动再查一次上游结果 -->
+            <button v-if="isTimeoutError" type="button" class="video-requery-button" :disabled="requerying" @click="$emit('requery')">
               {{ requerying ? '查询中…' : '重新查询' }}
             </button>
           </div>
@@ -85,7 +85,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
 import loadingVideoUrl from '@/assets/animations/record-loading-animation.mp4'
 import RecordPromptReferenceHeader from './RecordPromptReferenceHeader.vue'
 
@@ -110,6 +110,9 @@ const props = defineProps({
 })
 
 defineEmits(['stop', 'make-same', 'download', 'delete', 'requery'])
+
+// 仅「超时」失败才提供重新查询（上游可能只是排队慢）；明确失败(如 file_download_error)不给该按钮。
+const isTimeoutError = computed(() => /超时|timeout/i.test(String(props.error || '')))
 
 const currentProgress = ref(props.progress)
 const currentProgressText = ref(props.progressText)

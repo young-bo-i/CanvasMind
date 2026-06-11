@@ -21,7 +21,9 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
     ? taskPath.slice(0, -('/stop'.length))
     : taskPath.endsWith('/events')
       ? taskPath.slice(0, -('/events'.length))
-      : taskPath
+      : taskPath.endsWith('/requery')
+        ? taskPath.slice(0, -('/requery'.length))
+        : taskPath
 
   let currentUser: { id?: string | null } | null = null
   let payloadSummary: Record<string, unknown> | null = null
