@@ -760,6 +760,82 @@ const resumeInflightVideoTasks = async () => {
   }
 }
 
+// 手动「重新查询」：超时/失败后的视频记录，用户点按钮主动再查一次上游（可能只是排队慢）。
+// 复用续询(resumeVideoTask)机制：复位记录为进行中 + 重新挂轮询，前端重订阅 SSE 看进度。
+// 计费：超时已退款时，续询完成默认不二次扣费（属边界情况）；如需二次扣费另行处理。
+export const requeryVideoGenerationTask = async (recordId: string, userId: string) => {
+  const id = String(recordId || '').trim()
+  if (!id) {
+    throw new GenerationTaskRequestError(400, '缺少记录 ID')
+  }
+
+  // 已在执行则不重复触发，直接返回当前记录。
+  if (getLocalRunningTask(id)) {
+    return getGenerationRecordById(id, userId)
+  }
+
+  const rec = await prisma.generationRecord.findFirst({
+    where: { id, userId, type: 'VIDEO' },
+    select: {
+      id: true, userId: true, prompt: true, modelKey: true,
+      ratio: true, resolution: true, durationLabel: true, feature: true, metaJson: true,
+    },
+  })
+  if (!rec) {
+    throw new GenerationTaskRequestError(404, '未找到该视频记录')
+  }
+
+  const videoTask = readVideoTaskMeta(rec.metaJson)
+  if (!videoTask?.taskNo) {
+    throw new GenerationTaskRequestError(400, '该任务没有可查询的上游任务号，无法重新查询')
+  }
+
+  // 补全计费字段（沿用原 CONSUME 流水；缺失时按记录反查）。
+  let associationNo = String(videoTask.associationNo || '').trim()
+  let billedPointCost = Number(videoTask.billedPointCost || 0)
+  if (!associationNo) {
+    const consume = await findConsumeByRecordId(rec.id)
+    associationNo = String(consume?.associationNo || '').trim()
+    billedPointCost = billedPointCost || Number(consume?.pointCost || 0)
+  }
+
+  const nextVideoTask: SavedVideoTask = {
+    ...videoTask,
+    resumeCount: (videoTask.resumeCount || 0) + 1,
+    associationNo: associationNo || undefined,
+    billedPointCost: billedPointCost || undefined,
+  }
+  await persistVideoTaskMeta(rec.id, rec.userId, nextVideoTask)
+
+  // 复位为进行中，让前端重新订阅 SSE 看续询进度（重启自动续询也能再接管）。
+  await prisma.generationRecord.update({
+    where: { id: rec.id },
+    data: { status: 'RUNNING', finishedAt: null, errorMessage: null },
+  })
+
+  const task: RunningGenerationTask = {
+    recordId: rec.id,
+    userId: rec.userId,
+    type: 'video',
+    strategyKey: 'video',
+    abortController: new AbortController(),
+    associationNo,
+    billedEndpointType: 'video',
+    billedPointCost,
+    billedProviderId: String(videoTask.providerId || ''),
+    billedModelKey: String(videoTask.modelKey || rec.modelKey || ''),
+    billedModelName: String(videoTask.billedModelName || ''),
+    refundCommitted: false,
+    concurrencySlots: [],
+    resumeVideoTask: nextVideoTask,
+  }
+  setLocalRunningTask(task)
+  logGenerationTask('task_requery:manual_video', { recordId: rec.id, taskNo: videoTask.taskNo, resumeCount: nextVideoTask.resumeCount })
+  runTaskInBackground(task, buildResumePayload(rec, videoTask))
+
+  return getGenerationRecordById(id, userId)
+}
+
 // image 任务不可续询（单次请求执行），崩在途会卡 RUNNING 且不退款；启动时一律回收。
 const reapInflightImageTasks = async () => {
   const records = await prisma.generationRecord.findMany({

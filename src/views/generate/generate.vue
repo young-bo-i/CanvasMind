@@ -29,7 +29,7 @@ import {
   updateGenerationSession as updateGenerationSessionRequest,
   type PersistedGenerationSession,
 } from '@/api/generation-sessions'
-import { createGenerationTask, resolveGenerationTaskModel, stopGenerationTask, subscribeGenerationTaskEvents, type GenerationTaskStreamEvent } from '@/api/generation-tasks'
+import { createGenerationTask, requeryVideoGenerationTask, resolveGenerationTaskModel, stopGenerationTask, subscribeGenerationTaskEvents, type GenerationTaskStreamEvent } from '@/api/generation-tasks'
 import type { CreationType } from '../../components/generate/selectors'
 import type {
   AgentRunState,
@@ -116,6 +116,7 @@ interface GeneratingRecord {
   progressMessage?: string
   progressPercent?: number
   error: string
+  requerying?: boolean
   agentTaskId?: string
   agentRun?: AgentRunState
   /** Agent 模式下当前选中的扩展能力开关，转发给 createGenerationTask 注入上游请求 */
@@ -1109,6 +1110,32 @@ const handleMakeSameRecord = async (record: GeneratingRecord) => {
     skill: record.skill,
     referenceImages: [...(record.referenceImages || [])],
   })
+}
+
+// 视频超时/失败后手动「重新查询」：让后端再查一次上游并复用续询机制继续轮询，前端复位为进行中并重新订阅 SSE。
+const handleRequeryVideoRecord = async (record: GeneratingRecord) => {
+  if (!record.dbId) {
+    ElMessage.warning('该记录尚未持久化，无法重新查询')
+    return
+  }
+  if (record.requerying) return
+  record.requerying = true
+  try {
+    const saved = await requeryVideoGenerationTask(record.dbId)
+    // 后端已复位为进行中并重新挂轮询：本地同步 + 复位状态 + 重新订阅事件流。
+    syncRecordWithPersisted(record, saved)
+    record.done = false
+    record.stopped = false
+    record.error = ''
+    record.progressStage = 'polling_upstream'
+    record.progressMessage = resolveTaskStageLabel('polling_upstream', '正在重新查询上游结果…')
+    record.progressPercent = Math.max(record.progressPercent || 0, 5)
+    connectGenerationTaskStream(record)
+  } catch {
+    // 错误已由 API 层提示；保持失败态供再次点击。
+  } finally {
+    record.requerying = false
+  }
 }
 
 // 下载生成结果（同源 /uploads 直接下载）。
@@ -3334,10 +3361,12 @@ onUnmounted(() => {
                     :stopped="Boolean(record.stopped)"
                     :videos="record.videos || []"
                     :error="record.error ? formatGenerationError(record.error, '视频生成失败') : ''"
+                    :requerying="Boolean(record.requerying)"
                     @stop="handleStopImageGeneration(record)"
                     @make-same="handleMakeSameRecord(record)"
                     @download="handleDownloadResult($event, 'video')"
                     @delete="handleDeleteRecord(record)"
+                    @requery="handleRequeryVideoRecord(record)"
                 />
                 <ImageLoadingRecord
                     v-else

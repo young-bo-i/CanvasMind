@@ -74,7 +74,8 @@ export interface VideoTaskExecutorContext {
 type VideoProtocol = 'openai-async' | 'chengmeng-async'
 
 const DEFAULT_POLL_INTERVAL_MS = 3000
-const DEFAULT_POLL_TIMEOUT_MS = 8 * 60 * 1000
+// 视频上游(尤其排队)常超过 8 分钟；放宽默认超时，仍可经 extraJson.pollTimeoutMs 覆盖。
+const DEFAULT_POLL_TIMEOUT_MS = 20 * 60 * 1000
 // 轮询期间允许的连续错误次数（网络抖动 / 上游偶发 5xx）；超过才判任务失败。
 const DEFAULT_MAX_POLL_ERRORS = 5
 

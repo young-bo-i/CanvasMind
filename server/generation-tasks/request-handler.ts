@@ -3,7 +3,7 @@ import { sendJson } from '../ai-gateway/shared'
 import { isPrismaConfigured } from '../db/prisma'
 import { writeScopedLog } from '../shared/logging'
 import { GENERATION_TASKS_BASE_PATH } from './constants'
-import { getGenerationTaskRecord, startGenerationTask, stopGenerationTask, subscribeGenerationTaskStream } from './service'
+import { getGenerationTaskRecord, requeryVideoGenerationTask, startGenerationTask, stopGenerationTask, subscribeGenerationTaskStream } from './service'
 import { GenerationTaskRequestError, readGenerationTaskBody, sendGenerationTaskError } from './shared'
 
 // 统一输出生成任务请求异常，便于排查启动、轮询和停止链路。
@@ -72,6 +72,13 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
 
     if (req.method === 'POST' && requestUrl === `${GENERATION_TASKS_BASE_PATH}/${encodeURIComponent(taskId)}/stop`) {
       const data = await stopGenerationTask(taskId, currentUser.id)
+      sendJson(res, 200, { data })
+      return
+    }
+
+    // 视频超时/失败后手动「重新查询」：复用续询机制再查一次上游。
+    if (req.method === 'POST' && requestUrl === `${GENERATION_TASKS_BASE_PATH}/${encodeURIComponent(taskId)}/requery`) {
+      const data = await requeryVideoGenerationTask(taskId, currentUser.id)
       sendJson(res, 200, { data })
       return
     }

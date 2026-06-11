@@ -24,6 +24,10 @@
               </svg>
               <span>{{ error }}</span>
             </div>
+            <!-- 可能只是上游排队慢：让用户主动再查一次上游结果 -->
+            <button type="button" class="video-requery-button" :disabled="requerying" @click="$emit('requery')">
+              {{ requerying ? '查询中…' : '重新查询' }}
+            </button>
           </div>
           <!-- 已停止 -->
           <div v-else-if="stopped" class="image-error-container">
@@ -101,9 +105,11 @@ const props = defineProps({
   /** 生成的视频 URL 列表 */
   videos: { type: Array as PropType<string[]>, default: () => [] },
   error: { type: String, default: '' },
+  /** 正在重新查询上游结果 */
+  requerying: { type: Boolean, default: false },
 })
 
-defineEmits(['stop', 'make-same', 'download', 'delete'])
+defineEmits(['stop', 'make-same', 'download', 'delete', 'requery'])
 
 const currentProgress = ref(props.progress)
 const currentProgressText = ref(props.progressText)
@@ -241,8 +247,10 @@ onUnmounted(() => {
 /* 错误状态 */
 .image-error-container {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   min-height: 120px;
   padding: 24px;
 }
@@ -253,6 +261,26 @@ onUnmounted(() => {
   gap: 8px;
   color: var(--functional-danger, #f53f3f);
   font-size: 14px;
+}
+
+.video-requery-button {
+  border: 1px solid var(--stroke-secondary, rgba(255, 255, 255, 0.18));
+  background: var(--bg-block-primary-default, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, #fff);
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.video-requery-button:hover:not(:disabled) {
+  background: var(--bg-block-primary-hover, rgba(255, 255, 255, 0.12));
+}
+
+.video-requery-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .stop-generate-button-canana {

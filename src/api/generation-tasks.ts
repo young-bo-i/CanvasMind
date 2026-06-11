@@ -115,6 +115,22 @@ export const stopGenerationTask = async (taskId: string, options: RequestOptions
   })
 }
 
+// 视频超时/失败后手动「重新查询」：再查一次上游(可能只是排队慢)，复用续询机制继续轮询。
+export const requeryVideoGenerationTask = async (taskId: string, options: RequestOptions = {}) => {
+  const response = await fetch(buildApiUrl(`${GENERATION_TASKS_API_PATH}/${encodeURIComponent(taskId)}/requery`), {
+    method: 'POST',
+    credentials: 'include',
+    signal: options.signal,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  })
+
+  return readApiData<PersistedGenerationRecord>(response, {
+    showErrorMessage: true,
+  })
+}
+
 // 订阅任务的实时状态事件流，页面切换回来后可直接重连。
 // 已内置自动重连（指数退避）+ watchdog（30s 无消息视为断流）。
 const ALLOWED_STREAM_EVENT_TYPES = new Set([
