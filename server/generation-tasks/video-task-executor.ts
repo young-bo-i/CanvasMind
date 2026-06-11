@@ -240,8 +240,9 @@ const buildVideoContentArray = (
   }
 
   body[contentField] = content
-  // prompt 已并入 content；默认移除顶层 prompt 避免重复，可经 keepTopLevelPrompt 保留。
-  if (readExtra(extraJson, 'keepTopLevelPrompt') !== true) {
+  // 默认保留顶层 prompt：CometAPI / new-api 等 OpenAI-video 兼容代理在提交校验时强制要 prompt。
+  // 仅当显式 keepTopLevelPrompt:false（如火山引擎 Ark 原生只吃 content）才移除。
+  if (readExtra(extraJson, 'keepTopLevelPrompt') === false) {
     delete body.prompt
   }
 }
