@@ -71,14 +71,29 @@ export const requireCurrentSessionUser = async (req: any, res: any) => {
   return currentUser
 }
 
-// 要求当前会话用户必须具备管理员角色。
+// 要求当前会话用户具备后台权限（管理员或超级管理员）。
 export const requireAdminSessionUser = async (req: any, res: any) => {
   const currentUser = await requireCurrentSessionUser(req, res)
   if (!currentUser) {
     return null
   }
 
-  if (currentUser.role !== 'ADMIN') {
+  if (currentUser.role !== 'ADMIN' && currentUser.role !== 'SUPER_ADMIN') {
+    sendForbiddenError(res)
+    return null
+  }
+
+  return currentUser
+}
+
+// 要求当前会话用户必须是超级管理员（新增管理员 / 改角色 / 删管理员等敏感操作）。
+export const requireSuperAdminSessionUser = async (req: any, res: any) => {
+  const currentUser = await requireCurrentSessionUser(req, res)
+  if (!currentUser) {
+    return null
+  }
+
+  if (currentUser.role !== 'SUPER_ADMIN') {
     sendForbiddenError(res)
     return null
   }

@@ -183,11 +183,28 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
       return
     }
 
+    // 图片按张计费：从请求体取 n/count（兼容 body 为对象或 JSON 字符串）。
+    const gatewayJsonBody = ((): Record<string, unknown> => {
+      const body = normalized.body
+      if (body && typeof body === 'object' && !Array.isArray(body)) return body as Record<string, unknown>
+      if (typeof body === 'string') {
+        try {
+          const parsed = JSON.parse(body)
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+        } catch {
+          return {}
+        }
+      }
+      return {}
+    })()
+    const gatewayImageCount = Math.max(1, Math.floor(Number(gatewayJsonBody.n ?? gatewayJsonBody.count) || 1))
+
     const billingDetail = shouldChargeJsonRequest
       ? await resolveGenerationPointCost({
         providerId: normalized.providerId,
         modelKey: normalized.modelKey,
         endpointType: billedJsonEndpointType as 'image' | 'video',
+        imageCount: billedJsonEndpointType === 'image' ? gatewayImageCount : undefined,
       })
       : { pointCost: 0, modelId: '', modelName: '' }
 

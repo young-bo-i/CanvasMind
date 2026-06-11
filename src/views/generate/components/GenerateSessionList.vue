@@ -75,89 +75,59 @@
         </div>
       </div>
       <span class="separator"></span>
-      <div class="container-KL2j0F" @click="emit('time-filter-click')">
-        <span class="trigger-AnFRb7">
-          <span class="filter-text-bBfqrS filter-text-MnA06c">{{ timeFilterLabel }}</span>
-          <svg
-            class="dropdown-arrow-qZsXaR"
-            fill="none"
-            height="1em"
-            preserveAspectRatio="xMidYMid meet"
-            role="presentation"
-            viewBox="0 0 24 24"
-            width="1em"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <g>
-              <path
-                clip-rule="evenodd"
-                d="M21.01 7.982A1.2 1.2 0 0 1 21 9.679l-8.156 8.06a1.2 1.2 0 0 1-1.688 0L3 9.68a1.2 1.2 0 0 1 1.687-1.707L12 15.199l7.313-7.227a1.2 1.2 0 0 1 1.697.01Z"
-                data-follow-fill="currentColor"
-                fill="currentColor"
-                fill-rule="evenodd"
-              ></path>
-            </g>
-          </svg>
-        </span>
-      </div>
+      <el-dropdown trigger="click" popper-class="generate-filter-popper" @command="(val: string) => onFilterSelect('time', val)">
+        <div class="container-KL2j0F">
+          <span class="trigger-AnFRb7">
+            <span class="filter-text-bBfqrS filter-text-MnA06c" :class="{ 'filter-text-active': selectedTime !== 'all' }">{{ timeLabel }}</span>
+            <svg class="dropdown-arrow-qZsXaR" fill="none" height="1em" preserveAspectRatio="xMidYMid meet" role="presentation" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
+              <g><path clip-rule="evenodd" d="M21.01 7.982A1.2 1.2 0 0 1 21 9.679l-8.156 8.06a1.2 1.2 0 0 1-1.688 0L3 9.68a1.2 1.2 0 0 1 1.687-1.707L12 15.199l7.313-7.227a1.2 1.2 0 0 1 1.697.01Z" data-follow-fill="currentColor" fill="currentColor" fill-rule="evenodd"></path></g>
+            </svg>
+          </span>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-for="opt in TIME_OPTIONS" :key="opt.value" :command="opt.value" :class="{ 'is-active': selectedTime === opt.value }">{{ opt.label }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <span class="separator"></span>
-      <div class="container-KL2j0F" @click="emit('type-filter-click')">
-        <span class="trigger-AnFRb7">
-          <span class="filter-text-bBfqrS">{{ typeFilterLabel }}</span>
-          <svg
-            class="dropdown-arrow-qZsXaR"
-            fill="none"
-            height="1em"
-            preserveAspectRatio="xMidYMid meet"
-            role="presentation"
-            viewBox="0 0 24 24"
-            width="1em"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <g>
-              <path
-                clip-rule="evenodd"
-                d="M21.01 7.982A1.2 1.2 0 0 1 21 9.679l-8.156 8.06a1.2 1.2 0 0 1-1.688 0L3 9.68a1.2 1.2 0 0 1 1.687-1.707L12 15.199l7.313-7.227a1.2 1.2 0 0 1 1.697.01Z"
-                data-follow-fill="currentColor"
-                fill="currentColor"
-                fill-rule="evenodd"
-              ></path>
-            </g>
-          </svg>
-        </span>
-      </div>
+      <el-dropdown trigger="click" popper-class="generate-filter-popper" @command="(val: string) => onFilterSelect('type', val)">
+        <div class="container-KL2j0F">
+          <span class="trigger-AnFRb7">
+            <span class="filter-text-bBfqrS" :class="{ 'filter-text-active': selectedType !== 'all' }">{{ typeLabel }}</span>
+            <svg class="dropdown-arrow-qZsXaR" fill="none" height="1em" preserveAspectRatio="xMidYMid meet" role="presentation" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
+              <g><path clip-rule="evenodd" d="M21.01 7.982A1.2 1.2 0 0 1 21 9.679l-8.156 8.06a1.2 1.2 0 0 1-1.688 0L3 9.68a1.2 1.2 0 0 1 1.687-1.707L12 15.199l7.313-7.227a1.2 1.2 0 0 1 1.697.01Z" data-follow-fill="currentColor" fill="currentColor" fill-rule="evenodd"></path></g>
+            </svg>
+          </span>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-for="opt in TYPE_OPTIONS" :key="opt.value" :command="opt.value" :class="{ 'is-active': selectedType === opt.value }">{{ opt.label }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <span class="separator"></span>
-      <div class="container-KL2j0F" @click="emit('action-filter-click')">
-        <span class="trigger-AnFRb7">
-          <span class="filter-text-bBfqrS">{{ actionFilterLabel }}</span>
-          <svg
-            class="dropdown-arrow-qZsXaR"
-            fill="none"
-            height="1em"
-            preserveAspectRatio="xMidYMid meet"
-            role="presentation"
-            viewBox="0 0 24 24"
-            width="1em"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <g>
-              <path
-                clip-rule="evenodd"
-                d="M21.01 7.982A1.2 1.2 0 0 1 21 9.679l-8.156 8.06a1.2 1.2 0 0 1-1.688 0L3 9.68a1.2 1.2 0 0 1 1.687-1.707L12 15.199l7.313-7.227a1.2 1.2 0 0 1 1.697.01Z"
-                data-follow-fill="currentColor"
-                fill="currentColor"
-                fill-rule="evenodd"
-              ></path>
-            </g>
-          </svg>
-        </span>
-      </div>
+      <el-dropdown trigger="click" popper-class="generate-filter-popper" @command="(val: string) => onFilterSelect('action', val)">
+        <div class="container-KL2j0F">
+          <span class="trigger-AnFRb7">
+            <span class="filter-text-bBfqrS" :class="{ 'filter-text-active': selectedAction !== 'all' }">{{ actionLabel }}</span>
+            <svg class="dropdown-arrow-qZsXaR" fill="none" height="1em" preserveAspectRatio="xMidYMid meet" role="presentation" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
+              <g><path clip-rule="evenodd" d="M21.01 7.982A1.2 1.2 0 0 1 21 9.679l-8.156 8.06a1.2 1.2 0 0 1-1.688 0L3 9.68a1.2 1.2 0 0 1 1.687-1.707L12 15.199l7.313-7.227a1.2 1.2 0 0 1 1.697.01Z" data-follow-fill="currentColor" fill="currentColor" fill-rule="evenodd"></path></g>
+            </svg>
+          </span>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-for="opt in ACTION_OPTIONS" :key="opt.value" :command="opt.value" :class="{ 'is-active': selectedAction === opt.value }">{{ opt.label }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 withDefaults(defineProps<{
   contentGeneratorHeight?: number
@@ -183,11 +153,53 @@ const emit = defineEmits<{
   'update:searchValue': [value: string]
   search: []
   'create-session': []
-  'time-filter-click': []
-  'type-filter-click': []
-  'action-filter-click': []
+  'time-filter-change': [value: string]
+  'type-filter-change': [value: string]
+  'action-filter-change': [value: string]
   'scroll-state': [payload: { scrollTop: number; isAtBottom: boolean; isScrollingUp: boolean }]
 }>()
+
+// 即梦风格筛选项：时间 / 生成类型 / 操作类型（文生 vs 图生）。
+const TIME_OPTIONS = [
+  { value: 'all', label: '全部时间' },
+  { value: 'today', label: '今天' },
+  { value: '7d', label: '近 7 天' },
+  { value: '30d', label: '近 30 天' },
+]
+const TYPE_OPTIONS = [
+  { value: 'all', label: '全部类型' },
+  { value: 'image', label: '图片' },
+  { value: 'video', label: '视频' },
+  { value: 'agent', label: '对话' },
+  { value: 'research', label: '研究' },
+]
+const ACTION_OPTIONS = [
+  { value: 'all', label: '全部操作' },
+  { value: 'text', label: '文生' },
+  { value: 'image', label: '图生' },
+]
+
+const selectedTime = ref('all')
+const selectedType = ref('all')
+const selectedAction = ref('all')
+
+// 未选时显示档位名（时间/生成类型/操作类型），选中后显示具体选项。
+const timeLabel = computed(() => selectedTime.value === 'all' ? '时间' : (TIME_OPTIONS.find(o => o.value === selectedTime.value)?.label || '时间'))
+const typeLabel = computed(() => selectedType.value === 'all' ? '生成类型' : (TYPE_OPTIONS.find(o => o.value === selectedType.value)?.label || '生成类型'))
+const actionLabel = computed(() => selectedAction.value === 'all' ? '操作类型' : (ACTION_OPTIONS.find(o => o.value === selectedAction.value)?.label || '操作类型'))
+
+const onFilterSelect = (kind: 'time' | 'type' | 'action', value: string) => {
+  if (kind === 'time') {
+    selectedTime.value = value
+    emit('time-filter-change', value)
+  } else if (kind === 'type') {
+    selectedType.value = value
+    emit('type-filter-change', value)
+  } else {
+    selectedAction.value = value
+    emit('action-filter-change', value)
+  }
+}
 
 const handleSearchInput = (event: Event) => {
   emit('update:searchValue', String((event.target as HTMLInputElement | null)?.value || ''))
@@ -284,3 +296,15 @@ onBeforeUnmount(() => {
   target.removeEventListener('scroll', handleScroll)
 })
 </script>
+
+<style scoped>
+/* 选中筛选项时高亮档位文字，并让触发器可点击 */
+.filter-text-active {
+  color: var(--el-color-primary, #7c5cff);
+  font-weight: 600;
+}
+
+.container-KL2j0F {
+  cursor: pointer;
+}
+</style>

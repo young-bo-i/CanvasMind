@@ -5,6 +5,26 @@ type VideoExecutionTask = {
   recordId: string
   userId: string
   abortController: AbortController
+  // 断点续询所需：运行时传入的是完整 RunningGenerationTask，这些 billed* 字段实际存在。
+  associationNo?: string
+  billedPointCost?: number
+  billedModelName?: string
+}
+
+// 提交成功后持久化进 GenerationRecord.metaJson.videoTask，供重启后续询恢复。
+export interface SavedVideoTask {
+  taskNo: string
+  protocol: VideoProtocol
+  providerId: string
+  modelKey: string
+  durationSeconds?: number
+  associationNo?: string
+  billedPointCost?: number
+  billedModelName?: string
+  startedAt: number
+  pollTimeoutMs: number
+  submittedAt: string
+  resumeCount?: number
 }
 
 // 上游 JSON 请求的统一返回结构（由 service 注入实现，便于执行器保持纯净）。
@@ -47,12 +67,16 @@ export interface VideoTaskExecutorContext {
   getGenerationRecordById: (recordId: string, currentUserId: string) => Promise<Record<string, unknown>>
   emitTaskStreamEvent: (recordId: string, event: GenerationTaskStreamEvent) => void
   logGenerationTask: (stage: string, detail: Record<string, unknown>) => void
+  // 提交成功后把 videoTask 元数据写进 GenerationRecord.metaJson（只改 metaJson 一列，不动 status/outputs）。
+  persistVideoTaskMeta: (recordId: string, userId: string, videoTask: SavedVideoTask) => Promise<void>
 }
 
 type VideoProtocol = 'openai-async' | 'chengmeng-async'
 
 const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_POLL_TIMEOUT_MS = 8 * 60 * 1000
+// 轮询期间允许的连续错误次数（网络抖动 / 上游偶发 5xx）；超过才判任务失败。
+const DEFAULT_MAX_POLL_ERRORS = 5
 
 // 安全读取嵌套字段，如 readPath(obj, 'data.task_no')。
 const readPath = (source: unknown, path: string): unknown => {
@@ -66,6 +90,35 @@ const readPath = (source: unknown, path: string): unknown => {
 }
 
 const toLowerStatus = (value: unknown) => String(value ?? '').trim().toLowerCase()
+
+// 健壮提取视频结果 URL：递归在响应里找 URL 字段（兼容 data[0].url / video_url / content.video_url
+// / output / result_url 等各家格式）。先找语义明确的视频 URL 键，再退到通用 url 键，避免误取封面图。
+const findVideoResultUrl = (data: unknown): string => {
+  const specificKeys = ['video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl', 'output_url']
+  const genericKeys = ['url']
+  const visit = (node: unknown, keys: string[], depth: number): string => {
+    if (!node || typeof node !== 'object' || depth > 6) return ''
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = visit(item, keys, depth + 1)
+        if (found) return found
+      }
+      return ''
+    }
+    const obj = node as Record<string, unknown>
+    for (const key of keys) {
+      const v = obj[key]
+      if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) return v.trim()
+    }
+    for (const key of Object.keys(obj)) {
+      const found = visit(obj[key], keys, depth + 1)
+      if (found) return found
+    }
+    return ''
+  }
+  // 两轮：先专找视频 URL 键，找不到再放宽到通用 url。
+  return visit(data, specificKeys, 0) || visit(data, genericKeys, 0)
+}
 
 const readExtra = (extraJson: Record<string, unknown> | null, key: string): unknown => {
   if (!extraJson || typeof extraJson !== 'object') return undefined
@@ -176,7 +229,12 @@ const submitVideoTask = async (
     prompt: params.prompt,
   }
   if (params.resolution) body.size = params.resolution
-  if (params.durationSeconds) body.seconds = params.durationSeconds
+  // 视频比例(如 16:9)。字段名按厂商配置(extraJson.ratioField，默认 'ratio')；
+  // 留空可关闭(ratioField='')。Seedance 等支持比例参数，不传则上游用默认/跟随参考图。
+  const ratioField = readStringExtra(extraJson, 'ratioField', 'ratio')
+  if (params.ratio && ratioField) body[ratioField] = params.ratio
+  // OpenAI/Sora 兼容视频接口的 seconds 是字符串（如 "4"/"8"）；发数字会被上游拒绝(invalid_request)。
+  if (params.durationSeconds) body.seconds = String(params.durationSeconds)
   if (params.images.length) body.input_reference = params.images[0]
 
   const result = await context.fetchUpstreamJson({
@@ -227,9 +285,18 @@ const queryVideoTask = async (
       throw new Error(`视频任务查询失败（${result.status}）`)
     }
     const status = toLowerStatus(readPath(result.data, readStringExtra(extraJson, 'statusField', 'data.status')))
+    // 优先用配置的 resultField，取不到再退到递归健壮提取。
     const resultUrl = String(readPath(result.data, readStringExtra(extraJson, 'resultField', 'data.result_url')) ?? '').trim()
+      || findVideoResultUrl(result.data)
     const completedStatuses = ['completed', 'succeeded', 'success', 'done', 'finished']
     const failedStatuses = ['failed', 'error', 'fail', 'cancelled', 'canceled', 'expired']
+    if (completedStatuses.includes(status) && !resultUrl) {
+      context.logGenerationTask('video_task:completed_no_url', {
+        taskNo,
+        status,
+        rawSnippet: String(result.rawText || JSON.stringify(result.data) || '').slice(0, 800),
+      })
+    }
     return {
       done: Boolean(resultUrl) && (completedStatuses.includes(status) || !status),
       failed: failedStatuses.includes(status),
@@ -250,13 +317,19 @@ const queryVideoTask = async (
     throw new Error(`视频任务查询失败（${result.status}）`)
   }
   const status = toLowerStatus(result.data?.status)
-  const resultUrl = String(
-    (Array.isArray(result.data?.data) ? result.data.data[0]?.url : undefined)
-    || result.data?.url
-    || '',
-  ).trim()
+  const resultUrl = findVideoResultUrl(result.data)
   const completedStatuses = ['completed', 'succeeded', 'success', 'done', 'finished']
   const failedStatuses = ['failed', 'error', 'fail', 'cancelled', 'canceled', 'expired']
+
+  // 上游已报完成但没解析到 URL：打印原始响应，便于定位确切字段（可经 extraJson.resultField 兜底）。
+  if (completedStatuses.includes(status) && !resultUrl) {
+    context.logGenerationTask('video_task:completed_no_url', {
+      taskNo,
+      status,
+      rawSnippet: String(result.rawText || JSON.stringify(result.data) || '').slice(0, 800),
+    })
+  }
+
   return {
     done: Boolean(resultUrl) && (completedStatuses.includes(status) || !status),
     failed: failedStatuses.includes(status),
@@ -332,14 +405,83 @@ export const executeVideoTask = async (
   const pollIntervalMs = readNumberExtra(upstream.extraJson, 'pollIntervalMs', DEFAULT_POLL_INTERVAL_MS)
   const pollTimeoutMs = readNumberExtra(upstream.extraJson, 'pollTimeoutMs', DEFAULT_POLL_TIMEOUT_MS)
   const startedAt = Date.now()
+
+  // 提交成功即持久化 taskNo 等元数据，供服务重启后续询恢复（只改 metaJson 一列）。
+  await context.persistVideoTaskMeta(task.recordId, task.userId, {
+    taskNo,
+    protocol,
+    providerId,
+    modelKey,
+    durationSeconds: params.durationSeconds || undefined,
+    associationNo: task.associationNo,
+    billedPointCost: task.billedPointCost,
+    billedModelName: task.billedModelName,
+    startedAt,
+    pollTimeoutMs,
+    submittedAt: new Date().toISOString(),
+    resumeCount: 0,
+  })
+
+  await pollVideoTask(task, payload, params, { taskNo, protocol, upstream, pollIntervalMs, pollTimeoutMs, startedAt }, context)
+}
+
+// 轮询直到完成/失败/超时并写入结果。submit 与 resume 共用。连续抖动按 maxPollErrors 容忍。
+const pollVideoTask = async (
+  task: VideoExecutionTask,
+  payload: GenerationTaskStartPayload,
+  params: VideoRequestParams,
+  poll: {
+    taskNo: string
+    protocol: VideoProtocol
+    upstream: ResolvedVideoProviderUpstream
+    pollIntervalMs: number
+    pollTimeoutMs: number
+    startedAt: number
+  },
+  context: VideoTaskExecutorContext,
+) => {
+  const { taskNo, protocol, upstream, pollIntervalMs, pollTimeoutMs, startedAt } = poll
+  // 连续轮询错误容忍：单次网络抖动 / 上游偶发 5xx 不应判死整个任务，连续失败超过上限才放弃。
+  const maxConsecutivePollErrors = readNumberExtra(upstream.extraJson, 'maxPollErrors', DEFAULT_MAX_POLL_ERRORS)
   let pollCount = 0
+  let consecutivePollErrors = 0
   let resultUrl = ''
 
   // 轮询直到完成 / 失败 / 超时；每轮检查中止信号，超时抛错触发退款。
   while (true) {
     await context.ensureTaskNotAborted(task)
 
-    const outcome = await queryVideoTask(protocol, taskNo, upstream, context, task.abortController.signal)
+    let outcome: PollOutcome
+    try {
+      outcome = await queryVideoTask(protocol, taskNo, upstream, context, task.abortController.signal)
+      consecutivePollErrors = 0
+    } catch (pollError) {
+      // 中止是用户/系统主动停止，不重试，直接抛出走停止/退款收口。
+      if (task.abortController.signal.aborted) {
+        throw pollError
+      }
+      consecutivePollErrors += 1
+      if (Date.now() - startedAt > pollTimeoutMs) {
+        throw new Error('视频生成超时')
+      }
+      if (consecutivePollErrors > maxConsecutivePollErrors) {
+        throw pollError instanceof Error ? pollError : new Error('视频任务查询连续失败')
+      }
+      context.logGenerationTask('video_task:poll_retry', {
+        recordId: task.recordId,
+        userId: task.userId,
+        consecutivePollErrors,
+        maxConsecutivePollErrors,
+        message: pollError instanceof Error ? pollError.message : String(pollError),
+      })
+      context.emitTaskProgressEvent(task.recordId, {
+        stage: 'polling_upstream',
+        message: `视频生成中…（网络波动重试 ${consecutivePollErrors}/${maxConsecutivePollErrors}）`,
+      })
+      await context.sleepWithAbortSignal(task.abortController.signal, pollIntervalMs)
+      continue
+    }
+
     if (outcome.failed) {
       throw new Error(`视频生成失败（上游状态：${outcome.statusText || 'unknown'}）`)
     }
@@ -396,4 +538,56 @@ export const executeVideoTask = async (
     taskNo,
     pollCount,
   })
+}
+
+// 断点续询：跳过 submit，用已持久化的 savedVideoTask 直接进入轮询。
+export const resumeVideoTask = async (
+  task: VideoExecutionTask,
+  payload: GenerationTaskStartPayload,
+  savedVideoTask: SavedVideoTask,
+  context: VideoTaskExecutorContext,
+) => {
+  await context.syncSharedTaskRuntime(task, 'running')
+  await context.ensureTaskNotAborted(task)
+
+  const providerId = String(savedVideoTask.providerId || '').trim()
+  const modelKey = String(savedVideoTask.modelKey || payload.modelKey || '').trim()
+  const taskNo = String(savedVideoTask.taskNo || '').trim()
+  if (!providerId || !modelKey || !taskNo) {
+    throw new Error('续询缺少必要的任务信息（providerId/modelKey/taskNo）')
+  }
+
+  const upstream = await context.resolveVideoProviderUpstream({ providerId, modelKey })
+  const protocol: VideoProtocol = savedVideoTask.protocol === 'chengmeng-async' ? 'chengmeng-async' : 'openai-async'
+  const pollIntervalMs = readNumberExtra(upstream.extraJson, 'pollIntervalMs', DEFAULT_POLL_INTERVAL_MS)
+  const pollTimeoutMs = Number(savedVideoTask.pollTimeoutMs)
+    || readNumberExtra(upstream.extraJson, 'pollTimeoutMs', DEFAULT_POLL_TIMEOUT_MS)
+  // 剩余超时 = 原总预算 − 已耗时（用原始 startedAt）；≤0 直接判超时失败 → 退款。
+  const startedAt = Number(savedVideoTask.startedAt) || Date.now()
+  if (Date.now() - startedAt > pollTimeoutMs) {
+    throw new Error('视频生成超时')
+  }
+
+  const params: VideoRequestParams = {
+    modelKey,
+    prompt: String(payload.prompt || '').trim(),
+    ratio: String(payload.ratio || '').trim(),
+    resolution: String(payload.resolution || '').trim(),
+    durationSeconds: Number(savedVideoTask.durationSeconds) || 0,
+    images: [],
+  }
+
+  context.logGenerationTask('video_task:resume', {
+    recordId: task.recordId,
+    userId: task.userId,
+    protocol,
+    taskNo,
+    elapsedMs: Date.now() - startedAt,
+  })
+  context.emitTaskProgressEvent(task.recordId, {
+    stage: 'polling_upstream',
+    message: '服务已恢复，正在继续查询视频生成结果…',
+  })
+
+  await pollVideoTask(task, payload, params, { taskNo, protocol, upstream, pollIntervalMs, pollTimeoutMs, startedAt }, context)
 }

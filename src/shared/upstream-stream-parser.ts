@@ -150,6 +150,56 @@ export const parseChatChunkError = (chunk: string) => {
   }
 }
 
+/** 归一化后的对话用量：输入/输出/缓存命中 token 数。 */
+export interface ChatUsage {
+  promptTokens: number
+  completionTokens: number
+  /**
+   * 缓存命中 token 数。语义按 OpenAI：cached_tokens 是 prompt_tokens 的子集，
+   * 计费时「非缓存输入 = prompt_tokens - cached_tokens」。
+   */
+  cachedTokens: number
+}
+
+/**
+ * 从上游响应/末尾 chunk 的 usage 字段抽取归一化用量，兼容 OpenAI 与 Anthropic 命名：
+ * - OpenAI：usage.prompt_tokens / completion_tokens / prompt_tokens_details.cached_tokens
+ * - Anthropic：usage.input_tokens / output_tokens / cache_read_input_tokens
+ * 三者全 0 或缺失则返回 null（视为本 chunk 不含 usage）。
+ */
+export const extractUsageFromJsonPayload = (result: any): ChatUsage | null => {
+  const usage = result?.usage
+  if (!usage || typeof usage !== 'object') {
+    return null
+  }
+
+  const toCount = (value: unknown) => {
+    const num = Number(value)
+    return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0
+  }
+
+  const promptTokens = toCount(usage.prompt_tokens ?? usage.input_tokens)
+  const completionTokens = toCount(usage.completion_tokens ?? usage.output_tokens)
+  const cachedTokens = toCount(
+    usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens,
+  )
+
+  if (!promptTokens && !completionTokens && !cachedTokens) {
+    return null
+  }
+
+  return { promptTokens, completionTokens, cachedTokens }
+}
+
+/** 与 parseChatChunkText 对偶：从单个 SSE chunk 抽取归一化用量（无则 null）。 */
+export const parseChatChunkUsage = (chunk: string): ChatUsage | null => {
+  try {
+    return extractUsageFromJsonPayload(JSON.parse(chunk))
+  } catch {
+    return null
+  }
+}
+
 export const extractImageUrlsFromJsonResponse = (result: any) => {
   const urls: string[] = []
 

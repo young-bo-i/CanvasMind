@@ -21,7 +21,11 @@ export const handleAdminAuditLogsRequest = async (req: any, res: any) => {
 
     if (req.method === 'GET' && requestPath === ADMIN_AUDIT_LOGS_BASE_PATH) {
       const query = readAdminAuditLogsQuery(String(req.url || ''))
-      const data = await listAdminAuditLogs(query)
+      const data = await listAdminAuditLogs({
+        ...query,
+        viewerId: currentUser.id,
+        viewerRole: currentUser.role,
+      })
       sendJson(res, 200, { data })
       return
     }

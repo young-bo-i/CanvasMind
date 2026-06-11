@@ -21,6 +21,10 @@ export const adminUserStatusDictionary = {
 } as const satisfies Record<string, AdminDictionaryItem>
 
 export const adminUserRoleDictionary = {
+  SUPER_ADMIN: {
+    label: '超级管理员',
+    tone: 'warning',
+  },
   ADMIN: {
     label: '管理员',
     tone: 'info',

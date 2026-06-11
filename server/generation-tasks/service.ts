@@ -1,6 +1,10 @@
-import { getGenerationRecordById, createGenerationRecord, updateGenerationRecord } from '../generation-records/service'
+import { getGenerationRecordById, createGenerationRecord, updateGenerationRecord, persistVideoTaskMeta, markGenerationRecordFailed } from '../generation-records/service'
 import type { GenerationRecordPayload } from '../generation-records/shared'
 import type { GenerationTaskStartPayload, GenerationTaskStreamEvent } from './shared'
+import { prisma } from '../db/prisma'
+import { acquireRedisLock, releaseRedisLock } from '../redis/lock'
+import { isRedisEnabled } from '../redis/config'
+import { redisKeys } from '../redis/keys'
 import { resolveGatewayProviderUpstream, resolveVideoProviderUpstream } from '../provider-config/service'
 import { resolveImageModelMaxImagesPerRequest } from '../provider-config/model-service'
 import {
@@ -8,6 +12,10 @@ import {
   consumeGenerationPoints,
   refundGenerationPoints,
   resolveGenerationPointCost,
+  settleChatPointsByUsage,
+  getMembershipBillingMultiplier,
+  checkUserModelMembershipAccess,
+  findConsumeByRecordId,
 } from '../marketing-center/service'
 import { resolveGenerationTaskStrategy, type GenerationTaskStrategyKey } from './strategy'
 import {
@@ -55,7 +63,7 @@ import {
 import { GenerationTaskRequestError } from './shared'
 import { getGenerationTaskExecutionStrategy, type TaskAbortReason } from './execution-strategies'
 import { executeImageTask } from './image-task-executor'
-import { executeVideoTask } from './video-task-executor'
+import { executeVideoTask, resumeVideoTask, type SavedVideoTask } from './video-task-executor'
 import { executeAgentChatTaskFlow } from './agent-chat-task-executor'
 import { executeAgentWorkspaceTaskFlow } from './agent-workspace-task-executor'
 import { executeResearchTaskFlow } from '../research/executor'
@@ -93,6 +101,7 @@ import {
   parseChatChunkText,
   parseChatChunkReasoning,
   parseChatChunkError,
+  parseChatChunkUsage,
   requestImageGeneration,
   requestImageEdit,
   resolveWorkspaceImageModel,
@@ -257,19 +266,26 @@ const fetchVideoUpstreamJson = async (input: {
 }
 
 const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: GenerationTaskStartPayload) => {
-  await executeVideoTask(task, payload, {
+  const videoContext = {
     syncSharedTaskRuntime,
-    ensureTaskNotAborted: (runningTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
-    emitTaskProgressEvent: (recordId, input) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
+    ensureTaskNotAborted: (runningTask: RunningGenerationTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
+    emitTaskProgressEvent: (recordId: string, input: { stage: string; stopped?: boolean; message?: string }) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
     sleepWithAbortSignal,
     resolveVideoProviderUpstream,
     fetchUpstreamJson: fetchVideoUpstreamJson,
     buildInitialRecordPayload,
     updateGenerationRecord,
     getGenerationRecordById,
-    emitTaskStreamEvent: (recordId, event) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
+    emitTaskStreamEvent: (recordId: string, event: GenerationTaskStreamEvent) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
     logGenerationTask,
-  })
+    persistVideoTaskMeta,
+  }
+  // 续询恢复：task 上挂了 resumeVideoTask 标志时走续询(skip submit)，否则正常 submit+poll。
+  if (task.resumeVideoTask) {
+    await resumeVideoTask(task, payload, task.resumeVideoTask, videoContext)
+    return
+  }
+  await executeVideoTask(task, payload, videoContext)
 }
 
 const persistAgentTaskContentIfNeeded = async (input: {
@@ -318,6 +334,8 @@ const executeAgentChatTask = async (task: RunningGenerationTask, payload: Genera
     parseChatChunkError,
     parseChatChunkText,
     parseChatChunkReasoning,
+    parseChatChunkUsage,
+    settleChatPointsByUsage,
     extractChatTextFromJsonPayload,
     extractChatReasoningFromJsonPayload,
     emitTaskContentDeltaEvent: (recordId, input) => emitTaskContentDeltaEvent(recordId, input, taskEventEmitterContext),
@@ -469,6 +487,8 @@ const refundTaskPointsIfNeeded = async (task: RunningGenerationTask, reason: str
     providerId: task.billedProviderId,
     modelKey: task.billedModelKey,
     modelName: task.billedModelName,
+    // DB 级幂等：同一任务退款至多一次（跨重启/恢复/孤儿 reap 都安全）。
+    dedupeKey: `gen-refund:${task.associationNo}`,
     metaJson: {
       refundReason: reason,
       generationRecordId: task.recordId,
@@ -554,6 +574,8 @@ const buildTaskLifecycleContext = () => ({
   attachGenerationPointRecordId,
   resolveGenerationPointCost,
   consumeGenerationPoints,
+  getMembershipBillingMultiplier,
+  checkUserModelMembershipAccess,
   acquireTaskConcurrencySlots: async ({ userId, providerId, skillKey }: {
     userId: string
     providerId: string
@@ -615,6 +637,166 @@ export const getGenerationTaskRecord = async (recordId: string, currentUserId: s
 
 export const stopGenerationTask = async (recordId: string, currentUserId: string) => {
   return stopGenerationTaskLifecycle(recordId, currentUserId, buildTaskLifecycleContext())
+}
+
+// ===== 断点续询：服务重启后恢复在途视频任务 / 回收不可续询的孤儿 =====
+
+const MAX_VIDEO_RESUME_COUNT = 3
+
+const readVideoTaskMeta = (metaJson: unknown): SavedVideoTask | null => {
+  if (!metaJson || typeof metaJson !== 'object' || Array.isArray(metaJson)) return null
+  const vt = (metaJson as Record<string, unknown>).videoTask
+  if (!vt || typeof vt !== 'object' || Array.isArray(vt)) return null
+  return vt as SavedVideoTask
+}
+
+type ResumeRecordRow = {
+  id: string
+  userId: string
+  prompt: string
+  modelKey: string | null
+  ratio: string | null
+  resolution: string | null
+  durationLabel: string | null
+  feature: string | null
+}
+
+const buildResumePayload = (rec: ResumeRecordRow, videoTask: SavedVideoTask): GenerationTaskStartPayload => ({
+  type: 'video',
+  source: 'generate',
+  prompt: String(rec.prompt || ''),
+  model: String(rec.modelKey || ''),
+  modelKey: String(rec.modelKey || videoTask.modelKey || ''),
+  ratio: String(rec.ratio || ''),
+  resolution: String(rec.resolution || ''),
+  duration: String(rec.durationLabel || ''),
+  feature: String(rec.feature || ''),
+  requestBody: { providerId: videoTask.providerId },
+})
+
+// 回收不可续询的任务（未提交孤儿 / 续询超限 / image 孤儿）：退款一次（DB dedupeKey 幂等）+ 记录置失败。
+const reapAbandonedTask = async (recordId: string, userId: string, reason: string) => {
+  const consume = await findConsumeByRecordId(recordId)
+  if (consume?.associationNo && consume.pointCost > 0) {
+    await refundGenerationPoints({
+      userId: consume.userId || userId,
+      pointCost: consume.pointCost,
+      sourceId: consume.associationNo,
+      associationNo: consume.associationNo,
+      endpointType: consume.endpointType,
+      providerId: consume.providerId,
+      modelKey: consume.modelKey,
+      modelName: consume.modelName,
+      dedupeKey: `gen-refund:${consume.associationNo}`,
+      metaJson: { refundReason: reason, generationRecordId: recordId },
+    })
+  }
+  await markGenerationRecordFailed(recordId, userId, reason)
+}
+
+const resumeInflightVideoTasks = async () => {
+  const records = await prisma.generationRecord.findMany({
+    where: { type: 'VIDEO', status: { in: ['PENDING', 'RUNNING'] }, finishedAt: null },
+    select: {
+      id: true, userId: true, prompt: true, modelKey: true,
+      ratio: true, resolution: true, durationLabel: true, feature: true, metaJson: true,
+    },
+  })
+  for (const rec of records) {
+    if (getLocalRunningTask(rec.id)) continue
+    const videoTask = readVideoTaskMeta(rec.metaJson)
+
+    // 未提交上游就崩了 → 孤儿，退款 + 失败。
+    if (!videoTask?.submittedAt || !videoTask?.taskNo) {
+      await reapAbandonedTask(rec.id, rec.userId, '服务重启，任务已中断')
+      logGenerationTask('task_resume:reap_unsubmitted_video', { recordId: rec.id })
+      continue
+    }
+
+    // 续询次数超限 → 不再重试，退款 + 失败（避免坏 taskNo 每次重启都重试到超时）。
+    if ((videoTask.resumeCount || 0) >= MAX_VIDEO_RESUME_COUNT) {
+      await reapAbandonedTask(rec.id, rec.userId, '续询超过重试上限，任务已中断')
+      logGenerationTask('task_resume:cap_exceeded', { recordId: rec.id, resumeCount: videoTask.resumeCount })
+      continue
+    }
+
+    // 补全计费字段（老数据/缺失时按记录反查 CONSUME 流水）。
+    let associationNo = String(videoTask.associationNo || '').trim()
+    let billedPointCost = Number(videoTask.billedPointCost || 0)
+    if (!associationNo) {
+      const consume = await findConsumeByRecordId(rec.id)
+      associationNo = String(consume?.associationNo || '').trim()
+      billedPointCost = billedPointCost || Number(consume?.pointCost || 0)
+    }
+
+    const nextVideoTask: SavedVideoTask = {
+      ...videoTask,
+      resumeCount: (videoTask.resumeCount || 0) + 1,
+      associationNo: associationNo || undefined,
+      billedPointCost: billedPointCost || undefined,
+    }
+    await persistVideoTaskMeta(rec.id, rec.userId, nextVideoTask)
+
+    const task: RunningGenerationTask = {
+      recordId: rec.id,
+      userId: rec.userId,
+      type: 'video',
+      strategyKey: 'video',
+      abortController: new AbortController(),
+      associationNo,
+      billedEndpointType: 'video',
+      billedPointCost,
+      billedProviderId: String(videoTask.providerId || ''),
+      billedModelKey: String(videoTask.modelKey || rec.modelKey || ''),
+      billedModelName: String(videoTask.billedModelName || ''),
+      refundCommitted: false,
+      // 恢复不重占并发槽（旧 Redis 计数重启已不准）。
+      concurrencySlots: [],
+      resumeVideoTask: nextVideoTask,
+    }
+    setLocalRunningTask(task)
+    logGenerationTask('task_resume:resume_video', { recordId: rec.id, taskNo: videoTask.taskNo, resumeCount: nextVideoTask.resumeCount })
+    runTaskInBackground(task, buildResumePayload(rec, videoTask))
+  }
+}
+
+// image 任务不可续询（单次请求执行），崩在途会卡 RUNNING 且不退款；启动时一律回收。
+const reapInflightImageTasks = async () => {
+  const records = await prisma.generationRecord.findMany({
+    where: { type: 'IMAGE', status: { in: ['PENDING', 'RUNNING'] }, finishedAt: null },
+    select: { id: true, userId: true },
+  })
+  for (const rec of records) {
+    if (getLocalRunningTask(rec.id)) continue
+    await reapAbandonedTask(rec.id, rec.userId, '服务重启，任务已中断')
+    logGenerationTask('task_resume:reap_image', { recordId: rec.id })
+  }
+}
+
+// 启动钩子：扫描在途任务，恢复视频续询、回收孤儿。best-effort 全局扫描锁防多实例重复扫库；
+// per-record 执行锁(runTaskWithExecutionLock)是去重的最终保证。
+export const bootstrapTaskResume = async () => {
+  try {
+    let scanLock: Awaited<ReturnType<typeof acquireRedisLock>> = null
+    if (isRedisEnabled()) {
+      scanLock = await acquireRedisLock(redisKeys.cache('task-resume-scan', 'global'), 120_000)
+      if (!scanLock) {
+        logGenerationTask('task_resume:skip_other_instance', {})
+        return
+      }
+    }
+    try {
+      await resumeInflightVideoTasks()
+      await reapInflightImageTasks()
+      logGenerationTask('task_resume:bootstrap_done', {})
+    } finally {
+      if (scanLock) await releaseRedisLock(scanLock)
+    }
+  } catch (error) {
+    logGenerationTask('task_resume:bootstrap_failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 export { subscribeGenerationTaskStream }

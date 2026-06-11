@@ -10,6 +10,9 @@ export interface ListAdminAuditLogsOptions {
   createdTo?: string
   page?: number
   pageSize?: number
+  // 归属隔离：普通管理员仅见自己的操作日志；超管全量。
+  viewerId?: string
+  viewerRole?: string
 }
 
 const readStringQuery = (searchParams: URLSearchParams, key: string) => String(searchParams.get(key) || '').trim()

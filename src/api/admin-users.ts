@@ -8,7 +8,7 @@ export interface AdminUserItem {
   maskedEmail: string
   maskedPhone: string
   avatarUrl: string
-  role: 'USER' | 'ADMIN'
+  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN'
   status: 'ANONYMOUS' | 'ACTIVE' | 'DISABLED' | string
   createdAt: string
   updatedAt: string
@@ -167,6 +167,8 @@ export interface CreateAdminUserPayload {
   email?: string
   phone?: string
   avatarUrl?: string
+  username?: string
+  password?: string
   role?: 'USER' | 'ADMIN'
   status?: 'ANONYMOUS' | 'ACTIVE' | 'DISABLED'
 }

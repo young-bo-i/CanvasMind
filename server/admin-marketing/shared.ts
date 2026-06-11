@@ -15,6 +15,8 @@ export interface MarketingMembershipLevelPayload {
   iconUrl?: string
   monthlyBonusPoints?: number
   storageCapacity?: number
+  // 会员积分消耗减免百分比(0-100)。
+  pointDiscountPercent?: number
   benefitsJson?: unknown
   isEnabled?: boolean
   sortOrder?: number

@@ -48,7 +48,21 @@
                                         aria-hidden="true"
                                     ></div>
                                     <Transition name="work-detail-img" mode="out-in">
+                                      <video
+                                          v-if="isVideo"
+                                          :key="videoSrc"
+                                          class="image-eTuIBd noAnimation home-work-detail-main-img"
+                                          :src="videoSrc"
+                                          controls
+                                          autoplay
+                                          muted
+                                          loop
+                                          playsinline
+                                          @loadeddata="onDetailImageLoad"
+                                          @error="onDetailImageError">
+                                      </video>
                                       <img
+                                          v-else
                                           :key="imageSrc"
                                           data-apm-action="ai-generated-image-detail-card"
                                           draggable="false"
@@ -323,7 +337,10 @@
                         </div>
                       </div>
                       <div class="action-buttons-wrapper">
-                        <div tabindex="0" class="operation-button-ZGVDtf">
+                        <div tabindex="0" class="operation-button-ZGVDtf" role="button"
+                             @click.stop="emit('make-same')"
+                             @keydown.enter.prevent="emit('make-same')"
+                             @keydown.space.prevent="emit('make-same')">
                           <svg width="1em" height="1em" viewBox="0 0 24 24"
                                preserveAspectRatio="xMidYMid meet"
                                fill="none" role="presentation"
@@ -338,7 +355,11 @@
                             </g>
                           </svg>
                           <p class="operation-text">{{ makeSameLabel }}</p></div>
-                        <div tabindex="0" class="operation-button-ZGVDtf">
+                        <!-- 用作参考图：仅图片作品（视频不能当参考图，隐藏） -->
+                        <div v-if="!isVideo" tabindex="0" class="operation-button-ZGVDtf" role="button"
+                             @click.stop="emit('use-as-reference')"
+                             @keydown.enter.prevent="emit('use-as-reference')"
+                             @keydown.space.prevent="emit('use-as-reference')">
                           <svg width="1em" height="1em" viewBox="0 0 24 24"
                                preserveAspectRatio="xMidYMid meet"
                                fill="none" role="presentation"
@@ -401,6 +422,10 @@ const fallbackAvatarStyle =
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   imageSrc: { type: String, default: '' },
+  /** 是否为视频作品；为真时主区渲染 <video> 而非 <img> */
+  isVideo: { type: Boolean, default: false },
+  /** 视频播放地址（isVideo 时使用） */
+  videoSrc: { type: String, default: '' },
   /** 当前画廊条目数；大于 1 时可点左侧上下箭头切换 */
   galleryLength: { type: Number, default: 0 },
   ownerId: { type: String, default: '' },
@@ -422,7 +447,7 @@ const props = defineProps({
   usePromptLabel: { type: String, default: '使用提示词' },
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'gallery-nav', 'content-send', 'favorite', 'delete', 'report'])
+const emit = defineEmits(['update:modelValue', 'close', 'gallery-nav', 'content-send', 'favorite', 'delete', 'report', 'make-same', 'use-as-reference'])
 
 const dialogRef = ref(/** @type {HTMLElement | null} */ (null))
 const contentGeneratorRef = ref(/** @type {InstanceType<typeof ContentGenerator> | null} */ (null))

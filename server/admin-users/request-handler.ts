@@ -11,6 +11,7 @@ import {
   createAdminUser,
   deleteAdminUser,
   getAdminUserDetail,
+  isUserOwnedByAdmin,
   listAdminUserMembershipOrders,
   listAdminUsers,
   resetAdminUserLoginState,
@@ -77,6 +78,8 @@ const readAdminUserCreateBody = async (req: any) => {
     avatarUrl?: string
     role?: UserRole
     status?: UserStatus
+    username?: string
+    password?: string
   }>(req)
 
   const role = payload?.role === 'ADMIN' ? 'ADMIN' : 'USER'
@@ -91,6 +94,8 @@ const readAdminUserCreateBody = async (req: any) => {
     avatarUrl: payload?.avatarUrl,
     role,
     status,
+    username: payload?.username,
+    password: payload?.password,
   }
 }
 
@@ -182,15 +187,34 @@ export const handleAdminUsersRequest = async (req: any, res: any) => {
     const requestPath = String(req.url || '').split('?')[0]
     const { suffix, targetUserId, action } = splitAdminUserPath(requestPath)
 
+    // 归属隔离：普通管理员只能对自己名下用户做任何针对 targetUserId 的读写；超管放行。
+    if (targetUserId && currentUser.role !== 'SUPER_ADMIN') {
+      const owned = await isUserOwnedByAdmin(targetUserId, currentUser.id)
+      if (!owned) {
+        sendAdminUsersError(res, 403, '无权操作该用户')
+        return
+      }
+    }
+
     if (req.method === 'GET' && requestPath === ADMIN_USERS_BASE_PATH) {
       const query = readAdminUserListQuery(req)
-      const data = await listAdminUsers(query)
+      // 归属隔离：把当前查看者身份带入，超管看全部、普通管理员仅看自己创建的。
+      const data = await listAdminUsers({
+        ...query,
+        viewerId: currentUser.id,
+        viewerRole: currentUser.role,
+      })
       sendJson(res, 200, { data })
       return
     }
 
     if (req.method === 'POST' && requestPath === ADMIN_USERS_BASE_PATH) {
       const payload = await readAdminUserCreateBody(req)
+      // 仅超管能直接创建「管理员」；普通管理员只能创建普通用户。
+      if (payload.role === 'ADMIN' && currentUser.role !== 'SUPER_ADMIN') {
+        sendAdminUsersError(res, 403, '只有超级管理员可以创建管理员')
+        return
+      }
       const data = await createAdminUser({
         currentUserId: currentUser.id,
         ...payload,
@@ -209,6 +233,11 @@ export const handleAdminUsersRequest = async (req: any, res: any) => {
     }
 
     if (req.method === 'PATCH' && suffix && !action) {
+      // 改角色（授予/撤销管理员）仅超管。
+      if (currentUser.role !== 'SUPER_ADMIN') {
+        sendAdminUsersError(res, 403, '只有超级管理员可以修改用户角色')
+        return
+      }
       const payload = await readAdminUserUpdateBody(req)
       const before = await getAdminUserDetail(targetUserId)
       const data = await updateAdminUserRole({
@@ -327,6 +356,11 @@ export const handleAdminUsersRequest = async (req: any, res: any) => {
     }
 
     if (req.method === 'DELETE' && targetUserId && !action) {
+      // 删除用户仅超管。
+      if (currentUser.role !== 'SUPER_ADMIN') {
+        sendAdminUsersError(res, 403, '只有超级管理员可以删除用户')
+        return
+      }
       const before = await getAdminUserDetail(targetUserId)
       const data = await deleteAdminUser({
         targetUserId,

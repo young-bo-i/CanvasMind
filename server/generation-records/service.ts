@@ -1106,6 +1106,64 @@ export const createGenerationRecord = async (payload: GenerationRecordPayload, c
   return serializeGenerationRecord(record)
 }
 
+// 只更新记录的 metaJson.videoTask（不动 status/outputs/finishedAt），供视频断点续询持久化 taskNo 等。
+// 浅合并保留既有 metaJson 其它键。
+export const persistVideoTaskMeta = async (recordId: string, userId: string, videoTask: unknown) => {
+  const id = String(recordId || '').trim()
+  if (!id) return
+  const existing = await prisma.generationRecord.findFirst({
+    where: { id, userId },
+    select: { metaJson: true },
+  })
+  if (!existing) return
+  const baseMeta = existing.metaJson && typeof existing.metaJson === 'object' && !Array.isArray(existing.metaJson)
+    ? existing.metaJson as Record<string, unknown>
+    : {}
+  await prisma.generationRecord.update({
+    where: { id },
+    data: { metaJson: { ...baseMeta, videoTask } as any },
+  })
+}
+
+// 直接把记录标记为失败（status=FAILED + finishedAt + 错误信息），不重建子表。
+// 供断点续询孤儿回收：被中断的任务直接置失败，避免 updateGenerationRecord 的子表重建副作用。
+export const markGenerationRecordFailed = async (recordId: string, userId: string, errorMessage: string) => {
+  const id = String(recordId || '').trim()
+  if (!id) return
+  await prisma.generationRecord.updateMany({
+    where: { id, userId },
+    data: {
+      status: 'FAILED',
+      errorMessage: String(errorMessage || '任务已中断'),
+      finishedAt: new Date(),
+    },
+  })
+}
+
+// 删除生成记录：仅能删自己的；同事务清理输出与关联资产，避免首页/资产页残留。
+export const deleteGenerationRecord = async (id: string, currentUserId: string) => {
+  const recordId = String(id || '').trim()
+  const userId = String(currentUserId || '').trim()
+  if (!recordId || !userId) return false
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    const record = await tx.generationRecord.findFirst({
+      where: { id: recordId, userId },
+      select: { id: true },
+    })
+    if (!record) return false
+    await tx.assetItem.deleteMany({ where: { generationRecordId: recordId, userId } })
+    await tx.generationOutput.deleteMany({ where: { generationRecordId: recordId } })
+    await tx.generationRecord.delete({ where: { id: recordId } })
+    return true
+  })
+
+  if (deleted) {
+    await invalidateAssetItemsCaches()
+  }
+  return deleted
+}
+
 // 更新已有生成记录，采用“主记录更新 + 子表重建”的方式保持结构简单
 export const updateGenerationRecord = async (id: string, payload: GenerationRecordPayload, currentUserId: string) => {
   logGenerationRecord('update_generation_record:start', {

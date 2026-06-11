@@ -255,9 +255,10 @@ const buildFeedItemFromAsset = (item) => {
   return {
     id: item.id,
     isVideo,
-    // 图片用预览图；视频优先用封面/缩略图作为海报，没有则用视频本身（由 <video> 渲染首帧）
-    src: buildAssetUrl(isVideo ? (item.coverUrl || item.thumbnailUrl || item.previewUrl || '') : (item.previewUrl || item.fileUrl)),
-    videoUrl: isVideo ? buildAssetUrl(item.fileUrl) : '',
+    // 图片用预览图；视频海报只用真实封面/缩略图（没有就留空，避免把 mp4 当海报导致黑块）
+    src: buildAssetUrl(isVideo ? (item.coverUrl || item.thumbnailUrl || '') : (item.previewUrl || item.fileUrl)),
+    // 视频地址带 #t=0.1 媒体片段，让浏览器在无封面时也渲染出首帧作为预览
+    videoUrl: isVideo && item.fileUrl ? `${buildAssetUrl(item.fileUrl)}#t=0.1` : '',
     createdAt: item.createdAt,
     alt: item.title || item.promptText || item.id,
     promptText: item.promptText,
@@ -367,6 +368,10 @@ function onFeedImgLoad(ev, index) {
 function onFeedVideoLoad(ev, index) {
   const el = ev.target
   if (!el || !el.videoWidth || !el.videoHeight) return
+  // 无封面图时 seek 到首帧，强制浏览器渲染出预览画面（否则是黑块）。
+  try {
+    if (!el.currentTime) el.currentTime = 0.1
+  } catch {}
   const next = feedNaturalSizes.value.slice()
   next[index] = { w: el.videoWidth, h: el.videoHeight }
   feedNaturalSizes.value = next
@@ -564,6 +569,9 @@ function openWorkDetailFromFeed(item, index) {
     gallery: feedItems.value.map((it) => ({
       id: it.id,
       imageSrc: it.src,
+      isVideo: Boolean(it.isVideo),
+      // 详情播放用干净地址（去掉首帧预览的 #t 片段）
+      videoSrc: it.isVideo ? String(it.videoUrl || '').split('#')[0] : '',
       promptText: it.promptText || it.alt,
       user: it.user,
       favoriteCount: it.favoriteCount,

@@ -36,7 +36,14 @@ const normalizeBoolean = (value: string, defaultValue: boolean) => {
 }
 
 const normalizeInteger = (value: string, defaultValue: number, minValue = 1) => {
-  const parsed = Number(value)
+  // 注意：Number('') === 0（有限值），若不先判空，未设置的环境变量会被错误地当成 0 → clamp 成 minValue(1)，
+  // 而非回落到默认值。所以空白一律用默认值。
+  const trimmed = String(value || '').trim()
+  if (!trimmed) {
+    return defaultValue
+  }
+
+  const parsed = Number(trimmed)
   if (!Number.isFinite(parsed)) {
     return defaultValue
   }
@@ -45,7 +52,12 @@ const normalizeInteger = (value: string, defaultValue: number, minValue = 1) => 
 }
 
 const normalizeOptionalInteger = (value: string, defaultValue: number, minValue = 0) => {
-  const parsed = Number(value)
+  const trimmed = String(value || '').trim()
+  if (!trimmed) {
+    return defaultValue
+  }
+
+  const parsed = Number(trimmed)
   if (!Number.isFinite(parsed)) {
     return defaultValue
   }

@@ -35,6 +35,7 @@ import { isGenerationSessionsPath } from './generation-sessions/constants'
 import { handleGenerationSessionsRequest } from './generation-sessions/request-handler'
 import { isGenerationTasksPath } from './generation-tasks/constants'
 import { handleGenerationTasksRequest } from './generation-tasks/request-handler'
+import { bootstrapTaskResume } from './generation-tasks/service'
 import { PROVIDER_CONFIG_MATCH_PATHS } from './provider-config/constants'
 import { handleProviderConfigRequest } from './provider-config/request-handler'
 import { isStorageConfigsPath } from './storage-config/constants'
@@ -628,4 +629,9 @@ server.listen(serverPort, '0.0.0.0', () => {
   writeScopedLog('info', '服务端', `上传目录: ${uploadsDir}`)
   writeScopedLog('info', '服务端', `CORS 来源: ${allowedOrigins.join(', ')}`)
   writeScopedLog('info', '服务端', `Redis: ${resolveRedisStartupSummary()}`)
+
+  // 断点续询：延迟 ~8s（待 DB/Redis warmup）扫描在途任务，恢复视频续询、回收孤儿。不阻塞监听。
+  setTimeout(() => {
+    void bootstrapTaskResume()
+  }, 8000)
 })

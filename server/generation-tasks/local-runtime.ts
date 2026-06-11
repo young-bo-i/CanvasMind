@@ -1,4 +1,5 @@
 import type { GenerationTaskStreamEvent } from './shared'
+import type { SavedVideoTask } from './video-task-executor'
 
 export interface LocalRunningGenerationTask {
   recordId: string
@@ -20,6 +21,8 @@ export interface LocalRunningGenerationTask {
     limit: number
     currentCount: number
   }>
+  // 断点续询标志：由启动扫描器重建任务时挂上，executeVideoGenerationTask 据此走续询而非提交。
+  resumeVideoTask?: SavedVideoTask
 }
 
 const runningGenerationTasks = new Map<string, LocalRunningGenerationTask>()

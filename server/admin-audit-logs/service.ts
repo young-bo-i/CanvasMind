@@ -74,6 +74,11 @@ const buildAdminAuditLogWhere = async (options: ListAdminAuditLogsOptions): Prom
     where.operatorUserId = operatorIds.length ? { in: operatorIds } : '__NO_MATCH__'
   }
 
+  // 归属隔离：普通管理员只看自己的操作日志（覆盖上面的关键词过滤）；超管全量。
+  if (options.viewerRole && options.viewerRole !== 'SUPER_ADMIN' && options.viewerId) {
+    where.operatorUserId = options.viewerId
+  }
+
   return where
 }
 

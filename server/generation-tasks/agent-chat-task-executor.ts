@@ -1,5 +1,6 @@
 import type { GenerationTaskStartPayload, GenerationTaskStreamEvent } from './shared'
 import type { GenerationRecordPayload } from '../generation-records/shared'
+import type { ChatUsage } from '../../src/shared/upstream-stream-parser'
 import {
   applyCapabilityFlags,
   CAPABILITY_FLAGS_REQUEST_FIELD,
@@ -11,6 +12,12 @@ type AgentChatExecutionTask = {
   recordId: string
   userId: string
   abortController: AbortController
+  // 计费结算所需：运行时传入的是完整 RunningGenerationTask，故这些字段实际存在。
+  associationNo?: string
+  billedProviderId?: string
+  billedModelKey?: string
+  billedModelName?: string
+  billedPointCost?: number
 }
 
 type AgentChatRetryState = {
@@ -57,6 +64,19 @@ export interface AgentChatTaskExecutorContext {
   parseChatChunkError: (chunk: string) => string
   parseChatChunkText: (chunk: string) => string
   parseChatChunkReasoning: (chunk: string) => string
+  parseChatChunkUsage: (chunk: string) => ChatUsage | null
+  // 对话流结束后按真实 usage 对保底预扣做多退少补。
+  settleChatPointsByUsage: (input: {
+    userId: string
+    associationNo: string
+    sourceId: string
+    providerId: string
+    modelKey: string
+    modelName?: string
+    preChargedPoints: number
+    usage: ChatUsage | null
+    billingMultiplier?: number
+  }) => Promise<unknown>
   extractChatTextFromJsonPayload: (result: any) => string
   extractChatReasoningFromJsonPayload: (result: any) => string
   emitTaskContentDeltaEvent: (recordId: string, input: {
@@ -129,6 +149,8 @@ export const executeAgentChatTaskFlow = async (
     ...appliedCapability.upstreamFields,
     model: modelKey,
     stream: true,
+    // 要求上游在流式末尾返回 usage（含 prompt_tokens_details.cached_tokens），用于按真实 token 分档计费。
+    stream_options: { include_usage: true },
   }
   delete (requestBody as Record<string, unknown>).providerId
   delete (requestBody as Record<string, unknown>)[CAPABILITY_FLAGS_REQUEST_FIELD]
@@ -222,6 +244,8 @@ export const executeAgentChatTaskFlow = async (
   let rawResponseText = ''
   let hasSseDelta = false
   let streamErrorMessage = ''
+  // 流式末尾的 usage chunk（含输入/输出/缓存命中 token），用于结束后按量结算。
+  let streamUsage: ChatUsage | null = null
   const rawDataSamples: string[] = []
   const persistState = {
     lastPersistAt: Date.now(),
@@ -257,6 +281,12 @@ export const executeAgentChatTaskFlow = async (
       if (chunkError) {
         streamErrorMessage = chunkError
         break
+      }
+
+      // 末尾 usage chunk（choices 常为空、仅含 usage），单独捕获供结束后按量计费。
+      const chunkUsage = context.parseChatChunkUsage(chunk)
+      if (chunkUsage) {
+        streamUsage = chunkUsage
       }
 
       try {
@@ -373,6 +403,30 @@ export const executeAgentChatTaskFlow = async (
     done: true,
     stopped: false,
   }, task.userId)
+
+  // 按真实 usage 对「保底预扣」做多退少补。结算失败不影响已交付内容，仅记日志。
+  if (streamUsage && task.associationNo) {
+    try {
+      await context.settleChatPointsByUsage({
+        userId: task.userId,
+        associationNo: task.associationNo,
+        sourceId: task.associationNo,
+        providerId: task.billedProviderId || providerId,
+        modelKey: task.billedModelKey || modelKey,
+        modelName: task.billedModelName,
+        preChargedPoints: Number(task.billedPointCost || 0),
+        usage: streamUsage,
+        billingMultiplier: appliedCapability.billingMultiplier,
+      })
+    } catch (settleError) {
+      context.logGenerationTask('agent_task:settle_failed', {
+        recordId: task.recordId,
+        userId: task.userId,
+        message: settleError instanceof Error ? settleError.message : String(settleError),
+      })
+    }
+  }
+
   const completedRecord = await context.getGenerationRecordById(task.recordId, task.userId)
   await context.syncSharedTaskRuntime(task, 'completed')
   context.emitTaskStreamEvent(task.recordId, {

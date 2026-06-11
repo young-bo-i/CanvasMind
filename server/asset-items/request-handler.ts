@@ -57,12 +57,13 @@ export const handleAssetItemsRequest = async (req: any, res: any) => {
         return
       }
 
-      if (payload.scope === 'all' && currentUser.role !== 'ADMIN') {
+      const isBackofficeRole = currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN'
+      if (payload.scope === 'all' && !isBackofficeRole) {
         sendAssetItemsError(res, 403, '只有管理员可以操作全站资源')
         return
       }
 
-      const data = await applyAssetAction(payload, currentUser.id, currentUser.role === 'ADMIN')
+      const data = await applyAssetAction(payload, currentUser.id, isBackofficeRole)
       sendJson(res, 200, { data })
       return
     }

@@ -76,7 +76,22 @@ interface TaskLifecycleContext {
     modelKey: string
     endpointType: 'chat' | 'image' | 'video'
     capabilityFlags?: ModelCapabilityFlags | null
+    // 视频按秒计费：时长秒数，power 视为「每秒积分」。
+    durationSeconds?: number
+    // 图片按张计费：本次出图张数，power 视为「每张积分」。
+    imageCount?: number
+    // 会员折扣倍率（0,1]。
+    membershipMultiplier?: number
   }) => Promise<BillingDetail>
+  // 会员折扣倍率（0,1]，无有效会员为 1。
+  getMembershipBillingMultiplier: (userId: string) => Promise<number>
+  // 模型按会员等级解锁校验：返回是否允许 + 需要的等级名。
+  checkUserModelMembershipAccess: (input: {
+    userId: string
+    providerId: string
+    modelKey: string
+    endpointType: 'chat' | 'image' | 'video'
+  }) => Promise<{ allowed: boolean; requiredLevelNames: string[] }>
   consumeGenerationPoints: (input: {
     userId: string
     pointCost: number
@@ -166,6 +181,14 @@ const resolveTaskSkillKey = (payload: GenerationTaskStartPayload, strategyKey: G
   return String(payload.skill || '').trim() || strategyKey || 'general'
 }
 
+// 视频按秒计费：从 "5s" / "5" / "5.0s" 解析出时长秒数，喂给 resolveGenerationPointCost。
+// 解析失败返回 0，计费侧会退化为按次（乘数 1）。
+const parseBilledDurationSeconds = (raw: unknown): number => {
+  const matched = String(raw ?? '').match(/\d+(\.\d+)?/)
+  const seconds = matched ? Number(matched[0]) : 0
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0
+}
+
 const resolveTaskBillingTarget = (
   payload: GenerationTaskStartPayload,
   strategyKey: GenerationTaskStrategyKey,
@@ -221,6 +244,30 @@ export const startGenerationTask = async (
     throw new GenerationTaskRequestError(409, '检测到相同任务正在处理中，请稍候查看结果')
   }
 
+  // 计费口径：image/video 各自，其余(对话/工作台/研究)按 chat。
+  const billedEndpointType: 'chat' | 'image' | 'video' = strategy.key === 'image'
+    ? 'image'
+    : strategy.key === 'video'
+      ? 'video'
+      : 'chat'
+
+  // 模型按会员等级解锁校验：未满足直接 403，不进入扣费与执行。
+  const modelAccess = await context.checkUserModelMembershipAccess({
+    userId: currentUserId,
+    providerId,
+    modelKey,
+    endpointType: billedEndpointType,
+  })
+  if (!modelAccess.allowed) {
+    throw new GenerationTaskRequestError(
+      403,
+      `该模型仅限 ${modelAccess.requiredLevelNames.join(' / ') || '指定'} 会员使用，请先开通对应会员`,
+    )
+  }
+
+  // 会员折扣倍率：乘进本次扣点（含预扣与结算）。
+  const membershipMultiplier = await context.getMembershipBillingMultiplier(currentUserId)
+
   let concurrencySlots: ConcurrencySlot[] = []
 
   try {
@@ -236,6 +283,7 @@ export const startGenerationTask = async (
         modelKey,
         endpointType: 'chat',
         capabilityFlags,
+        membershipMultiplier,
       })
       const associationNo = context.buildGatewayAssociationNo()
       const pointLog = billingDetail.pointCost > 0
@@ -316,6 +364,7 @@ export const startGenerationTask = async (
         modelKey,
         endpointType: 'chat',
         capabilityFlags,
+        membershipMultiplier,
       })
       const associationNo = context.buildGatewayAssociationNo()
       const pointLog = billingDetail.pointCost > 0
@@ -401,10 +450,14 @@ export const startGenerationTask = async (
         skillKey,
       })
 
+      // 视频按秒计费：解析时长秒数，power 视为「每秒积分」，扣费 = power × 秒数 × 能力倍率。
+      const durationSeconds = parseBilledDurationSeconds(payload.duration)
       const billingDetail = await context.resolveGenerationPointCost({
         providerId,
         modelKey,
         endpointType: 'video',
+        durationSeconds,
+        membershipMultiplier,
       })
       const associationNo = context.buildGatewayAssociationNo()
       const pointLog = billingDetail.pointCost > 0
@@ -420,6 +473,7 @@ export const startGenerationTask = async (
           metaJson: {
             source: 'generation-task',
             taskType: 'video',
+            durationSeconds: durationSeconds || undefined,
           },
         })
         : null
@@ -479,10 +533,15 @@ export const startGenerationTask = async (
       skillKey,
     })
 
+    // 图片按张计费：从 requestBody.count / n 取本次出图张数（计费函数会按 maxImagesPerRequest 再 clamp）。
+    const imageRequestBody = (payload.requestBody || {}) as Record<string, unknown>
+    const imageCount = Math.max(1, Math.floor(Number(imageRequestBody.count ?? imageRequestBody.n) || 1))
     const billingDetail = await context.resolveGenerationPointCost({
       providerId,
       modelKey,
       endpointType: 'image',
+      imageCount,
+      membershipMultiplier,
     })
     const associationNo = context.buildGatewayAssociationNo()
     const pointLog = billingDetail.pointCost > 0
@@ -497,6 +556,7 @@ export const startGenerationTask = async (
         modelName: billingDetail.modelName,
         metaJson: {
           source: 'generation-task',
+          imageCount,
         },
       })
       : null

@@ -33,12 +33,26 @@
               <span>已停止生成</span>
             </div>
           </div>
-          <!-- 生成完成：播放视频 -->
+          <!-- 生成完成：播放视频 + 快捷动作 -->
           <div v-else-if="done && videos.length" class="image-record-content">
             <div class="video-record-grid">
               <div v-for="(url, i) in videos" :key="i" class="video-record-item">
                 <video :src="url" class="video-result-player" controls preload="metadata" playsinline></video>
               </div>
+            </div>
+            <div class="record-quick-actions">
+              <button type="button" class="record-quick-action" @click="$emit('make-same')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 0 0-14.9-2M4 15a8 8 0 0 0 14.9 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                做同款
+              </button>
+              <button type="button" class="record-quick-action" @click="$emit('download', videos[0])">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                下载
+              </button>
+              <button type="button" class="record-quick-action record-quick-action--danger" @click="$emit('delete')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                删除
+              </button>
             </div>
           </div>
           <!-- 加载中 -->
@@ -88,7 +102,7 @@ const props = defineProps({
   error: { type: String, default: '' },
 })
 
-defineEmits(['stop'])
+defineEmits(['stop', 'make-same', 'download', 'delete'])
 
 const currentProgress = ref(props.progress)
 const currentProgressText = ref(props.progressText)
@@ -262,5 +276,38 @@ onUnmounted(() => {
 
 .stop-generate-button-canana:hover {
   background: rgba(0, 0, 0, 0.58);
+}
+
+/* 结果卡片快捷动作（做同款 / 下载 / 删除） */
+.record-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.record-quick-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  background: var(--fill-secondary, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, #e8e8e8);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.record-quick-action:hover {
+  background: var(--fill-hover, rgba(255, 255, 255, 0.12));
+}
+
+.record-quick-action--danger:hover {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
 }
 </style>

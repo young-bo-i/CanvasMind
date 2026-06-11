@@ -467,11 +467,46 @@
             <textarea id="model-description" v-model="modelForm.description" class="admin-textarea" placeholder="模型描述信息（可选）"></textarea>
           </div>
 
-          <div class="admin-form__field">
+          <!-- 对话(CHAT)：按 token 分档计费（输入 / 输出 / 缓存命中 各自单价）+ 每次保底预扣 -->
+          <template v-if="modelForm.category === 'CHAT'">
+            <div class="admin-form__field admin-form__field--full">
+              <label class="admin-form__label">计费规则（对话按 token 分档）</label>
+              <div class="admin-billing-grid">
+                <div class="admin-composite-input">
+                  <input v-model.number="modelForm.inputPrice1k" class="admin-input" type="number" min="0" step="0.01" placeholder="输入单价">
+                  <span class="admin-composite-input__suffix">输入 · 积分 / 1k</span>
+                </div>
+                <div class="admin-composite-input">
+                  <input v-model.number="modelForm.outputPrice1k" class="admin-input" type="number" min="0" step="0.01" placeholder="输出单价">
+                  <span class="admin-composite-input__suffix">输出 · 积分 / 1k</span>
+                </div>
+                <div class="admin-composite-input">
+                  <input v-model.number="modelForm.cachedPrice1k" class="admin-input" type="number" min="0" step="0.01" placeholder="缓存命中单价">
+                  <span class="admin-composite-input__suffix">缓存 · 积分 / 1k</span>
+                </div>
+                <div class="admin-composite-input">
+                  <input v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" placeholder="每次保底预扣">
+                  <span class="admin-composite-input__suffix">保底预扣 · 积分</span>
+                </div>
+              </div>
+              <div class="admin-form__hint">
+                按真实 token 计费：发起时先预扣「保底」积分（建议 ≥1，用于拦截零余额；填 0 则不拦截），对话结束后按上游返回的输入/输出/缓存命中 token 数 × 对应单价多退少补。缓存命中单价一般远低于输入；未配置或上游未返回缓存数时缓存档按 0。
+              </div>
+            </div>
+          </template>
+
+          <!-- 图片(按次) / 视频(按秒)：单一单价 -->
+          <div v-else class="admin-form__field">
             <label class="admin-form__label" for="model-billing-power">计费规则</label>
             <div class="admin-composite-input">
               <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" placeholder="请输入模型计费">
-              <span class="admin-composite-input__suffix">积分 / {{ modelForm.billingTokens || 1000 }} Tokens</span>
+              <span class="admin-composite-input__suffix">{{ billingUnitSuffix }}</span>
+            </div>
+            <div v-if="modelForm.category === 'VIDEO'" class="admin-form__hint">
+              视频按秒计费：此处填「每秒消耗积分」，实际扣费 = 单价 × 时长(秒)。例如填 10，生成 5 秒视频扣 50 积分。
+            </div>
+            <div v-else-if="modelForm.category === 'IMAGE'" class="admin-form__hint">
+              图片按张计费：此处填「每张消耗积分」，一次生成 N 张扣 N 份（N 受下方「单次最大出图张数」限制）。
             </div>
           </div>
 
@@ -722,12 +757,23 @@ const modelForm = reactive({
   defaultParamsJsonText: '',
   billingPower: 0,
   billingTokens: 1000,
+  // 对话(CHAT)按 token 分档单价（积分 / 1k token）。IMAGE/VIDEO 不用。
+  inputPrice1k: 0,
+  outputPrice1k: 0,
+  cachedPrice1k: 0,
   membershipLevelsText: '',
   maxContext: 3,
   isDefault: false,
   // 单次最大出图张数（仅 IMAGE 类别有意义）。最终落入 capabilityJson.maxImagesPerRequest。
   // 不同上游限制不同：gpt-image-2 = 4，dall-e-3 = 1，dall-e-2 = 10。
   maxImagesPerRequest: 1,
+})
+
+// 计费规则单位后缀：按模型类型区分。视频按秒、图片按次、对话按 token。
+const billingUnitSuffix = computed(() => {
+  if (modelForm.category === 'VIDEO') return '积分 / 秒'
+  if (modelForm.category === 'IMAGE') return '积分 / 张'
+  return `积分 / ${modelForm.billingTokens || 1000} Tokens`
 })
 
 const discoverBatchSettings = reactive({
@@ -868,6 +914,9 @@ const resetModelForm = () => {
   modelForm.defaultParamsJsonText = ''
   modelForm.billingPower = 0
   modelForm.billingTokens = 1000
+  modelForm.inputPrice1k = 0
+  modelForm.outputPrice1k = 0
+  modelForm.cachedPrice1k = 0
   modelForm.membershipLevelsText = ''
   modelForm.maxContext = 3
   modelForm.isDefault = false
@@ -892,6 +941,9 @@ const applyModelForm = (model: AdminProviderModelItem) => {
   modelForm.defaultParamsJsonText = stringifyJson(defaultParamsJson)
   modelForm.billingPower = Number(billingRule.power || 0) || 0
   modelForm.billingTokens = Number(billingRule.tokens || 1000) || 1000
+  modelForm.inputPrice1k = Number(billingRule.inputPricePer1k || 0) || 0
+  modelForm.outputPrice1k = Number(billingRule.outputPricePer1k || 0) || 0
+  modelForm.cachedPrice1k = Number(billingRule.cachedPricePer1k || 0) || 0
   modelForm.membershipLevelsText = Array.isArray(defaultParamsJson.membershipLevels)
     ? defaultParamsJson.membershipLevels.join(', ')
     : ''
@@ -1222,6 +1274,10 @@ const mergeModelDefaultParams = () => {
     billingRule: {
       power: Number(modelForm.billingPower) || 0,
       tokens: Number(modelForm.billingTokens) || 1000,
+      // 对话按 token 分档单价；非 CHAT 时这三档保持 0、不参与计费。
+      inputPricePer1k: Number(modelForm.inputPrice1k) || 0,
+      outputPricePer1k: Number(modelForm.outputPrice1k) || 0,
+      cachedPricePer1k: Number(modelForm.cachedPrice1k) || 0,
     },
     membershipLevels: normalizeMembershipLevels(modelForm.membershipLevelsText),
     maxContext: Number(modelForm.maxContext) || 3,
@@ -1339,6 +1395,19 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 对话计费三档单价 + 保底：两列网格，窄屏自动单列 */
+.admin-billing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .admin-billing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .admin-model-discover__toolbar {
   display: flex;
   align-items: center;

@@ -243,6 +243,10 @@ interface AdminPointLogListItem {
   generationPrompt: string
   generationErrorMessage: string
   taskType: string
+  // 对话按 token 分档结算的用量明细（仅结算流水有值，其余为 0）。
+  usageInputTokens: number
+  usageOutputTokens: number
+  usageCachedTokens: number
   createdAt: string
   refunded: boolean
   canCompensate: boolean
@@ -352,6 +356,9 @@ const buildAdminPointLogItem = (input: {
     generationPrompt: String(input.generationRecord?.prompt || '').trim(),
     generationErrorMessage: String(input.generationRecord?.errorMessage || '').trim(),
     taskType: String(meta.taskType || '').trim(),
+    usageInputTokens: Math.max(0, Number(meta.inputTokens || 0) || 0),
+    usageOutputTokens: Math.max(0, Number(meta.outputTokens || 0) || 0),
+    usageCachedTokens: Math.max(0, Number(meta.cachedTokens || 0) || 0),
     createdAt: input.pointLog.createdAt instanceof Date
       ? input.pointLog.createdAt.toISOString()
       : String(input.pointLog.createdAt || ''),
@@ -493,7 +500,12 @@ const matchesAdminPointLogFilters = (
 }
 
 // 查询后台积分流水明细，支持按动作、来源、终端类型、退款状态和关键词筛选。
-export const listAdminPointLogs = async (query: MarketingPointLogQueryPayload = {}) => {
+export const listAdminPointLogs = async (
+  query: MarketingPointLogQueryPayload = {},
+  viewer?: { id: string; role: string },
+) => {
+  // 归属隔离：普通管理员只看自己名下用户的积分流水；超管全量。
+  const ownerScope = viewer && viewer.role !== 'SUPER_ADMIN' ? { user: { ownerAdminId: viewer.id } } : {}
   const days = Math.min(180, Math.max(1, toInt(query.days, 30)))
   const page = Math.max(1, toInt(query.page, 1))
   const pageSize = Math.min(100, Math.max(10, toInt(query.pageSize, 10)))
@@ -510,6 +522,7 @@ export const listAdminPointLogs = async (query: MarketingPointLogQueryPayload = 
     },
     ...(action ? { action: action as any } : {}),
     ...(sourceType ? { sourceType: sourceType as any } : {}),
+    ...ownerScope,
   }
   const filters = { endpointType, refundStatus, keyword }
   const batchSize = Math.max(100, Math.min(500, pageSize * 10))
@@ -827,7 +840,11 @@ export const executeGenerationPointCompensation = async (
 }
 
 // 查询营销中心概览数据。
-export const getAdminMarketingOverview = async () => {
+export const getAdminMarketingOverview = async (viewer?: { id: string; role: string }) => {
+  const now = new Date()
+  // 归属隔离：普通管理员的经营指标仅统计自己名下用户；超管全量。配置类计数(等级/套餐/卡密)是全局配置，不隔离。
+  const ownerScope = viewer && viewer.role !== 'SUPER_ADMIN' ? { ownerAdminId: viewer.id } : undefined
+  const userScope = ownerScope ? { user: ownerScope } : {}
   const [
     membershipLevelCount,
     membershipPlanCount,
@@ -836,6 +853,11 @@ export const getAdminMarketingOverview = async () => {
     cardBatchCount,
     cardCodeCount,
     usedCardCodeCount,
+    rechargeAgg,
+    consumeAgg,
+    increaseAgg,
+    decreaseAgg,
+    activeMemberCount,
   ] = await Promise.all([
     prisma.membershipLevel.count(),
     prisma.membershipPlan.count(),
@@ -844,7 +866,21 @@ export const getAdminMarketingOverview = async () => {
     prisma.cardBatch.count(),
     prisma.cardCode.count(),
     prisma.cardCode.count({ where: { status: 'USED' } }),
+    // 总充值金额：已支付充值订单的实付金额合计。
+    prisma.rechargeOrder.aggregate({ _sum: { paidAmount: true }, where: { payStatus: 'PAID', ...userScope } }),
+    // 总消费积分：所有消费流水合计。
+    prisma.pointAccountLog.aggregate({ _sum: { changeAmount: true }, where: { changeType: 'CONSUME', ...userScope } }),
+    // 用户总余额 = 全部入账 - 全部出账（按 action 汇总有符号变动）。
+    prisma.pointAccountLog.aggregate({ _sum: { changeAmount: true }, where: { action: 'INCREASE', ...userScope } }),
+    prisma.pointAccountLog.aggregate({ _sum: { changeAmount: true }, where: { action: 'DECREASE', ...userScope } }),
+    // 活跃会员：状态 ACTIVE 且未到期的订阅数。
+    prisma.userSubscription.count({ where: { status: 'ACTIVE', endTime: { gt: now }, ...userScope } }),
   ])
+
+  const toNum = (value: unknown) => (value == null ? 0 : Number((value as { toString(): string }).toString()))
+  const totalRechargeAmount = toNum(rechargeAgg._sum.paidAmount)
+  const totalConsumePoints = toNum(consumeAgg._sum.changeAmount)
+  const totalPointBalance = toNum(increaseAgg._sum.changeAmount) - toNum(decreaseAgg._sum.changeAmount)
 
   return {
     membership: {
@@ -861,6 +897,13 @@ export const getAdminMarketingOverview = async () => {
       batchCount: cardBatchCount,
       codeCount: cardCodeCount,
       usedCount: usedCardCodeCount,
+    },
+    // 经营指标：总充值金额(元)、总消费积分、用户总余额、活跃会员数。
+    business: {
+      totalRechargeAmount,
+      totalConsumePoints,
+      totalPointBalance,
+      activeMemberCount,
     },
   }
 }
@@ -885,6 +928,7 @@ export const saveMembershipLevel = async (payload: MarketingMembershipLevelPaylo
     iconUrl: toNullableString(payload.iconUrl),
     monthlyBonusPoints: toInt(payload.monthlyBonusPoints, 0),
     storageCapacity: BigInt(toInt(payload.storageCapacity, 0)),
+    pointDiscountPercent: Math.min(100, Math.max(0, Number(payload.pointDiscountPercent) || 0)),
     benefitsJson: toJsonValue(payload.benefitsJson),
     isEnabled: toBoolean(payload.isEnabled, true),
     sortOrder: toInt(payload.sortOrder, 0),
@@ -1098,6 +1142,15 @@ export const saveCardBatch = async (payload: MarketingCardBatchPayload, id?: str
 
   if (!data.name) {
     throw new Error('卡密批次名称不能为空')
+  }
+
+  // 会员类卡密必须绑定等级，否则兑换时无奖励可发（避免静默吞掉奖励）。
+  if (data.rewardType === 'MEMBERSHIP' && !data.rewardLevelId) {
+    throw new Error('会员类卡密必须选择要赠送的会员等级')
+  }
+  // 积分类卡密必须配正积分。
+  if (data.rewardType === 'POINTS' && data.rewardPoints <= 0) {
+    throw new Error('积分类卡密的赠送积分必须大于 0')
   }
 
   if (id) {

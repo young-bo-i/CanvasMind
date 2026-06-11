@@ -126,3 +126,13 @@ export const updateGenerationRecord = async (id: string, payload: GenerationReco
     showErrorMessage: true,
   })
 }
+
+export const deleteGenerationRecord = async (id: string) => {
+  const response = await fetch(buildApiUrl(`${GENERATION_RECORDS_API_PATH}/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  return readApiData<boolean>(response, {
+    showErrorMessage: true,
+  })
+}

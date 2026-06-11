@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import ContentGenerator from '../../components/generate/ContentGenerator.vue'
@@ -14,6 +14,7 @@ import { findCatalogModel, getModelByName, loadPublicModelCatalog, resolveModelL
 import { buildAgentChatMessages, getAgentSkillCatalogItem, isAgentWorkspaceSkill, loadPublicSkillCatalog } from '@/config/agentSkills'
 import {
   createGenerationRecord as createGenerationRecordRequest,
+  deleteGenerationRecord as deleteGenerationRecordRequest,
   listGenerationRecords as listGenerationRecordsRequest,
   updateGenerationRecord as updateGenerationRecordRequest,
   type GenerationRecordType,
@@ -87,6 +88,8 @@ interface GeneratingRecord {
   type: GenerationRecordType
   prompt: string
   time: string
+  // 创建时间(毫秒)，用于「时间」筛选(今天/近7天/近30天)。time 是展示标签不可比较。
+  createdAtMs?: number
   model: string
   modelKey: string
   referenceImages?: string[]
@@ -1093,6 +1096,55 @@ const handleOpenImageRecordMore = (record: GeneratingRecord) => {
   openRecordPreview(record, 0)
 }
 
+// 做同款：把这条记录的全部参数(同类型/提示词/模型/比例/分辨率/时长/参考图)预填进生成器，由用户确认后再生成。
+const handleMakeSameRecord = async (record: GeneratingRecord) => {
+  await contentGeneratorRef.value?.applyDraft({
+    type: record.type as CreationType,
+    prompt: record.prompt,
+    modelKey: record.modelKey,
+    ratio: record.ratio,
+    resolution: record.resolution,
+    duration: record.duration,
+    feature: record.feature,
+    skill: record.skill,
+    referenceImages: [...(record.referenceImages || [])],
+  })
+}
+
+// 下载生成结果（同源 /uploads 直接下载）。
+const handleDownloadResult = (url: string, kind: 'image' | 'video') => {
+  const target = String(url || '').trim()
+  if (!target) return
+  const anchor = document.createElement('a')
+  anchor.href = target
+  anchor.download = `canana-${kind}-${Date.now()}.${kind === 'video' ? 'mp4' : 'png'}`
+  anchor.rel = 'noopener'
+  anchor.target = '_blank'
+  anchor.click()
+}
+
+// 删除记录：确认后调后端删除（级联清理输出与资产），并从当前列表移除。
+const handleDeleteRecord = async (record: GeneratingRecord) => {
+  try {
+    await ElMessageBox.confirm('确定删除这条生成记录吗？删除后无法恢复。', '删除确认', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    if (record.dbId) {
+      await deleteGenerationRecordRequest(record.dbId)
+    }
+    generatingRecords.value = generatingRecords.value.filter(item => item.id !== record.id)
+    ElMessage.success('已删除')
+  } catch {
+    ElMessage.error('删除失败，请稍后重试')
+  }
+}
+
 const handlePreviewDownload = async (image: GeneratePreviewImageItem) => {
   const anchor = document.createElement('a')
   anchor.href = image.src
@@ -1142,10 +1194,43 @@ const handlePreviewRegenerate = async (image: GeneratePreviewImageItem) => {
 const visibleGeneratingRecords = computed(() => {
   const activeSession = String(currentSessionId.value || '').trim()
   const keyword = String(sessionSearchKeyword.value || '').trim().toLowerCase()
+  const now = Date.now()
+  const timeWindowMs = recordTimeFilter.value === 'today'
+    ? null // 今天按自然日单独判断
+    : recordTimeFilter.value === '7d'
+      ? 7 * 86400000
+      : recordTimeFilter.value === '30d'
+        ? 30 * 86400000
+        : 0 // all
+  const todayStart = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime()
 
   return generatingRecords.value.filter((record) => {
     if (activeSession && record.sessionId !== activeSession) {
       return false
+    }
+
+    // 生成类型筛选
+    if (recordTypeFilter.value !== 'all' && record.type !== recordTypeFilter.value) {
+      return false
+    }
+
+    // 操作类型筛选：文生(无参考图) / 图生(有参考图)
+    if (recordActionFilter.value !== 'all') {
+      const hasReference = Array.isArray(record.referenceImages) && record.referenceImages.filter(Boolean).length > 0
+      if (recordActionFilter.value === 'image' && !hasReference) return false
+      if (recordActionFilter.value === 'text' && hasReference) return false
+    }
+
+    // 时间筛选（记录无时间戳时一律放行，避免误隐藏）
+    if (recordTimeFilter.value !== 'all') {
+      const ts = Number(record.createdAtMs || 0)
+      if (ts > 0) {
+        if (recordTimeFilter.value === 'today') {
+          if (ts < todayStart) return false
+        } else if (timeWindowMs && now - ts > timeWindowMs) {
+          return false
+        }
+      }
     }
 
     if (!keyword) {
@@ -1164,12 +1249,26 @@ const visibleGeneratingRecords = computed(() => {
   })
 })
 
+const isRecordFilterActive = computed(() => (
+  recordTimeFilter.value !== 'all'
+  || recordTypeFilter.value !== 'all'
+  || recordActionFilter.value !== 'all'
+))
+
 const isCurrentSessionEmpty = computed(() => {
-  if (sessionSearchKeyword.value.trim()) {
+  // 搜索或筛选导致的空结果不算「空会话」，避免误显示「创建首个作品」引导。
+  if (sessionSearchKeyword.value.trim() || isRecordFilterActive.value) {
     return false
   }
   return visibleGeneratingRecords.value.length === 0
 })
+
+// 日期分组头（即梦式）：连续相同日期只在该组第一条显示标签，避免每条都重复「今天」。
+const shouldShowRecordDate = (index: number) => {
+  if (index <= 0) return true
+  const list = visibleGeneratingRecords.value
+  return !list[index - 1] || list[index - 1].time !== list[index]?.time
+}
 
 const mainContentClassName = computed(() => {
   const classNames = ['main-content-G632JF']
@@ -1278,16 +1377,21 @@ const handleSessionSearch = () => {
   contentGeneratorRef.value?.expand()
 }
 
-const handleSessionTimeFilterClick = () => {
-  ElMessage.info('时间筛选下一步接入。')
+// 记录列表筛选：时间 / 生成类型 / 操作类型(文生/图生)，对当前会话记录前端过滤。
+const recordTimeFilter = ref<'all' | 'today' | '7d' | '30d'>('all')
+const recordTypeFilter = ref<'all' | 'image' | 'video' | 'agent' | 'research'>('all')
+const recordActionFilter = ref<'all' | 'text' | 'image'>('all')
+
+const handleSessionTimeFilterChange = (value: string) => {
+  recordTimeFilter.value = (['all', 'today', '7d', '30d'].includes(value) ? value : 'all') as typeof recordTimeFilter.value
 }
 
-const handleSessionTypeFilterClick = () => {
-  ElMessage.info('生成类型筛选下一步接入。')
+const handleSessionTypeFilterChange = (value: string) => {
+  recordTypeFilter.value = (['all', 'image', 'video', 'agent', 'research'].includes(value) ? value : 'all') as typeof recordTypeFilter.value
 }
 
-const handleSessionActionFilterClick = () => {
-  ElMessage.info('操作类型筛选下一步接入。')
+const handleSessionActionFilterChange = (value: string) => {
+  recordActionFilter.value = (['all', 'text', 'image'].includes(value) ? value : 'all') as typeof recordActionFilter.value
 }
 
 const handleJumpToResearchVerification = (targetId: string) => {
@@ -1304,6 +1408,7 @@ const buildManualResearchVerificationRecord = (sourceRecord: GeneratingRecord): 
     type: 'research',
     prompt: `核查报告：${sourceRecord.prompt}`,
     time: formatGroupLabel(new Date()),
+    createdAtMs: Date.now(),
     model: sourceRecord.model,
     modelKey: sourceRecord.modelKey,
     referenceImages: [],
@@ -1613,6 +1718,7 @@ const formatGroupLabel = (date: Date): string => {
 // 将后端返回的持久化记录还原成页面使用结构。
 const createRecordFromPersisted = (record: PersistedGenerationRecord): GeneratingRecord => {
   const isImageRecord = record.type === 'image'
+  const isVideoRecord = record.type === 'video'
   const isResearchRecord = isResearchPersistedRecord(record)
   const researchMeta = isResearchRecord ? readResearchRuntimeMeta(record) : null
   const modelCategory = record.type === 'image'
@@ -1629,6 +1735,7 @@ const createRecordFromPersisted = (record: PersistedGenerationRecord): Generatin
     type: record.type,
     prompt: record.prompt,
     time: formatGroupLabel(new Date(record.createdAt)),
+    createdAtMs: new Date(record.createdAt).getTime(),
     // 后端若返回旧的 model 文本，这里统一按最新后台模型目录重新解析展示名称。
     model: resolveModelLabel(
         record.modelKey || record.model,
@@ -1646,21 +1753,25 @@ const createRecordFromPersisted = (record: PersistedGenerationRecord): Generatin
         : record.content,
     thinkingContent: record.thinkingContent || '',
     images: record.images,
+    // 视频结果走 outputs（outputType==='video'），重载时恢复，避免完成的视频丢失而显示「造梦中」。
+    videos: isVideoRecord && Array.isArray(record.outputs)
+        ? record.outputs.filter(output => output.outputType === 'video' && output.url).map(output => String(output.url))
+        : [],
     done: record.done,
     stopped: Boolean(record.stopped),
-    progressStage: isImageRecord || isResearchRecord
+    progressStage: isImageRecord || isVideoRecord || isResearchRecord
         ? (record.done ? (record.stopped ? 'stopped' : record.error ? 'failed' : 'completed') : (isResearchRecord ? 'intake' : 'queued'))
         : undefined,
-    progressMessage: isImageRecord
+    progressMessage: isImageRecord || isVideoRecord
         ? (record.done
-            ? resolveTaskStageLabel(record.stopped ? 'stopped' : 'completed', record.stopped ? '任务已停止' : '任务已完成')
+            ? resolveTaskStageLabel(record.stopped ? 'stopped' : record.error ? 'failed' : 'completed', record.stopped ? '任务已停止' : record.error ? (record.error || '生成失败') : '任务已完成')
             : resolveTaskStageLabel('queued', '任务已创建，等待服务端执行'))
         : isResearchRecord
           ? (record.done
               ? resolveTaskStageLabel(record.stopped ? 'stopped' : record.error ? 'failed' : 'completed', record.stopped ? '研究任务已停止' : record.error ? record.error : '研究报告已完成')
               : resolveTaskStageLabel('intake', '研究任务已创建，等待服务端执行'))
         : undefined,
-    progressPercent: isImageRecord || isResearchRecord ? (record.done ? 100 : (isResearchRecord ? 8 : 5)) : 0,
+    progressPercent: isImageRecord || isVideoRecord || isResearchRecord ? (record.done ? 100 : (isResearchRecord ? 8 : 5)) : 0,
     error: record.done || record.stopped ? record.error : '',
     agentTaskId: record.agentTaskId,
     agentRun: record.agentRun,
@@ -2590,6 +2701,7 @@ const handleSend = async (message: string, type: CreationType, options?: { model
     type: recordType,
     prompt: message,
     time: formatGroupLabel(new Date()),
+    createdAtMs: Date.now(),
     model: options?.model || resolveModelLabel(options?.modelKey || '', modelCategory) || '',
     modelKey: options?.modelKey || '',
     referenceImages: options?.referenceImages || [],
@@ -3070,6 +3182,20 @@ onMounted(() => {
     router.replace({ path: '/generate' })
   }
 
+  // 「做同款 / 用作参考图」：从首页作品详情带入草稿，预填生成器（不自动发送，由用户确认后再生成）。
+  const draftRaw = typeof window !== 'undefined'
+      ? window.sessionStorage.getItem('canana:generate:draft')
+      : ''
+  if (draftRaw) {
+    window.sessionStorage.removeItem('canana:generate:draft')
+    try {
+      const draft = JSON.parse(draftRaw)
+      void nextTick(() => { void contentGeneratorRef.value?.applyDraft(draft) })
+    } catch {
+      // 忽略损坏的草稿
+    }
+  }
+
   document.addEventListener('click', handlePageClick)
 
   authLoginSuccessListener = () => {
@@ -3143,9 +3269,9 @@ onUnmounted(() => {
               scroll-list-id="scroll-list-generate-session"
               @create-session="handleCreateSession"
               @search="handleSessionSearch"
-              @time-filter-click="handleSessionTimeFilterClick"
-              @type-filter-click="handleSessionTypeFilterClick"
-              @action-filter-click="handleSessionActionFilterClick"
+              @time-filter-change="handleSessionTimeFilterChange"
+              @type-filter-change="handleSessionTypeFilterChange"
+              @action-filter-change="handleSessionActionFilterChange"
               @scroll-state="handleSessionListScrollState"
           >
             <template v-for="(record, index) in visibleGeneratingRecords" :key="record.id">
@@ -3193,7 +3319,7 @@ onUnmounted(() => {
                 />
                 <VideoLoadingRecord
                     v-else-if="record.type === 'video'"
-                    :time="record.time"
+                    :time="shouldShowRecordDate(index) ? record.time : ''"
                     :prompt="record.prompt"
                     :model="record.model"
                     :ratio="record.ratio"
@@ -3208,10 +3334,13 @@ onUnmounted(() => {
                     :videos="record.videos || []"
                     :error="record.error ? formatGenerationError(record.error, '视频生成失败') : ''"
                     @stop="handleStopImageGeneration(record)"
+                    @make-same="handleMakeSameRecord(record)"
+                    @download="handleDownloadResult($event, 'video')"
+                    @delete="handleDeleteRecord(record)"
                 />
                 <ImageLoadingRecord
                     v-else
-                    :time="record.time"
+                    :time="shouldShowRecordDate(index) ? record.time : ''"
                     :prompt="record.prompt"
                     :model="record.model"
                     :ratio="record.ratio"
@@ -3234,7 +3363,7 @@ onUnmounted(() => {
                 />
               </div>
               <div
-                  v-if="record.type === 'agent' || isResearchReportRecord(record)"
+                  v-if="(record.type === 'agent' || isResearchReportRecord(record)) && shouldShowRecordDate(index)"
                   class="item-Xh64V7"
                   :data-index="index * 2 + 2"
                   style="z-index:1"

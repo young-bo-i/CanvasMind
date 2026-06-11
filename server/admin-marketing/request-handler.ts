@@ -91,7 +91,7 @@ export const handleAdminMarketingRequest = async (req: any, res: any) => {
     const requestPath = readRequestPath(req)
 
     if (req.method === 'GET' && requestPath === ADMIN_MARKETING_OVERVIEW_PATH) {
-      const data = await getAdminMarketingOverview()
+      const data = await getAdminMarketingOverview({ id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data })
       return
     }
@@ -107,7 +107,7 @@ export const handleAdminMarketingRequest = async (req: any, res: any) => {
         endpointType: String(requestUrl.searchParams.get('endpointType') || ''),
         refundStatus: String(requestUrl.searchParams.get('refundStatus') || ''),
         keyword: String(requestUrl.searchParams.get('keyword') || ''),
-      })
+      }, { id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data })
       return
     }

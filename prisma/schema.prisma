@@ -9,6 +9,7 @@ datasource db {
 enum UserRole {
   USER
   ADMIN
+  SUPER_ADMIN
 }
 
 /// 第一版用户表。
@@ -23,6 +24,8 @@ model AppUser {
   phone              String?                @unique(map: "uk_app_users_phone") @db.VarChar(32)
   role               UserRole               @default(USER)
   status             UserStatus             @default(ANONYMOUS)
+  // 归属管理员：该用户由哪个管理员创建。NULL = 平台直属（自助注册/历史数据，仅超管可见）。
+  ownerAdminId       String?                @map("owner_admin_id") @db.VarChar(36)
   createdAt          DateTime               @default(now()) @map("created_at")
   updatedAt          DateTime               @updatedAt @map("updated_at")
   verificationCodes  AuthVerificationCode[]
@@ -46,7 +49,11 @@ model AppUser {
   cardRedeemRecords  CardRedeemRecord[]
   workflowDefinitions        WorkflowDefinition[]
   workflowDefinitionVersions WorkflowDefinitionVersion[]
+  // 归属自关联：ownerAdmin = 创建我的管理员；ownedUsers = 我创建的用户。
+  ownerAdmin         AppUser?               @relation("AdminOwnedUsers", fields: [ownerAdminId], references: [id], onDelete: SetNull)
+  ownedUsers         AppUser[]              @relation("AdminOwnedUsers")
 
+  @@index([ownerAdminId], map: "idx_app_users_owner_admin_id")
   @@map("app_users")
 }
 
@@ -713,6 +720,8 @@ model MembershipLevel {
   iconUrl            String?            @map("icon_url") @db.Text
   monthlyBonusPoints Int                @default(0) @map("monthly_bonus_points")
   storageCapacity    BigInt             @default(0) @map("storage_capacity")
+  // 会员积分消耗减免百分比(0-100)：例如 20 表示该等级会员按 8 折扣费(少扣 20%)。
+  pointDiscountPercent Float            @default(0) @map("point_discount_percent")
   benefitsJson       Json?              @map("benefits_json")
   isEnabled          Boolean            @default(true) @map("is_enabled")
   sortOrder          Int                @default(0) @map("sort_order")
@@ -953,6 +962,9 @@ model PointAccountLog {
   associationNo   String?           @map("association_no") @db.VarChar(64)
   remark          String?           @db.VarChar(255)
   expireAt        DateTime?         @map("expire_at")
+  // 幂等去重键：可空，唯一。同一逻辑动作(如某次生成退款)只能写一次。
+  // MySQL 唯一索引允许多个 NULL，故既有/常规流水(NULL)不受影响。
+  dedupeKey       String?           @unique(map: "uk_point_account_logs_dedupe_key") @map("dedupe_key") @db.VarChar(120)
   metaJson        Json?             @map("meta_json")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")

@@ -21,6 +21,7 @@ import {
   parseChatChunkError,
   parseChatChunkText,
   parseChatChunkReasoning,
+  parseChatChunkUsage,
   parseUpstreamStreamChunk,
 } from '../../src/shared/upstream-stream-parser'
 
@@ -32,8 +33,10 @@ export {
   parseChatChunkError,
   parseChatChunkText,
   parseChatChunkReasoning,
+  parseChatChunkUsage,
   parseUpstreamStreamChunk,
 } from '../../src/shared/upstream-stream-parser'
+export type { ChatUsage } from '../../src/shared/upstream-stream-parser'
 
 const BURST_RATE_RETRY_DELAYS = [1200, 2600, 5200]
 // 网络层错误（TypeError: fetch failed / socket reset / TLS abort 等）的重试节奏。

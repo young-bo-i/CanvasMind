@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { promisify } from 'node:util'
-import type { AuthMethodCategory, AuthMethodType, VerificationChannel } from '@prisma/client'
+import type { AuthMethodCategory, AuthMethodType, UserRole, VerificationChannel } from '@prisma/client'
 import prisma from '../db/prisma'
 import { grantRegisterReward } from '../marketing-center/service'
 import { invalidateRedisCaches } from '../redis/cache-manager'
@@ -26,8 +26,8 @@ const DEFAULT_AUTH_METHOD_CONFIGS: AuthMethodConfigPayload[] = [
   {
     methodType: 'ADMIN_PASSWORD',
     category: 'PASSWORD',
-    displayName: '管理员账号登录',
-    description: '使用管理员账号和密码登录',
+    displayName: '账号密码登录',
+    description: '使用账号和密码登录',
     iconType: 'admin',
     isEnabled: true,
     isVisible: true,
@@ -35,8 +35,8 @@ const DEFAULT_AUTH_METHOD_CONFIGS: AuthMethodConfigPayload[] = [
     allowAutoFill: false,
     allowSignUp: false,
     config: {
-      targetLabel: '管理员账号',
-      placeholder: '请输入管理员账号',
+      targetLabel: '登录账号',
+      placeholder: '请输入登录账号',
       passwordPlaceholder: '请输入登录密码',
     },
   },
@@ -688,10 +688,17 @@ export const toAuthUserProfile = (user: {
   phone: string | null
   email: string | null
   avatarUrl: string | null
-  role: 'USER' | 'ADMIN' | null
+  role: UserRole | null
 }, loginMethodType: AuthMethodType): AuthUserProfile => {
   const phone = String(user.phone || '').trim()
   const email = String(user.email || '').trim()
+
+  // 透出三档角色：超管 / 管理员 / 用户。仅这三者合法，其余落回 USER。
+  const role: UserRole = user.role === 'SUPER_ADMIN'
+    ? 'SUPER_ADMIN'
+    : user.role === 'ADMIN'
+      ? 'ADMIN'
+      : 'USER'
 
   return {
     id: user.id,
@@ -701,7 +708,7 @@ export const toAuthUserProfile = (user: {
     maskedPhone: maskPhone(phone),
     maskedEmail: maskEmail(email),
     avatarUrl: String(user.avatarUrl || '').trim(),
-    role: user.role === 'ADMIN' ? 'ADMIN' : 'USER',
+    role,
     loginMethodType,
   }
 }

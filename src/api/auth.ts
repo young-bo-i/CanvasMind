@@ -23,7 +23,7 @@ export interface AuthUserProfile {
   maskedPhone: string
   maskedEmail: string
   avatarUrl: string
-  role: 'USER' | 'ADMIN'
+  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN'
   loginMethodType: AuthMethodType
 }
 

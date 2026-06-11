@@ -48,13 +48,13 @@
       </div>
       <div class="admin-card__content">
         <div v-if="loading" class="admin-empty">正在加载用户列表...</div>
-        <div v-else-if="users.length === 0" class="admin-empty">当前筛选条件下还没有用户数据。</div>
         <template v-else>
+          <!-- 即使没有用户也始终展示「创建用户」卡片，否则新管理员无法新增第一个用户 -->
           <div class="admin-user-list admin-user-list--grid">
             <button class="admin-user-create-card" type="button" :disabled="submitting" @click="handleCreateUser">
               <span class="admin-user-create-card__icon">＋</span>
               <span class="admin-user-create-card__title">创建用户</span>
-              <span class="admin-user-create-card__desc">支持后台新建用户，并直接绑定邮箱验证码或手机验证码登录身份。</span>
+              <span class="admin-user-create-card__desc">设置登录账号与密码，建后即可账号密码登录；邮箱/手机选填。</span>
             </button>
 
             <article v-for="user in users" :key="user.id" class="admin-user-card admin-user-card--panel" @click="openUserDetail(user)">
@@ -119,7 +119,7 @@
                                 <span>复制用户 ID</span>
                               </span>
                             </el-dropdown-item>
-                            <el-dropdown-item command="toggle-role">
+                            <el-dropdown-item v-if="isSuperAdmin && user.role !== 'SUPER_ADMIN'" command="toggle-role">
                               <span class="admin-user-menu-item">
                                 <el-icon><User /></el-icon>
                                 <span>{{ user.role === 'ADMIN' ? '设为普通用户' : '设为管理员' }}</span>
@@ -137,7 +137,7 @@
                                 <span>查看详情</span>
                               </span>
                             </el-dropdown-item>
-                            <el-dropdown-item command="delete" class="is-danger" divided>
+                            <el-dropdown-item v-if="isSuperAdmin && user.role !== 'SUPER_ADMIN'" command="delete" class="is-danger" divided>
                               <span class="admin-user-menu-item admin-user-menu-item--danger">
                                 <el-icon><Delete /></el-icon>
                                 <span>删除</span>
@@ -185,7 +185,7 @@
                   <span class="admin-user-card__meta">创建时间：{{ formatDate(user.createdAt) }}</span>
                 </div>
                 <div class="admin-list-item__actions" @click.stop>
-                  <button class="admin-inline-button" type="button" :disabled="submitting || updatingId === user.id" @click="handleQuickRoleToggle(user)">
+                  <button v-if="isSuperAdmin && user.role !== 'SUPER_ADMIN'" class="admin-inline-button" type="button" :disabled="submitting || updatingId === user.id" @click="handleQuickRoleToggle(user)">
                     {{ updatingId === user.id ? '更新中...' : user.role === 'ADMIN' ? '改为普通用户' : '设为管理员' }}
                   </button>
                   <button class="admin-inline-button" type="button" :disabled="submitting" @click="openEditDialog(user)">编辑</button>
@@ -283,7 +283,7 @@
               </div>
               <div class="admin-user-drawer__field">
                 <span class="admin-user-drawer__field-label">账号角色</span>
-                <strong class="admin-user-drawer__field-value">{{ selectedUserDetail.role === 'ADMIN' ? '管理员' : '普通用户' }}</strong>
+                <strong class="admin-user-drawer__field-value">{{ selectedUserDetail.role === 'SUPER_ADMIN' ? '超级管理员' : selectedUserDetail.role === 'ADMIN' ? '管理员' : '普通用户' }}</strong>
               </div>
               <div class="admin-user-drawer__field">
                 <span class="admin-user-drawer__field-label">账号状态</span>
@@ -329,7 +329,7 @@
                   <strong class="admin-user-drawer__field-value">{{ formatDate(selectedUserDetail.activeSubscription.endTime) }}</strong>
                 </div>
                 <div class="admin-user-drawer__field">
-                  <span class="admin-user-drawer__field-label">月赠积分</span>
+                  <span class="admin-user-drawer__field-label">开通赠积分</span>
                   <strong class="admin-user-drawer__field-value">{{ selectedUserDetail.activeSubscription.level?.monthlyBonusPoints ?? 0 }}</strong>
                 </div>
                 <div class="admin-user-drawer__field">
@@ -485,14 +485,14 @@
     <AdminDialog
       :visible="editDialogVisible"
       :title="isCreateMode ? '创建用户' : '编辑用户'"
-      :description="isCreateMode ? '填写基础资料并绑定至少一种登录身份。' : '更新昵称、联系方式和账号状态。'"
+      :description="isCreateMode ? '设置登录账号与密码，建后即可用账号密码登录；邮箱/手机选填。' : '更新昵称、联系方式和账号状态。'"
       panel-class="admin-dialog--provider-form admin-user-manage-dialog"
       @close="closeEditDialog"
     >
         <form class="admin-dialog__body admin-form" @submit.prevent="handleSubmitEdit">
           <div class="admin-user-dialog-hero">
             <span class="admin-chip">{{ isCreateMode ? '创建账号' : '资料编辑' }}</span>
-            <span class="admin-user-dialog-hero__text">{{ isCreateMode ? '创建后可直接用于验证码登录与后台运营管理。' : '统一维护昵称、联系方式与账号状态。' }}</span>
+            <span class="admin-user-dialog-hero__text">{{ isCreateMode ? '创建后用户即可用「账号 + 密码」登录。' : '统一维护昵称、联系方式与账号状态。' }}</span>
           </div>
           <div class="admin-user-dialog-summary">
             <div class="admin-user-dialog-summary__item">
@@ -509,15 +509,25 @@
               <label class="admin-form__label">昵称</label>
               <input v-model.trim="editForm.name" class="admin-input" type="text" placeholder="请输入昵称">
             </div>
+            <!-- 账号 + 密码：建号必填，建后即可账号密码登录 -->
+            <div v-if="isCreateMode" class="admin-form__field">
+              <label class="admin-form__label">登录账号</label>
+              <input v-model.trim="editForm.username" class="admin-input" type="text" autocomplete="off" placeholder="4-32 位，字母开头">
+            </div>
+            <div v-if="isCreateMode" class="admin-form__field">
+              <label class="admin-form__label">登录密码</label>
+              <input v-model.trim="editForm.password" class="admin-input" type="password" autocomplete="new-password" placeholder="8-64 位">
+            </div>
             <div class="admin-form__field">
               <label class="admin-form__label">邮箱</label>
-              <input v-model.trim="editForm.email" class="admin-input" type="email" placeholder="请输入邮箱">
+              <input v-model.trim="editForm.email" class="admin-input" type="email" placeholder="选填，用于验证码登录">
             </div>
             <div class="admin-form__field">
               <label class="admin-form__label">手机号</label>
               <input v-model.trim="editForm.phone" class="admin-input" type="text" placeholder="请输入手机号">
             </div>
-            <div v-if="isCreateMode" class="admin-form__field">
+            <!-- 仅超管能在创建时指定为管理员；普通管理员只能建普通用户 -->
+            <div v-if="isCreateMode && isSuperAdmin" class="admin-form__field">
               <label class="admin-form__label">账号角色</label>
               <select v-model="editForm.role" class="admin-input">
                 <option value="USER">普通用户</option>
@@ -647,7 +657,7 @@
                 >
                   <span class="admin-user-option-card__title">{{ item.name }} · Lv.{{ item.level }}</span>
                   <span class="admin-user-option-card__desc">
-                    每月赠送 {{ item.monthlyBonusPoints }} 积分
+                    开通赠送 {{ item.monthlyBonusPoints }} 积分
                     <template v-if="item.description"> · {{ item.description }}</template>
                   </span>
                 </button>
@@ -786,6 +796,11 @@ import {
   type ListAdminUsersOptions,
 } from '@/api/admin-users'
 import { listMembershipLevels, type MembershipLevelItem } from '@/api/admin-marketing'
+import { useAuthStore } from '@/stores/auth'
+
+// 超管才显示「设为管理员 / 删除用户」等敏感入口。
+const authStore = useAuthStore()
+const isSuperAdmin = authStore.isSuperAdmin
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -838,6 +853,8 @@ const editForm = reactive({
   email: '',
   phone: '',
   avatarUrl: '',
+  username: '',
+  password: '',
   role: 'USER' as 'USER' | 'ADMIN',
   status: 'ACTIVE' as 'ANONYMOUS' | 'ACTIVE' | 'DISABLED',
 })
@@ -1120,6 +1137,8 @@ const resetEditForm = () => {
   editForm.email = ''
   editForm.phone = ''
   editForm.avatarUrl = ''
+  editForm.username = ''
+  editForm.password = ''
   editForm.role = 'USER'
   editForm.status = 'ACTIVE'
 }
@@ -1221,6 +1240,8 @@ const handleSubmitEdit = async () => {
         email: editForm.email,
         phone: editForm.phone,
         avatarUrl: editForm.avatarUrl,
+        username: editForm.username,
+        password: editForm.password,
         role: editForm.role,
         status: editForm.status,
       })

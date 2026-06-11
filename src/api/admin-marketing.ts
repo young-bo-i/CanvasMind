@@ -17,6 +17,12 @@ export interface AdminMarketingOverview {
     codeCount: number
     usedCount: number
   }
+  business: {
+    totalRechargeAmount: number
+    totalConsumePoints: number
+    totalPointBalance: number
+    activeMemberCount: number
+  }
 }
 
 export interface MembershipLevelItem {
@@ -27,6 +33,7 @@ export interface MembershipLevelItem {
   iconUrl: string | null
   monthlyBonusPoints: number
   storageCapacity: string | number
+  pointDiscountPercent: number
   benefitsJson: unknown
   isEnabled: boolean
   sortOrder: number
@@ -192,6 +199,10 @@ export interface AdminPointLogItem {
   generationPrompt: string
   generationErrorMessage: string
   taskType: string
+  // 对话按 token 分档结算的用量明细（仅结算流水有值）。
+  usageInputTokens: number
+  usageOutputTokens: number
+  usageCachedTokens: number
   createdAt: string
   refunded: boolean
   canCompensate: boolean

@@ -49,8 +49,11 @@ export const useAuthStore = () => {
   // 当前是否已登录。
   const isLoggedIn = computed(() => Boolean(currentUser.value?.id))
 
-  // 当前是否具备后台管理员权限。
-  const isAdmin = computed(() => currentUser.value?.role === 'ADMIN')
+  // 当前是否具备后台管理员权限（管理员或超级管理员）。
+  const isAdmin = computed(() => currentUser.value?.role === 'ADMIN' || currentUser.value?.role === 'SUPER_ADMIN')
+
+  // 当前是否为超级管理员（新增管理员 / 改角色 / 删用户等敏感操作据此显隐）。
+  const isSuperAdmin = computed(() => currentUser.value?.role === 'SUPER_ADMIN')
 
   // 当前用户按钮文案。
   const loginButtonText = computed(() => {
@@ -124,6 +127,7 @@ export const useAuthStore = () => {
     enabledMethods,
     isLoggedIn,
     isAdmin,
+    isSuperAdmin,
     loginButtonText,
     sessionLoading,
     sessionInitialized,

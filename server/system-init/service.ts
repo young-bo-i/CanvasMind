@@ -68,7 +68,7 @@ const writeStoredSystemInitStatus = async (payload: SystemInitStatus) => {
 const buildLegacyInitializedStatus = async (): Promise<SystemInitStatus | null> => {
   const adminUser = await prisma.appUser.findFirst({
     where: {
-      role: 'ADMIN',
+      role: { in: ['ADMIN', 'SUPER_ADMIN'] },
     },
     orderBy: {
       createdAt: 'asc',
@@ -186,7 +186,8 @@ export const initializeSystem = async (payload: {
         passwordHash,
         name,
         email: email || null,
-        role: 'ADMIN',
+        // 首次安装创建的初始管理员即超级管理员。
+        role: 'SUPER_ADMIN',
         status: 'ACTIVE',
         authIdentities: {
           create: {

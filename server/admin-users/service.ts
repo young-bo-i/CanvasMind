@@ -8,10 +8,11 @@ import type {
   UserStatus,
 } from '@prisma/client'
 import prisma from '../db/prisma'
+import { lockUserBillingRow, invalidateMarketingCenterOverviewCache } from '../marketing-center/service'
 import { invalidateRedisCachePatterns, invalidateRedisCaches } from '../redis/cache-manager'
 import { getOrSetJsonCache } from '../redis/json-cache'
 import { redisKeys } from '../redis/keys'
-import { isValidEmail, isValidPhone, maskEmail, maskPhone } from '../auth/service'
+import { isValidEmail, isValidPhone, maskEmail, maskPhone, isValidAdminUsername, isValidAdminPassword, hashUserPassword } from '../auth/service'
 import { buildPageResult, resolvePagination } from '../shared/pagination'
 
 interface AdminUserRecord {
@@ -55,6 +56,9 @@ export interface ListAdminUsersOptions {
   status?: 'ALL' | 'ANONYMOUS' | 'ACTIVE' | 'DISABLED'
   page?: number
   pageSize?: number
+  // 归属隔离：当前查看者身份。SUPER_ADMIN 看全部，普通管理员仅看 ownerAdminId=自己 的用户。
+  viewerId?: string
+  viewerRole?: UserRole
 }
 
 const ADMIN_USERS_LIST_SCOPE = 'admin-users-list'
@@ -70,6 +74,8 @@ const buildAdminUsersListCacheKey = (options: ListAdminUsersOptions = {}) => {
       status: String(options.status || 'ALL').trim(),
       page: Number(options.page || 1),
       pageSize: Number(options.pageSize || 10),
+      // 归属作用域必须进缓存键，否则不同管理员命中同一键导致跨管理员数据串味。
+      ownerScope: options.viewerRole === 'SUPER_ADMIN' ? 'ALL' : String(options.viewerId || 'none'),
     }))
     .digest('hex')
   return redisKeys.cache(ADMIN_USERS_LIST_SCOPE, hash)
@@ -114,6 +120,9 @@ export interface CreateAdminUserInput {
   avatarUrl?: string
   role?: UserRole
   status?: UserStatus
+  // 账号密码登录：建号时设登录账号 + 密码（当前为必填）。
+  username?: string
+  password?: string
 }
 
 const buildSerialNo = (prefix: string) => {
@@ -469,7 +478,8 @@ const buildAdminUserItem = (user: AdminUserRecord, countMap?: AdminUserCountMap,
     maskedEmail: maskEmail(email),
     maskedPhone: maskPhone(phone),
     avatarUrl: String(user.avatarUrl || '').trim(),
-    role: user.role === 'ADMIN' ? 'ADMIN' : 'USER',
+    // 透出三档角色：超管 / 管理员 / 用户。
+    role: user.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : user.role === 'ADMIN' ? 'ADMIN' : 'USER',
     status: String(user.status || '').trim() || 'ANONYMOUS',
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
@@ -483,6 +493,15 @@ const buildAdminUserItem = (user: AdminUserRecord, countMap?: AdminUserCountMap,
   }
 }
 
+// 归属校验：普通管理员只能操作自己名下(ownerAdminId=自己)的用户；超管放行一切。
+export const isUserOwnedByAdmin = async (targetUserId: string, adminId: string): Promise<boolean> => {
+  const target = await prisma.appUser.findUnique({
+    where: { id: String(targetUserId || '').trim() },
+    select: { ownerAdminId: true },
+  })
+  return Boolean(target && target.ownerAdminId === adminId)
+}
+
 const buildUserWhereInput = (options: ListAdminUsersOptions): Prisma.AppUserWhereInput => {
   const where: Prisma.AppUserWhereInput = {}
   const keyword = String(options.keyword || '').trim()
@@ -493,6 +512,12 @@ const buildUserWhereInput = (options: ListAdminUsersOptions): Prisma.AppUserWher
 
   if (options.status === 'ANONYMOUS' || options.status === 'ACTIVE' || options.status === 'DISABLED') {
     where.status = options.status
+  }
+
+  // 归属隔离：非超管只能看到自己创建（ownerAdminId=自己）的用户；
+  // 平台直属(ownerAdminId=NULL，含自助注册/历史数据)仅超管可见。
+  if (options.viewerRole && options.viewerRole !== 'SUPER_ADMIN') {
+    where.ownerAdminId = options.viewerId || '__none__'
   }
 
   if (keyword) {
@@ -850,6 +875,8 @@ export const createAdminUser = async (input: CreateAdminUserInput) => {
   const email = normalizeEmail(input.email)
   const phone = normalizePhone(input.phone)
   const avatarUrl = normalizeAvatarUrl(input.avatarUrl)
+  const username = String(input.username || '').trim()
+  const password = String(input.password || '')
   const role: UserRole = input.role === 'ADMIN' ? 'ADMIN' : 'USER'
   const status: UserStatus = input.status === 'DISABLED'
     ? 'DISABLED'
@@ -857,8 +884,12 @@ export const createAdminUser = async (input: CreateAdminUserInput) => {
       ? 'ANONYMOUS'
       : 'ACTIVE'
 
-  if (!email && !phone) {
-    throw new Error('请至少填写一个登录标识：邮箱或手机号')
+  // 账号 + 密码为必填：建号即可用账号密码登录。
+  if (!isValidAdminUsername(username)) {
+    throw new Error('请输入 4-32 位登录账号，字母开头，只能包含字母、数字、下划线或中划线')
+  }
+  if (!isValidAdminPassword(password)) {
+    throw new Error('请输入 8-64 位登录密码')
   }
 
   if (email && !isValidEmail(email)) {
@@ -870,8 +901,23 @@ export const createAdminUser = async (input: CreateAdminUserInput) => {
   }
 
   await ensureIdentifierNotDuplicated({ email, phone })
+  // 账号唯一性（同时挡 username 列与已有 ADMIN_PASSWORD 身份）。
+  const existingUsername = await prisma.appUser.findUnique({ where: { username }, select: { id: true } })
+  if (existingUsername) {
+    throw new Error('该登录账号已被占用，请更换')
+  }
+  const existingPasswordIdentity = await prisma.appUserAuthIdentity.findFirst({
+    where: { methodType: 'ADMIN_PASSWORD', identifier: username },
+    select: { id: true },
+  })
+  if (existingPasswordIdentity) {
+    throw new Error('该登录账号已被占用，请更换')
+  }
 
-  const requiredMethodTypes: AuthMethodType[] = []
+  const passwordHash = await hashUserPassword(password)
+
+  // 确保所需登录方式已启用：账号密码必走 ADMIN_PASSWORD；填了邮箱/手机再加对应验证码方式。
+  const requiredMethodTypes: AuthMethodType[] = ['ADMIN_PASSWORD']
   if (email) {
     requiredMethodTypes.push('EMAIL_CODE')
   }
@@ -887,11 +933,30 @@ export const createAdminUser = async (input: CreateAdminUserInput) => {
         email,
         phone,
         avatarUrl,
+        username,
+        passwordHash,
         role,
         status,
+        // 归属创建者：管理员建的用户归该管理员，超管建的归超管。
+        ownerAdminId: input.currentUserId,
       },
       select: {
         id: true,
+      },
+    })
+
+    // 账号密码登录身份：identifier = 登录账号。
+    await tx.appUserAuthIdentity.create({
+      data: {
+        userId: user.id,
+        methodType: 'ADMIN_PASSWORD',
+        identifier: username,
+        isVerified: true,
+        verifiedAt: new Date(),
+        metaJson: {
+          source: 'admin_create_user',
+          operatorUserId: input.currentUserId,
+        } as any,
       },
     })
 
@@ -951,6 +1016,15 @@ export const updateAdminUserRole = async (input: {
   }
 
   await findAdminUserOrThrow(targetUserId)
+
+  // 超管受保护：不能修改任何超级管理员的角色（超管唯一、不可降级/转移）。
+  const existing = await prisma.appUser.findUnique({
+    where: { id: targetUserId },
+    select: { role: true },
+  })
+  if (existing?.role === 'SUPER_ADMIN') {
+    throw new Error('不能修改超级管理员的角色')
+  }
 
   const updatedUser = await prisma.appUser.update({
     where: { id: targetUserId },
@@ -1047,6 +1121,8 @@ export const adjustAdminUserPoints = async (input: AdjustAdminUserPointsInput) =
   const associationNo = buildSerialNo('ADMPTS')
 
   const pointLog = await prisma.$transaction(async (tx) => {
+    // 行锁：与用户侧消费/退款串行化，避免并发下 balanceAfter 链断裂。
+    await lockUserBillingRow(tx, targetUserId)
     return await appendAdminPointLog(tx, {
       userId: targetUserId,
       currentUserId: input.currentUserId,
@@ -1059,6 +1135,8 @@ export const adjustAdminUserPoints = async (input: AdjustAdminUserPointsInput) =
   })
 
   await invalidateAdminUsersCaches(targetUserId)
+  // 同时失效用户端营销中心总览缓存，避免到账后最长 120s 不刷新。
+  await invalidateMarketingCenterOverviewCache(targetUserId)
   return serializeAdminUserRecord(pointLog)
 }
 
@@ -1105,6 +1183,8 @@ export const adjustAdminUserMembership = async (input: AdjustAdminUserMembership
   const defaultBonusPoints = bonusPoints > 0 ? bonusPoints : Number(membershipLevel.monthlyBonusPoints || 0)
 
   const result = await prisma.$transaction(async (tx) => {
+    // 行锁：会员赠分与用户侧积分写入串行化。
+    await lockUserBillingRow(tx, targetUserId)
     const activeSameSubscription = await tx.userSubscription.findFirst({
       where: {
         userId: targetUserId,
@@ -1212,6 +1292,8 @@ export const adjustAdminUserMembership = async (input: AdjustAdminUserMembership
   })
 
   await invalidateAdminUsersCaches(targetUserId)
+  // 会员调整可能赠送积分，同步失效用户端营销中心缓存。
+  await invalidateMarketingCenterOverviewCache(targetUserId)
   return serializeAdminUserRecord(result)
 }
 
@@ -1278,6 +1360,15 @@ export const deleteAdminUser = async (input: {
 
   ensureNotSelfDangerousAction(input.currentUserId, targetUserId, '删除操作')
   await findAdminUserOrThrow(targetUserId)
+
+  // 超管受保护：不能删除超级管理员。
+  const existing = await prisma.appUser.findUnique({
+    where: { id: targetUserId },
+    select: { role: true },
+  })
+  if (existing?.role === 'SUPER_ADMIN') {
+    throw new Error('不能删除超级管理员')
+  }
 
   await prisma.appUser.delete({
     where: { id: targetUserId },

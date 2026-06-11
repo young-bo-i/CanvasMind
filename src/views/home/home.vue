@@ -25,6 +25,8 @@
       <HomeDetailModalFrom
         v-model="workDetailOpen"
         :image-src="workDetailImageSrc"
+        :is-video="workDetailIsVideo"
+        :video-src="workDetailVideoSrc"
         :owner-id="workDetailOwnerId"
         :prompt-text="workDetailPromptText"
         :author-name="workDetailAuthorName"
@@ -40,6 +42,8 @@
         @favorite="handleWorkDetailFavorite"
         @delete="handleWorkDetailDelete"
         @report="handleWorkDetailReport"
+        @make-same="handleWorkDetailMakeSame"
+        @use-as-reference="handleWorkDetailUseAsReference"
       />
     </template>
   </FrontstagePageShell>
@@ -48,6 +52,7 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import HomeHeader from '../../components/home/components/HomeHeader.vue'
 import TabsSection from '@components/home/components/TabsSection.vue'
@@ -58,6 +63,38 @@ import { applyAssetAction } from '@/api/asset-items'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
+const router = useRouter()
+
+// 「做同款 / 用作参考图」：把草稿写进 sessionStorage，跳到生成页由 applyDraft 预填（不自动发送）。
+const goGenerateWithDraft = (draft) => {
+  try {
+    window.sessionStorage.setItem('canana:generate:draft', JSON.stringify(draft))
+  } catch {
+    // 忽略存储异常
+  }
+  workDetailOpen.value = false
+  router.push('/generate')
+}
+
+// 做同款：同类型(视频→视频/图片→图片) + 同提示词/比例，重新创作。
+const handleWorkDetailMakeSame = () => {
+  goGenerateWithDraft({
+    type: workDetailIsVideo.value ? 'video' : 'image',
+    prompt: workDetailPromptText.value || '',
+    ratio: workDetailAspectRatioLabel.value || '',
+  })
+}
+
+// 用作参考图：仅图片，把图设为参考图（默认图生图，用户可在生成页切到图生视频）。
+const handleWorkDetailUseAsReference = () => {
+  const imageSrc = workDetailImageSrc.value
+  if (!imageSrc) return
+  goGenerateWithDraft({
+    type: 'image',
+    prompt: '',
+    referenceImages: [imageSrc],
+  })
+}
 // 未登录时隐藏首页「我的作品」展示区
 const isHomeFeedVisible = computed(() => authStore.isLoggedIn.value)
 
@@ -79,6 +116,18 @@ const workDetailImageSrc = computed(() => {
   const g = workDetailGallery.value
   const i = workDetailGalleryIndex.value
   return g[i]?.imageSrc ?? ''
+})
+
+const workDetailIsVideo = computed(() => {
+  const g = workDetailGallery.value
+  const i = workDetailGalleryIndex.value
+  return Boolean(g[i]?.isVideo)
+})
+
+const workDetailVideoSrc = computed(() => {
+  const g = workDetailGallery.value
+  const i = workDetailGalleryIndex.value
+  return g[i]?.videoSrc ?? ''
 })
 
 /** 空字符串视为未传，弹层用内置模拟提示词 */

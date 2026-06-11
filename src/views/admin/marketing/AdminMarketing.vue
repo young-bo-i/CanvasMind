@@ -40,6 +40,26 @@
           <div class="admin-stat-card__value">{{ overview?.rewards.ruleCount ?? rewardRules.length }}</div>
           <div class="admin-stat-card__hint">覆盖登录、注册、签到等激励动作</div>
         </div>
+        <div class="admin-stat-card">
+          <div class="admin-stat-card__label">总充值金额</div>
+          <div class="admin-stat-card__value">¥{{ (overview?.business.totalRechargeAmount ?? 0).toFixed(2) }}</div>
+          <div class="admin-stat-card__hint">已支付充值订单实付金额合计</div>
+        </div>
+        <div class="admin-stat-card">
+          <div class="admin-stat-card__label">总消费积分</div>
+          <div class="admin-stat-card__value">{{ overview?.business.totalConsumePoints ?? 0 }}</div>
+          <div class="admin-stat-card__hint">全部生成消费扣除的积分合计</div>
+        </div>
+        <div class="admin-stat-card">
+          <div class="admin-stat-card__label">用户总余额</div>
+          <div class="admin-stat-card__value">{{ overview?.business.totalPointBalance ?? 0 }}</div>
+          <div class="admin-stat-card__hint">全站用户当前持有积分合计</div>
+        </div>
+        <div class="admin-stat-card">
+          <div class="admin-stat-card__label">活跃会员</div>
+          <div class="admin-stat-card__value">{{ overview?.business.activeMemberCount ?? 0 }}</div>
+          <div class="admin-stat-card__hint">当前有效期内的会员订阅数</div>
+        </div>
       </div>
     </section>
 
@@ -89,7 +109,7 @@
               <div class="admin-card__header">
                 <div>
                   <h4 class="admin-card__title">会员等级</h4>
-                  <div class="admin-card__desc">定义会员层级、专属权益、每月赠送积分和排序权重。</div>
+                  <div class="admin-card__desc">定义会员层级、专属权益、开通赠送积分和排序权重。</div>
                 </div>
                 <button class="admin-button admin-button--primary" type="button" @click="openLevelDialog()">新增等级</button>
               </div>
@@ -100,7 +120,7 @@
                     <div>
                       <div class="admin-list-item__title">{{ item.name }}</div>
                       <div class="admin-list-item__meta">
-                        Lv.{{ item.level }} · 每月赠送 {{ item.monthlyBonusPoints }} 积分 · 容量 {{ item.storageCapacity || 0 }}
+                        Lv.{{ item.level }} · 开通赠送 {{ item.monthlyBonusPoints }} 积分 · 折扣 {{ item.pointDiscountPercent || 0 }}% · 容量 {{ item.storageCapacity || 0 }}
                       </div>
                     </div>
                     <div class="admin-marketing-list-item__badges">
@@ -442,6 +462,12 @@
                     <div v-if="item.generationPrompt || item.generationErrorMessage" class="admin-list-item__meta">
                       {{ item.generationPrompt || '未记录任务提示词' }}<span v-if="item.generationErrorMessage"> · 错误：{{ item.generationErrorMessage }}</span>
                     </div>
+                    <div
+                      v-if="item.usageInputTokens || item.usageOutputTokens || item.usageCachedTokens"
+                      class="admin-list-item__meta"
+                    >
+                      用量 · 输入 {{ item.usageInputTokens }} · 输出 {{ item.usageOutputTokens }} · 缓存命中 {{ item.usageCachedTokens }} token
+                    </div>
                   </div>
                   <div class="admin-point-log-item__aside">
                     <div class="admin-point-log-item__status">
@@ -542,12 +568,18 @@
               <input v-model.number="levelForm.level" class="admin-input" type="number" min="1">
             </div>
             <div class="admin-form__field">
-              <label class="admin-form__label">每月赠送积分</label>
+              <label class="admin-form__label">开通赠送积分</label>
               <input v-model.number="levelForm.monthlyBonusPoints" class="admin-input" type="number" min="0">
+              <div class="admin-form__hint">用户开通/续费该等级时一次性赠送的积分（当前非按月发放）。</div>
             </div>
             <div class="admin-form__field">
               <label class="admin-form__label">存储容量</label>
               <input v-model.number="levelForm.storageCapacity" class="admin-input" type="number" min="0" placeholder="单位自定义">
+            </div>
+            <div class="admin-form__field">
+              <label class="admin-form__label">积分折扣(%)</label>
+              <input v-model.number="levelForm.pointDiscountPercent" class="admin-input" type="number" min="0" max="100" placeholder="0">
+              <div class="admin-form__hint">会员生成时的积分减免百分比。例如 20 = 按 8 折扣费(少扣 20%)。0 表示无折扣。</div>
             </div>
             <div class="admin-form__field admin-form__field--full">
               <label class="admin-form__label">图标地址</label>
@@ -1107,6 +1139,8 @@ const createLevelForm = () => ({
   iconUrl: '',
   monthlyBonusPoints: 0,
   storageCapacity: 0,
+  // 会员积分消耗减免百分比(0-100)。
+  pointDiscountPercent: 0,
   benefitsJsonText: '[]',
   isEnabled: true,
   sortOrder: levels.value.length,
@@ -1635,6 +1669,7 @@ const openLevelDialog = (item?: MembershipLevelItem) => {
     iconUrl: item.iconUrl || '',
     monthlyBonusPoints: item.monthlyBonusPoints,
     storageCapacity: Number(item.storageCapacity || 0),
+    pointDiscountPercent: Number(item.pointDiscountPercent || 0),
     benefitsJsonText: formatJsonText(item.benefitsJson, '[]'),
     isEnabled: item.isEnabled,
     sortOrder: item.sortOrder,
@@ -1658,6 +1693,7 @@ const handleSubmitLevel = async () => {
       iconUrl: levelForm.iconUrl || '',
       monthlyBonusPoints: Number(levelForm.monthlyBonusPoints || 0),
       storageCapacity: Number(levelForm.storageCapacity || 0),
+      pointDiscountPercent: Math.min(100, Math.max(0, Number(levelForm.pointDiscountPercent || 0))),
       benefitsJson: parseJsonText(levelForm.benefitsJsonText, []),
       isEnabled: Boolean(levelForm.isEnabled),
       sortOrder: Number(levelForm.sortOrder || 0),
