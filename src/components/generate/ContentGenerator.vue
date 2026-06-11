@@ -711,8 +711,9 @@ const fileMatchesSlot = (file: File, slot: ReferenceSlot) => {
   return t.startsWith('image/')
 }
 
-// 正在上传参考素材。
+// 正在上传参考素材；uploadingSlot 标记当前哪个上传位在 loading，用于在该位显示菊花。
 const referenceUploading = ref(false)
+const uploadingSlot = ref<ReferenceSlot | ''>('')
 
 // 上传到本地存储，返回可引用 URL（替代 base64 内联，避免视频/音频超体积，并对齐 Seedance 的 URL 引用）。
 const uploadReferenceFiles = async (files: File[]): Promise<string[]> => {
@@ -737,18 +738,23 @@ const uploadReferenceFiles = async (files: File[]): Promise<string[]> => {
 const applyFilesToSlot = async (rawFiles: File[], slot: ReferenceSlot) => {
   const files = rawFiles.filter(file => fileMatchesSlot(file, slot))
   if (!files.length) return
-  const urls = await uploadReferenceFiles(files)
-  if (!urls.length) return
-  if (slot === 'image-ref') {
-    imageReferenceImages.value = [...imageReferenceImages.value, ...urls].slice(0, IMAGE_REFERENCE_LIMIT)
-  } else if (slot === 'first-frame') {
-    videoFirstFrameImage.value = urls[0]
-  } else if (slot === 'last-frame') {
-    videoLastFrameImage.value = urls[0]
-  } else if (slot === 'keyframe') {
-    videoKeyframeImages.value = [...videoKeyframeImages.value, ...urls].slice(0, VIDEO_KEYFRAME_LIMIT)
-  } else if (slot === 'omni') {
-    videoReferenceImages.value = [...videoReferenceImages.value, ...urls].slice(0, VIDEO_REFERENCE_LIMIT)
+  uploadingSlot.value = slot
+  try {
+    const urls = await uploadReferenceFiles(files)
+    if (!urls.length) return
+    if (slot === 'image-ref') {
+      imageReferenceImages.value = [...imageReferenceImages.value, ...urls].slice(0, IMAGE_REFERENCE_LIMIT)
+    } else if (slot === 'first-frame') {
+      videoFirstFrameImage.value = urls[0]
+    } else if (slot === 'last-frame') {
+      videoLastFrameImage.value = urls[0]
+    } else if (slot === 'keyframe') {
+      videoKeyframeImages.value = [...videoKeyframeImages.value, ...urls].slice(0, VIDEO_KEYFRAME_LIMIT)
+    } else if (slot === 'omni') {
+      videoReferenceImages.value = [...videoReferenceImages.value, ...urls].slice(0, VIDEO_REFERENCE_LIMIT)
+    }
+  } finally {
+    uploadingSlot.value = ''
   }
 }
 
@@ -903,6 +909,7 @@ onUnmounted(() => {
         <!-- 参考图上传区域 -->
         <!-- 图片模式：上传前保持原单卡布局，上传后切多图编排 -->
         <div v-if="currentType === 'image' || currentType === 'agent'" :class="['references-vWIzeo', 'references-Gf5d1P', { 'collapsed-_VpN2b collapsed-IXfvom': isCollapsed && !isSidebar }]">
+          <div v-if="referenceUploading" class="generator-upload-spinner"></div>
           <div :class="['reference-group-_DAGw1', 'reference-group-c2buvf', { 'collapsed-J9LsWu collapsed-GMNiSS': isCollapsed && !isSidebar, 'generator-reference-group--multi': imageReferenceImages.length > 0 }]"
                :style="imageReferenceGroupStyle">
             <div class="reference-group-background-f6pFpT reference-group-background-cr79bH"></div>
@@ -1035,6 +1042,7 @@ onUnmounted(() => {
 
         <!-- 视频模式：按功能切换上传区 -->
         <div v-else-if="currentType === 'video'" :class="['references-vWIzeo', { 'collapsed-_VpN2b': isCollapsed && !isSidebar }]">
+          <div v-if="referenceUploading" class="generator-upload-spinner"></div>
           <!-- 首尾帧 -->
           <template v-if="videoFeature === 'first-last-frame'">
           <!-- 首帧上传 -->
@@ -1839,6 +1847,31 @@ onUnmounted(() => {
   border-radius: inherit;
   color: var(--color-primary, #7c5cff);
   background: rgba(124, 92, 255, 0.12);
+}
+
+/* 上传中 loading 菊花：覆盖在参考区上，任意类型(图/视频/音频)上传期间显示 */
+.dimension-layout-FUl4Nj .generator-upload-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.42);
+  border-radius: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+.dimension-layout-FUl4Nj .generator-upload-spinner::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: generator-upload-spin 0.7s linear infinite;
+}
+@keyframes generator-upload-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 已上传的视频参考缩略图：很窄的小白边（与结果视图一致），叠压时分隔更清晰；不影响「+」上传位 */

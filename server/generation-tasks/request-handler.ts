@@ -1,7 +1,6 @@
 import { requireCurrentSessionUser } from '../auth/session'
 import { sendJson } from '../ai-gateway/shared'
 import { isPrismaConfigured } from '../db/prisma'
-import { REDIS_CONFIG, consumeFixedWindowRateLimit, getRedisRuntimeSettings } from '../redis'
 import { writeScopedLog } from '../shared/logging'
 import { GENERATION_TASKS_BASE_PATH } from './constants'
 import { getGenerationTaskRecord, startGenerationTask, stopGenerationTask, subscribeGenerationTaskStream } from './service'
@@ -39,21 +38,7 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
     }
 
     if (req.method === 'POST' && requestUrl === GENERATION_TASKS_BASE_PATH) {
-      const runtimeSettings = await getRedisRuntimeSettings()
-      const rateLimitResult = await consumeFixedWindowRateLimit({
-        scope: 'task-submit',
-        identifier: String(currentUser.id || '').trim(),
-        limit: runtimeSettings.taskSubmitRateLimit || REDIS_CONFIG.taskSubmitRateLimit,
-        windowSeconds: REDIS_CONFIG.rateLimitWindowSeconds,
-      })
-
-      if (!rateLimitResult.allowed) {
-        throw new GenerationTaskRequestError(
-          429,
-          `提交过于频繁，请在 ${rateLimitResult.retryAfterSeconds || REDIS_CONFIG.rateLimitWindowSeconds} 秒后重试`,
-        )
-      }
-
+      // 已移除「提交过于频繁」固定窗口限流（并发上限仍由 startGenerationTask 内部按账号/技能/厂商任务数控制）。
       const payload = await readGenerationTaskBody(req)
       payloadSummary = {
         sessionId: payload?.sessionId || null,

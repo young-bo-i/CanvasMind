@@ -336,17 +336,27 @@ const submitVideoTask = async (
     body.input_reference = upstreamRefs[0]
   }
 
-  // 记录实际下发的参考素材形态，便于定位「相对 /uploads 路径上游无法回源」等问题。
+  const submitUrl = `${trimmedBase}/${endpoint.replace(/^\/+/, '')}`
+  // 记录实际下发的「完整请求体」(不含 apiKey，apiKey 在 header)，便于对照上游所需字段定位 Field required 等问题。
+  let bodyPreview = ''
+  try {
+    bodyPreview = JSON.stringify(body)
+  } catch {
+    bodyPreview = '[unserializable body]'
+  }
   context.logGenerationTask('video_task:submit_body', {
+    url: submitUrl,
     referenceMode,
     refCount: upstreamRefs.length,
-    refSample: upstreamRefs.slice(0, 3).map(url => url.slice(0, 140)),
+    feature: params.feature || '(none)',
     assetBaseUrl: assetBaseUrl || '(none)',
     isRelativeRef: upstreamRefs.some(url => url.startsWith('/')),
+    bodyKeys: Object.keys(body),
+    body: bodyPreview.slice(0, 2500),
   })
 
   const result = await context.fetchUpstreamJson({
-    url: `${trimmedBase}/${endpoint.replace(/^\/+/, '')}`,
+    url: submitUrl,
     method: 'POST',
     apiKey,
     body,
