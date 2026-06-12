@@ -247,33 +247,54 @@ const parseDataUrl = (value: string) => {
   }
 }
 
-// 下载远程资源，转换为可上传的缓冲区。
+// 远程资源下载超时与体积上限（防止挂死连接占内存、超大文件 arrayBuffer 全量入内存致 OOM）。
+const ASSET_DOWNLOAD_TIMEOUT_MS = Number.parseInt(process.env.ASSET_DOWNLOAD_TIMEOUT_MS || '120000', 10)
+const ASSET_DOWNLOAD_MAX_BYTES = Number.parseInt(process.env.ASSET_DOWNLOAD_MAX_BYTES || String(500 * 1024 * 1024), 10)
+
+// 下载远程资源，转换为可上传的缓冲区。带超时中止 + Content-Length 体积拦截。
 const downloadRemoteAsset = async (url: string) => {
   logGenerationRecord('download_remote_asset:start', {
     url,
   })
 
-  const response = await fetch(url)
+  const controller = new AbortController()
+  const timeoutTimer = setTimeout(() => controller.abort(), ASSET_DOWNLOAD_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, { signal: controller.signal })
 
-  if (!response.ok) {
-    logGenerationRecord('download_remote_asset:error', {
+    if (!response.ok) {
+      logGenerationRecord('download_remote_asset:error', {
+        url,
+        status: response.status,
+      })
+      throw new Error(`下载远程资源失败：${response.status}`)
+    }
+
+    // 提前用 Content-Length 拦截超大文件，避免 arrayBuffer 全量入内存造成 OOM。
+    const declaredSize = Number(response.headers.get('content-length') || 0)
+    if (declaredSize && declaredSize > ASSET_DOWNLOAD_MAX_BYTES) {
+      logGenerationRecord('download_remote_asset:too_large', { url, declaredSize, limit: ASSET_DOWNLOAD_MAX_BYTES })
+      throw new Error(`远程资源过大（${declaredSize} 字节），超过上限 ${ASSET_DOWNLOAD_MAX_BYTES}`)
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    if (arrayBuffer.byteLength > ASSET_DOWNLOAD_MAX_BYTES) {
+      logGenerationRecord('download_remote_asset:too_large', { url, size: arrayBuffer.byteLength, limit: ASSET_DOWNLOAD_MAX_BYTES })
+      throw new Error(`远程资源过大（${arrayBuffer.byteLength} 字节），超过上限 ${ASSET_DOWNLOAD_MAX_BYTES}`)
+    }
+
+    logGenerationRecord('download_remote_asset:success', {
       url,
-      status: response.status,
+      mimeType: String(response.headers.get('content-type') || '').trim() || undefined,
+      size: arrayBuffer.byteLength,
     })
-    throw new Error(`下载远程资源失败：${response.status}`)
-  }
 
-  const arrayBuffer = await response.arrayBuffer()
-
-  logGenerationRecord('download_remote_asset:success', {
-    url,
-    mimeType: String(response.headers.get('content-type') || '').trim() || undefined,
-    size: arrayBuffer.byteLength,
-  })
-
-  return {
-    mimeType: String(response.headers.get('content-type') || '').trim() || undefined,
-    buffer: Buffer.from(arrayBuffer),
+    return {
+      mimeType: String(response.headers.get('content-type') || '').trim() || undefined,
+      buffer: Buffer.from(arrayBuffer),
+    }
+  } finally {
+    clearTimeout(timeoutTimer)
   }
 }
 

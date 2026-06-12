@@ -27,6 +27,8 @@ export interface LocalRunningGenerationTask {
 
 const runningGenerationTasks = new Map<string, LocalRunningGenerationTask>()
 const taskStreamSubscribers = new Map<string, Set<any>>()
+// 终态事件：下发后任务不再有后续事件，可立即关闭该任务的 SSE 连接释放资源。
+const TERMINAL_STREAM_EVENT_TYPES = new Set(['completed', 'failed', 'stopped'])
 // 用户级订阅计数：防止同一用户开过多 SSE 连接耗尽资源
 const userStreamSubscribers = new Map<string, Set<any>>()
 // 每用户最多并发 SSE 订阅数（典型场景：多标签页 + 工作流多节点同时执行）
@@ -133,6 +135,20 @@ export const emitLocalTaskStreamEvent = (recordId: string, event: GenerationTask
     } catch {
       // 已经断开就忽略
     }
+  }
+
+  // 终态事件(completed/failed/stopped)已下发：主动关闭该任务的全部 SSE 连接，
+  // 立即释放订阅与 heartbeat/lifetime 定时器(由 res 'close' → cleanup)，不必等客户端 close 或 30 分钟兜底。
+  if (TERMINAL_STREAM_EVENT_TYPES.has(event.type)) {
+    for (const res of [...subscribers]) {
+      try {
+        res.end()
+      } catch {
+        // 已断开
+      }
+    }
+    taskStreamSubscribers.delete(recordId)
+    return
   }
 
   if (subscribers.size === 0) {
