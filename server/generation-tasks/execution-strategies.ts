@@ -2,6 +2,7 @@ import type { GenerationTaskStartPayload, GenerationTaskStreamEvent } from './sh
 import type { GenerationRecordPayload } from '../generation-records/shared'
 import type { GenerationTaskStrategyKey } from './strategy'
 import type { AgentRunState } from '../../src/types/agent'
+import { isGenerationTimeoutError } from '../../src/shared/generation-error'
 
 export type TaskAbortReason = 'user_stop' | 'shared_stop' | 'execution_lock_lost'
 
@@ -74,6 +75,26 @@ export interface GenerationTaskExecutionStrategy {
   ) => string
 }
 
+// 图片/视频失败收口的退款策略：
+//  - 真实异常（参数/审核/上游失败等）→ 照常退款；
+//  - 我方轮询超时（GenerationTimeoutError）→ 【不退款】：先扣费已落账，且任务很可能仍在上游
+//    处理中，用户可「重新查询」取回结果（完成后无退款记录则不补扣，幂等安全）。
+const refundFailedTaskUnlessTimeout = async (
+  task: SettlementTask,
+  error: unknown,
+  context: GenerationTaskExecutionStrategyContext,
+) => {
+  if (isGenerationTimeoutError(error)) {
+    context.logGenerationTask('task_failed:timeout_no_refund', {
+      recordId: task.recordId,
+      userId: task.userId,
+      strategyKey: task.strategyKey,
+    })
+    return
+  }
+  await context.refundTaskPointsIfNeeded(task, 'task_failed')
+}
+
 // 图片生成任务的收口逻辑相对固定，集中在这里，避免 service.ts 持续堆分支。
 const imageTaskExecutionStrategy: GenerationTaskExecutionStrategy = {
   key: 'image',
@@ -115,7 +136,7 @@ const imageTaskExecutionStrategy: GenerationTaskExecutionStrategy = {
     })
   },
   async handleFailed(task, payload, error, errorMessage, context) {
-    await context.refundTaskPointsIfNeeded(task, 'task_failed')
+    await refundFailedTaskUnlessTimeout(task, error, context)
     await context.markTaskExecutionState(task, {
       lastErrorAt: new Date().toISOString(),
       lastErrorMessage: errorMessage,
@@ -198,7 +219,7 @@ const videoTaskExecutionStrategy: GenerationTaskExecutionStrategy = {
     })
   },
   async handleFailed(task, payload, error, errorMessage, context) {
-    await context.refundTaskPointsIfNeeded(task, 'task_failed')
+    await refundFailedTaskUnlessTimeout(task, error, context)
     await context.markTaskExecutionState(task, {
       lastErrorAt: new Date().toISOString(),
       lastErrorMessage: errorMessage,

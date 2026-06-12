@@ -802,11 +802,13 @@ export const requeryVideoGenerationTask = async (recordId: string, userId: strin
   }
 
   // 补全计费字段（沿用原 CONSUME 流水；缺失时按记录反查）。
+  // 金额=0 也算缺失（否则后续真实失败退款/补扣按 0 处理变空操作 → 漏退/白嫖），
+  // 与 resumeInflightVideoTasks 的反查条件保持一致。
   let associationNo = String(videoTask.associationNo || '').trim()
   let billedPointCost = Number(videoTask.billedPointCost || 0)
-  if (!associationNo) {
+  if (!associationNo || !billedPointCost) {
     const consume = await findConsumeByRecordId(rec.id)
-    associationNo = String(consume?.associationNo || '').trim()
+    associationNo = associationNo || String(consume?.associationNo || '').trim()
     billedPointCost = billedPointCost || Number(consume?.pointCost || 0)
   }
 

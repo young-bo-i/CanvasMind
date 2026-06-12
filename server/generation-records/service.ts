@@ -1222,7 +1222,7 @@ export const updateGenerationRecord = async (id: string, payload: GenerationReco
     await prisma.$transaction(async (tx) => {
       const existingRecord = await tx.generationRecord.findUnique({
         where: { id },
-        select: { id: true, userId: true, sessionId: true, createdAt: true, metaJson: true },
+        select: { id: true, userId: true, sessionId: true, createdAt: true, metaJson: true, status: true },
       })
 
       if (!existingRecord) {
@@ -1231,6 +1231,26 @@ export const updateGenerationRecord = async (id: string, payload: GenerationReco
 
       if (existingRecord.userId !== currentUserId) {
         throw new Error('无权修改当前生成记录')
+      }
+
+      // 防御竞态：记录已是终止态(COMPLETED/FAILED/STOPPED)，而本次更新要把它降级回非终止态。
+      // 典型场景是前端中间态 stage PATCH 慢于后端收口到达，会把 status 打回 RUNNING 并删空
+      // outputs，使已完成的结果与产物被清空 → 前端永久 loading。此处直接跳过本次降级更新，
+      // 函数末尾会重新读取并返回未被改动的「已完成」记录，前端据此同步为已完成。
+      // 注：合法的「终止态 → 重新运行」(重新查询)走的是直接 prisma.update，不经本函数，不受影响。
+      const TERMINAL_RECORD_STATUSES = ['COMPLETED', 'FAILED', 'STOPPED']
+      const nextStatus = mapGenerationStatus(payload)
+      if (
+        TERMINAL_RECORD_STATUSES.includes(String(existingRecord.status))
+        && !TERMINAL_RECORD_STATUSES.includes(String(nextStatus))
+      ) {
+        logGenerationRecord('update_generation_record:skip_terminal_downgrade', {
+          currentUserId,
+          generationRecordId: id,
+          existingStatus: String(existingRecord.status),
+          nextStatus: String(nextStatus),
+        })
+        return
       }
 
       const session = await resolveGenerationSessionForUser(tx, currentUserId, payload.sessionId || existingRecord.sessionId)

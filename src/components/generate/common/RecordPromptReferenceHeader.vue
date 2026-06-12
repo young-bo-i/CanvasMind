@@ -54,6 +54,34 @@
         </div>
       </div>
 
+      <!-- 无参考图（纯提示词）时，左侧仍给一个「引用」按钮，可复用该记录回填输入框 -->
+      <div
+        v-else
+        class="record-reuse-btn"
+        role="button"
+        title="点击复用到输入框"
+        @click="emit('reuse')"
+      >
+        <svg
+          class="quote-icon"
+          fill="none"
+          height="1em"
+          preserveAspectRatio="xMidYMid meet"
+          role="presentation"
+          viewBox="0 0 24 24"
+          width="1em"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <g>
+            <path
+              d="M7.75 8.5c-1.8 1.34-2.75 2.95-2.75 4.82 0 1.69 1.02 3.18 2.85 3.18 1.58 0 2.9-1.2 2.9-2.82 0-1.51-1.05-2.47-2.38-2.72.13-.58.62-1.3 1.57-2.04.95-.74 1.3-.98 1.3-1.65 0-.82-.8-1.42-1.65-1.42-.63 0-1.18.23-1.84.65Zm8 0c-1.8 1.34-2.75 2.95-2.75 4.82 0 1.69 1.02 3.18 2.85 3.18 1.58 0 2.9-1.2 2.9-2.82 0-1.51-1.05-2.47-2.38-2.72.13-.58.62-1.3 1.57-2.04.95-.74 1.3-.98 1.3-1.65 0-.82-.8-1.42-1.65-1.42-.63 0-1.18.23-1.84.65Z"
+              fill="currentColor"
+            />
+          </g>
+        </svg>
+        <span class="record-reuse-btn-text">引用</span>
+      </div>
+
       <div
         class="prompt-suffix-labels-wrapper-I8rEI5"
         :class="{ 'is-open': promptOpen }"
@@ -222,6 +250,38 @@ const handleReferenceImageError = (src: string, index: number) => {
   filter: brightness(1.1);
 }
 
+/* 无参考图时的「引用」按钮：左侧小药丸，复用记录到输入框 */
+.record-reuse-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  margin-bottom: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--stroke-tertiary, rgba(255, 255, 255, 0.12));
+  background-color: var(--bg-float, #1e1e24);
+  color: var(--text-tertiary, rgba(224, 245, 255, 0.55));
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .2s ease, border-color .2s ease, background-color .2s ease;
+}
+
+.record-reuse-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--stroke-secondary, rgba(255, 255, 255, 0.24));
+}
+
+.record-reuse-btn .quote-icon {
+  width: 13px;
+  height: 13px;
+  opacity: .7;
+  transform: rotate(-8deg);
+}
+
 .reference-background {
   background: linear-gradient(90deg, var(--bg-body) 82.41%, rgba(15, 15, 18, 0) 98.03%);
   filter: blur(12px);
@@ -383,9 +443,15 @@ const handleReferenceImageError = (src: string, index: number) => {
 .prompt-suffix-labels-content-D3IiYo {
   padding-right: 2px;
   word-break: break-word;
-  /* 允许选中已发送的提示词文本 */
+}
+
+/* 允许选中已发送的提示词文本：全局有 `* { user-select: none }`，而真正的文字在无 class 的
+   内层 <span> 上（会被 * 命中变成不可选），所以必须连同所有后代一起放开，并给文本光标。 */
+.prompt-suffix-labels-content-D3IiYo,
+.prompt-suffix-labels-content-D3IiYo * {
   user-select: text;
   -webkit-user-select: text;
+  cursor: text;
 }
 
 .prompt-ZVqVxN {
@@ -395,8 +461,6 @@ const handleReferenceImageError = (src: string, index: number) => {
   line-height: 20px;
   margin-right: 8px;
   min-width: 0;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .prompt-value-container-JfHRne {

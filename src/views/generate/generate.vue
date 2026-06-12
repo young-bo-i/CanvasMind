@@ -47,7 +47,7 @@ import type {
   ResearchVerificationResult,
 } from '@/shared/research/research-types'
 import { normalizeGenerationErrorMessage } from '@/shared/generation-error'
-import { appendImageReferencesToRequestBody } from '@/shared/image-generation-request'
+import { appendImageReferencesToRequestBody, resolveImagePixelSize } from '@/shared/image-generation-request'
 import { AUTH_LOGIN_SUCCESS_EVENT, useAuthStore } from '@/stores/auth'
 import { useLoginModalStore } from '@/stores/login-modal'
 import { useSystemSettingsStore } from '@/stores/system-settings'
@@ -2548,6 +2548,14 @@ const handleGenerationTaskStreamEvent = (recordId: string, streamEvent: Generati
   }
 
   if (event.done) {
+    // 取消可能仍挂着的中间态持久化定时器：否则它会在收口后才触发，PATCH 回一份
+    // done:false/空 outputs 的旧状态，与后端收口竞态把已完成记录打回 RUNNING/清空产物，
+    // 导致前端永久 loading。后端 updateGenerationRecord 也有终止态降级守卫双保险。
+    const pendingPersistTimer = recordPersistTimers.get(targetRecord.id)
+    if (pendingPersistTimer) {
+      clearTimeout(pendingPersistTimer)
+      recordPersistTimers.delete(targetRecord.id)
+    }
     const controller = taskStreamControllers.get(recordId)
     if (controller) {
       controller.abort()
@@ -2975,9 +2983,13 @@ const startImageGenerationTask = async (record: GeneratingRecord) => {
     })
 
     const modelConfig = getModelByName(record.modelKey || requestModelKey) as ImageModel | null
-    const size = modelConfig?.sizes?.length
-        ? (modelConfig.sizes.find((sizeItem: string) => sizeItem.includes(record.ratio.replace(':', 'x'))) || modelConfig.defaultParams?.size || '')
-        : (record.ratio ? record.ratio.replace(':', 'x') : '')
+    // 把宽高比映射成上游可接受的合规尺寸（优先模型 sizes，兜底内置合规像素尺寸）。
+    // 不能直接把 "1:1" 当 size 下发（会变 "1x1" 被 gpt-image 以“边长须被 16 整除”拒绝）。
+    const size = resolveImagePixelSize({
+      ratio: record.ratio,
+      modelSizes: modelConfig?.sizes,
+      defaultSize: modelConfig?.defaultParams?.size,
+    })
     const hasReferenceImages = Array.isArray(record.referenceImages) && record.referenceImages.length > 0
     // 单次 n 上限来自 capabilityJson.maxImagesPerRequest（后台可配置；不同上游限制不一致：
     // gpt-image-2 = 4，dall-e-3 = 1，dall-e-2 = 10）。未配置时落到保守值 1。
@@ -3387,6 +3399,7 @@ onUnmounted(() => {
                     :done="record.done"
                     :stopped="Boolean(record.stopped)"
                     :images="record.images"
+                    :count="record.count && record.count > 0 ? record.count : 1"
                     :conversation-entries="getRecordConversationEntries(record)"
                     :error="record.error ? formatGenerationError(record.error, '图片生成失败') : ''"
                     @preview="handlePreviewRecordImage(record, $event)"

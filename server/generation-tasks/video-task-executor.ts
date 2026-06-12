@@ -1,5 +1,6 @@
 import type { GenerationTaskStartPayload, GenerationTaskStreamEvent } from './shared'
 import type { GenerationRecordPayload } from '../generation-records/shared'
+import { GenerationTimeoutError } from '../../src/shared/generation-error'
 
 type VideoExecutionTask = {
   recordId: string
@@ -730,7 +731,7 @@ const pollVideoTask = async (
       }
       consecutivePollErrors += 1
       if (Date.now() - startedAt > pollTimeoutMs) {
-        throw new Error('视频生成超时')
+        throw new GenerationTimeoutError('视频生成超时')
       }
       if (consecutivePollErrors > maxConsecutivePollErrors) {
         throw pollError instanceof Error ? pollError : new Error('视频任务查询连续失败')
@@ -776,7 +777,7 @@ const pollVideoTask = async (
     })
 
     if (Date.now() - startedAt > pollTimeoutMs) {
-      throw new Error('视频生成超时')
+      throw new GenerationTimeoutError('视频生成超时')
     }
     await context.sleepWithAbortSignal(task.abortController.signal, nextPollInterval(pollCount))
   }
@@ -854,7 +855,7 @@ export const resumeVideoTask = async (
   // 剩余超时 = 原总预算 − 已耗时（用原始 startedAt）；≤0 直接判超时失败 → 退款。
   const startedAt = Number(savedVideoTask.startedAt) || Date.now()
   if (Date.now() - startedAt > pollTimeoutMs) {
-    throw new Error('视频生成超时')
+    throw new GenerationTimeoutError('视频生成超时')
   }
 
   const params: VideoRequestParams = {

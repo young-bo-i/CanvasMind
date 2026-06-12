@@ -1,3 +1,23 @@
+// 生成「轮询超时」错误：带稳定标记。用于收口计费区分——超时时任务很可能仍在上游处理中
+// （用户可「重新查询」取回结果），因此【不退款】；而真实异常（参数/审核/上游失败等）仍照常退款。
+export class GenerationTimeoutError extends Error {
+  readonly isGenerationTimeout = true
+  constructor(message = '生成超时') {
+    super(message)
+    this.name = 'GenerationTimeoutError'
+  }
+}
+
+// 仅按稳定标记判定是否为「我方轮询超时」。刻意不做消息字符串匹配，避免把上游 504 /
+// 文案含 timeout 的真实失败误判为超时，从而漏退款。
+export const isGenerationTimeoutError = (error: unknown): boolean => {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && (error as { isGenerationTimeout?: unknown }).isGenerationTimeout === true,
+  )
+}
+
 interface ParsedUpstreamErrorDetail {
   type: string
   code: string

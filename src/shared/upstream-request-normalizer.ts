@@ -3,6 +3,8 @@
  * 统一处理图片生成请求体清洗、图生图表单组装与参考图格式归一化。
  */
 
+import { coerceImageSizeToPixels } from './image-generation-request'
+
 const normalizeStringValue = (value: unknown) => String(value || '').trim()
 
 const resolveImageMimeType = (value: string) => {
@@ -71,7 +73,9 @@ export const normalizeImageGenerationRequestBody = (input: {
     delete normalizedBody.prompt
   }
 
-  const size = normalizeStringValue(normalizedBody.size)
+  // 防御性兜底：把比例样式的 size（如 1x1 / 16x9 / 1:1）纠正成合规像素，
+  // 任意客户端（含浏览器旧缓存）误传比例都能被上游接受。
+  const size = coerceImageSizeToPixels(normalizedBody.size)
   if (size) {
     normalizedBody.size = size
   } else {
@@ -109,7 +113,7 @@ export const buildImageEditRequestFormData = async (input: {
   const formData = new FormData()
   const modelKey = normalizeStringValue(input.modelKey)
   const prompt = normalizeStringValue(input.prompt)
-  const size = normalizeStringValue(input.size)
+  const size = coerceImageSizeToPixels(input.size)
   const quality = normalizeStringValue(input.quality)
   const referenceImages = normalizeReferenceImageList(input.referenceImages)
   const fileNamePrefix = normalizeStringValue(input.fileNamePrefix) || 'reference-image'
