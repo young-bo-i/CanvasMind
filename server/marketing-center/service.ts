@@ -747,16 +747,29 @@ export const rechargeVideoIfRefunded = async (input: {
 export const findConsumeByRecordId = async (recordId: string) => {
   const id = String(recordId || '').trim()
   if (!id) return null
-  const log = await prisma.pointAccountLog.findFirst({
+  // 优先走独立列+索引(generation_record_id)——新写入(attachGenerationPointRecordId 双写)走此快路径。
+  let log = await prisma.pointAccountLog.findFirst({
     where: {
       changeType: 'CONSUME',
       sourceType: 'GENERATION_CONSUME',
-      // 走独立列+索引(generation_record_id)，替代 metaJson JSON 路径全表扫描。
       generationRecordId: id,
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     select: { userId: true, associationNo: true, changeAmount: true, metaJson: true },
   })
+  // 兜底：历史/部署过渡期旧行(列为 NULL，迁移不再回填)按 metaJson JSON 路径反查。
+  // 仅在索引命中失败时才走这条慢查询，正常新流量不触发。
+  if (!log) {
+    log = await prisma.pointAccountLog.findFirst({
+      where: {
+        changeType: 'CONSUME',
+        sourceType: 'GENERATION_CONSUME',
+        metaJson: { path: '$.generationRecordId', equals: id } as any,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { userId: true, associationNo: true, changeAmount: true, metaJson: true },
+    })
+  }
   if (!log || !log.associationNo) return null
   const meta = (log.metaJson && typeof log.metaJson === 'object' && !Array.isArray(log.metaJson))
     ? log.metaJson as Record<string, unknown>

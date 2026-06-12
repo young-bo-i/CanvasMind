@@ -42,26 +42,55 @@ export class RawBodyTooLargeError extends Error {
   }
 }
 
-export const readRawBuffer = async (req: any): Promise<Buffer> => {
-  const chunks: Buffer[] = []
-  let total = 0
+export const readRawBuffer = (req: any): Promise<Buffer> => {
+  // 用手动监听而非 for-await：超限时只 pause() 停止读取(内存仍有界)，
+  // 不销毁 req —— req 与 res 共用底层 socket，过早 destroy 会让上层写不出 413 响应
+  // (客户端只会收到 ECONNRESET)。让上层 catch 正常发完 413，Node 会在响应后关闭该连接。
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let total = 0
+    let settled = false
 
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    total += buf.length
-    if (total > MAX_RAW_BODY_BYTES) {
-      // 主动销毁连接，停止继续读取，避免边读边堆内存。
-      try {
-        req.destroy?.()
-      } catch {
-        // 已断开则忽略
-      }
-      throw new RawBodyTooLargeError(MAX_RAW_BODY_BYTES)
+    const cleanup = () => {
+      req.off('data', onData)
+      req.off('end', onEnd)
+      req.off('error', onError)
     }
-    chunks.push(buf)
-  }
+    const onData = (chunk: any) => {
+      if (settled) return
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      total += buf.length
+      if (total > MAX_RAW_BODY_BYTES) {
+        settled = true
+        cleanup()
+        // 停止继续读取(不再 push 到 chunks，内存有界)，但保留 socket 以便回 413。
+        try {
+          req.pause?.()
+        } catch {
+          // 忽略
+        }
+        reject(new RawBodyTooLargeError(MAX_RAW_BODY_BYTES))
+        return
+      }
+      chunks.push(buf)
+    }
+    const onEnd = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(Buffer.concat(chunks))
+    }
+    const onError = (err: any) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(err)
+    }
 
-  return Buffer.concat(chunks)
+    req.on('data', onData)
+    req.on('end', onEnd)
+    req.on('error', onError)
+  })
 }
 
 export const sendJson = (res: any, statusCode: number, data: unknown) => {

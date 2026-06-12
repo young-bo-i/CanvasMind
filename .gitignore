@@ -10,6 +10,11 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# 后端服务运行包(build:service / esbuild 产物)
+dist-service
+# unplugin 生成的类型声明(AutoImport / Components)，构建时自动生成，无需入库
+auto-imports.d.ts
+components.d.ts
 
 # 不维护 npm lock，CI 使用 npm install（无 setup-node 缓存）
 package-lock.json

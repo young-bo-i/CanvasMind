@@ -293,10 +293,13 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
       return
     }
 
-    sendJson(res, 500, {
+    // 透传带 statusCode 的错误(如 RawBodyTooLargeError → 413)，与 storage handler 一致；
+    // 其余未知错误仍按 500。
+    const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500
+    sendJson(res, statusCode, {
       message: error?.message || 'AI 网关转发失败',
       error: {
-        type: 'gateway_error',
+        type: statusCode === 413 ? 'request_too_large' : 'gateway_error',
         message: error?.message || 'AI 网关转发失败',
       },
       ...(shouldExposeGatewayDebug()
