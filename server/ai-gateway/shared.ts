@@ -24,20 +24,41 @@ export const readJsonBody = async (req: any): Promise<GatewayForwardBody> => {
 }
 
 export const readRawBody = async (req: any): Promise<string> => {
-  const chunks: Buffer[] = []
+  return (await readRawBuffer(req)).toString('utf8').trim()
+}
 
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+// 请求体安全上限：默认 200MB，远高于普通图片/短视频上传，仅用于拦截
+// 异常/恶意的超大上传，避免把整段 body 读进内存撑爆进程。JSON 体远小于此值，不受影响。
+export const MAX_RAW_BODY_BYTES = Number.parseInt(
+  process.env.MAX_RAW_BODY_BYTES || String(200 * 1024 * 1024),
+  10,
+)
+
+export class RawBodyTooLargeError extends Error {
+  readonly statusCode = 413
+  constructor(limit: number) {
+    super(`请求体过大，超过上限 ${limit} 字节`)
+    this.name = 'RawBodyTooLargeError'
   }
-
-  return Buffer.concat(chunks).toString('utf8').trim()
 }
 
 export const readRawBuffer = async (req: any): Promise<Buffer> => {
   const chunks: Buffer[] = []
+  let total = 0
 
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += buf.length
+    if (total > MAX_RAW_BODY_BYTES) {
+      // 主动销毁连接，停止继续读取，避免边读边堆内存。
+      try {
+        req.destroy?.()
+      } catch {
+        // 已断开则忽略
+      }
+      throw new RawBodyTooLargeError(MAX_RAW_BODY_BYTES)
+    }
+    chunks.push(buf)
   }
 
   return Buffer.concat(chunks)

@@ -54,8 +54,9 @@ export const handleStorageUploadRequest = async (req: any, res: any) => {
       message: '上传成功',
     })
   } catch (error: any) {
-    // 返回统一错误结构。
-    sendJson(res, 500, {
+    // 请求体超限：返回 413，给前端明确的“文件过大”提示。
+    const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500
+    sendJson(res, statusCode, {
       message: error?.message || '文件上传失败',
       error: {
         type: 'storage_upload_error',
