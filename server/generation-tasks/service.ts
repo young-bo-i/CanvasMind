@@ -801,6 +801,9 @@ export const requeryVideoGenerationTask = async (recordId: string, userId: strin
 
   const nextVideoTask: SavedVideoTask = {
     ...videoTask,
+    // 手动重新查询给全新的轮询时间预算：否则沿用旧 startedAt 会因早已超时而立刻再抛"超时"，
+    // 拿不到上游其实已完成的结果。
+    startedAt: Date.now(),
     resumeCount: (videoTask.resumeCount || 0) + 1,
     associationNo: associationNo || undefined,
     billedPointCost: billedPointCost || undefined,
