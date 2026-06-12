@@ -632,6 +632,9 @@ const pollVideoTask = async (
   const { taskNo, protocol, upstream, pollIntervalMs, pollTimeoutMs, startedAt } = poll
   // 连续轮询错误容忍：单次网络抖动 / 上游偶发 5xx 不应判死整个任务，连续失败超过上限才放弃。
   const maxConsecutivePollErrors = readNumberExtra(upstream.extraJson, 'maxPollErrors', DEFAULT_MAX_POLL_ERRORS)
+  // 自适应退避：前期快查、后期拉长间隔，避免长任务(可达 60 分钟)用固定 3s 打上千次轮询、压上游+占 Event Loop。
+  const maxPollIntervalMs = readNumberExtra(upstream.extraJson, 'maxPollIntervalMs', 15000)
+  const nextPollInterval = (count: number) => Math.min(maxPollIntervalMs, pollIntervalMs + Math.floor(count / 5) * pollIntervalMs)
   let pollCount = 0
   let consecutivePollErrors = 0
   let resultUrl = ''
@@ -699,7 +702,7 @@ const pollVideoTask = async (
     if (Date.now() - startedAt > pollTimeoutMs) {
       throw new Error('视频生成超时')
     }
-    await context.sleepWithAbortSignal(task.abortController.signal, pollIntervalMs)
+    await context.sleepWithAbortSignal(task.abortController.signal, nextPollInterval(pollCount))
   }
 
   context.emitTaskProgressEvent(task.recordId, {

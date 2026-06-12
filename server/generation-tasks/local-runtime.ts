@@ -40,6 +40,14 @@ export const getLocalRunningTask = (recordId: string) => runningGenerationTasks.
 
 export const hasLocalRunningTask = (recordId: string) => runningGenerationTasks.has(recordId)
 
+// 监控用：本地在途任务数 / SSE 订阅总数（无界增长 = 内存泄漏的先兆）。
+export const getLocalRunningTaskCount = () => runningGenerationTasks.size
+export const getTaskStreamSubscriberTotal = () => {
+  let total = 0
+  for (const set of taskStreamSubscribers.values()) total += set.size
+  return total
+}
+
 export const deleteLocalRunningTask = (recordId: string) => {
   runningGenerationTasks.delete(recordId)
 }

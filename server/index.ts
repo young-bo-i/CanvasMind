@@ -38,6 +38,7 @@ import { handleGenerationSessionsRequest } from './generation-sessions/request-h
 import { isGenerationTasksPath } from './generation-tasks/constants'
 import { handleGenerationTasksRequest } from './generation-tasks/request-handler'
 import { bootstrapTaskResume } from './generation-tasks/service'
+import { getLocalRunningTaskCount, getTaskStreamSubscriberTotal } from './generation-tasks/local-runtime'
 import { PROVIDER_CONFIG_MATCH_PATHS } from './provider-config/constants'
 import { handleProviderConfigRequest } from './provider-config/request-handler'
 import { isStorageConfigsPath } from './storage-config/constants'
@@ -675,4 +676,14 @@ server.listen(serverPort, '0.0.0.0', () => {
   setTimeout(() => {
     void bootstrapTaskResume()
   }, 8000)
+
+  // 运行时健康监控：每 60s 检查本地在途任务数 / SSE 订阅总数，异常增长(疑似泄漏)时告警。
+  const runtimeMonitor = setInterval(() => {
+    const taskCount = getLocalRunningTaskCount()
+    const sseCount = getTaskStreamSubscriberTotal()
+    if (taskCount > 100 || sseCount > 200) {
+      writeScopedLog('warn', '服务端', '运行时资源偏高(疑似泄漏)', { runningTasks: taskCount, sseSubscribers: sseCount })
+    }
+  }, 60000)
+  runtimeMonitor.unref?.()
 })
