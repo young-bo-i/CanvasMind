@@ -470,53 +470,66 @@ export const consumeGenerationPoints = async (input: {
   allowNegativeBalance?: boolean
   // 覆盖默认流水备注（如"对话结算补扣"）。
   remark?: string
+  // 幂等去重键（如 'gen-recharge:<associationNo>' / 'gen-settle-consume:<associationNo>'）：
+  // 同一逻辑扣费至多一次；重复触发唯一冲突会被静默吞掉（返回 null），跨重试/续询/结算安全。
+  dedupeKey?: string
 }) => {
   const pointCost = Math.max(0, Number(input.pointCost || 0))
   if (pointCost <= 0) {
     return null
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    // 行锁优先：锁住用户主表行，串行化该用户的积分账本写入。
-    await lockUserBillingRow(tx, input.userId)
+  let result: unknown = null
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // 行锁优先：锁住用户主表行，串行化该用户的积分账本写入。
+      await lockUserBillingRow(tx, input.userId)
 
-    const currentBalance = await readCurrentPointBalance(input.userId, tx)
-    if (!input.allowNegativeBalance && currentBalance < pointCost) {
-      const error = new Error(`积分不足，当前剩余 ${currentBalance}，需要 ${pointCost}`) as Error & {
-        code?: string
-        currentBalance?: number
-        requiredPoints?: number
+      const currentBalance = await readCurrentPointBalance(input.userId, tx)
+      if (!input.allowNegativeBalance && currentBalance < pointCost) {
+        const error = new Error(`积分不足，当前剩余 ${currentBalance}，需要 ${pointCost}`) as Error & {
+          code?: string
+          currentBalance?: number
+          requiredPoints?: number
+        }
+        error.code = 'INSUFFICIENT_POINTS'
+        error.currentBalance = currentBalance
+        error.requiredPoints = pointCost
+        throw error
       }
-      error.code = 'INSUFFICIENT_POINTS'
-      error.currentBalance = currentBalance
-      error.requiredPoints = pointCost
-      throw error
-    }
 
-    return appendPointLog(tx, {
-      userId: input.userId,
-      changeType: 'CONSUME',
-      action: 'DECREASE',
-      changeAmount: pointCost,
-      sourceType: 'GENERATION_CONSUME',
-      sourceId: input.sourceId,
-      associationNo: input.associationNo,
-      remark: input.remark || (input.endpointType === 'video'
-        ? '视频生成消耗积分'
-        : input.endpointType === 'image'
-          ? '图片生成消耗积分'
-          : '对话消耗积分'),
-      metaJson: {
-        endpointType: input.endpointType,
-        providerId: input.providerId,
-        modelKey: input.modelKey,
-        modelName: input.modelName || '',
-        ...(input.metaJson && typeof input.metaJson === 'object' && !Array.isArray(input.metaJson)
-          ? input.metaJson as Record<string, unknown>
-          : {}),
-      },
+      return appendPointLog(tx, {
+        userId: input.userId,
+        changeType: 'CONSUME',
+        action: 'DECREASE',
+        changeAmount: pointCost,
+        sourceType: 'GENERATION_CONSUME',
+        sourceId: input.sourceId,
+        associationNo: input.associationNo,
+        dedupeKey: input.dedupeKey || null,
+        remark: input.remark || (input.endpointType === 'video'
+          ? '视频生成消耗积分'
+          : input.endpointType === 'image'
+            ? '图片生成消耗积分'
+            : '对话消耗积分'),
+        metaJson: {
+          endpointType: input.endpointType,
+          providerId: input.providerId,
+          modelKey: input.modelKey,
+          modelName: input.modelName || '',
+          ...(input.metaJson && typeof input.metaJson === 'object' && !Array.isArray(input.metaJson)
+            ? input.metaJson as Record<string, unknown>
+            : {}),
+        },
+      })
     })
-  })
+  } catch (error) {
+    // P2002 = dedupeKey 唯一冲突 → 已扣过，静默成功（幂等）。其余错误（含 INSUFFICIENT_POINTS）抛出。
+    if ((error as { code?: string })?.code === 'P2002') {
+      return null
+    }
+    throw error
+  }
 
   // 扣点后失效用户端营销中心总览缓存，避免余额显示最长 120s 滞后。
   await invalidateMarketingCenterOverviewCache(input.userId)
@@ -658,6 +671,8 @@ export const settleChatPointsByUsage = async (input: {
       modelName: input.modelName,
       allowNegativeBalance: true,
       remark: '对话结算补扣',
+      // 幂等：同一对话的结算补扣至多一次，避免重复结束/重投导致重复扣费。
+      dedupeKey: `gen-settle-consume:${input.associationNo}`,
       metaJson,
     })
   } else if (delta < 0) {
@@ -671,12 +686,60 @@ export const settleChatPointsByUsage = async (input: {
       modelKey,
       modelName: input.modelName,
       remark: '对话结算退差',
+      // 幂等：同一对话的结算退差至多一次，避免重复结束/重投导致重复退差。
+      dedupeKey: `gen-settle-refund:${input.associationNo}`,
       metaJson,
     })
   }
 
   await invalidateMarketingCenterOverviewCache(input.userId)
   return real
+}
+
+// 视频「超时退款」后，续询/重新查询最终拿到结果时调用：检查该 associationNo 是否退过款，
+// 退过则补扣回积分（dedupeKey 幂等，重启/多次续询只补一次）。正常完成(未退过款)直接跳过、不补扣。
+export const rechargeVideoIfRefunded = async (input: {
+  userId: string
+  associationNo: string
+  pointCost: number
+  providerId?: string
+  modelKey?: string
+  modelName?: string
+}) => {
+  const userId = String(input.userId || '').trim()
+  const associationNo = String(input.associationNo || '').trim()
+  const pointCost = Math.max(0, Number(input.pointCost || 0))
+  if (!userId || !associationNo || pointCost <= 0) {
+    return null
+  }
+
+  // 该 associationNo 是否退过款（如视频超时 handleFailed 退款）。没退过 → 原始扣费仍有效，不补扣。
+  const refundLog = await prisma.pointAccountLog.findFirst({
+    where: {
+      userId,
+      associationNo,
+      changeType: 'REFUND',
+      sourceType: 'GENERATION_CONSUME',
+    },
+    select: { id: true },
+  })
+  if (!refundLog) {
+    return null
+  }
+
+  return consumeGenerationPoints({
+    userId,
+    pointCost,
+    sourceId: associationNo,
+    associationNo,
+    endpointType: 'video',
+    providerId: String(input.providerId || ''),
+    modelKey: String(input.modelKey || ''),
+    modelName: input.modelName,
+    allowNegativeBalance: true, // 视频已交付，余额不足也补扣。
+    remark: '视频续询完成补扣（此前超时已退款）',
+    dedupeKey: `gen-recharge:${associationNo}`,
+  })
 }
 
 // 在生成任务记录创建完成后，把 generationRecordId 追写回积分消费流水，便于后续做失败补偿与审计。

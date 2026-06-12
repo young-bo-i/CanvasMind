@@ -11,6 +11,7 @@ import {
   attachGenerationPointRecordId,
   consumeGenerationPoints,
   refundGenerationPoints,
+  rechargeVideoIfRefunded,
   resolveGenerationPointCost,
   settleChatPointsByUsage,
   getMembershipBillingMultiplier,
@@ -279,6 +280,15 @@ const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: 
     emitTaskStreamEvent: (recordId: string, event: GenerationTaskStreamEvent) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
     logGenerationTask,
     persistVideoTaskMeta,
+    // 视频完成时：若此前超时已退款，则按原金额补扣（幂等）；正常完成无退款记录则跳过。
+    rechargeVideoIfRefundedForTask: () => rechargeVideoIfRefunded({
+      userId: task.userId,
+      associationNo: task.associationNo,
+      pointCost: task.billedPointCost,
+      providerId: task.billedProviderId,
+      modelKey: task.billedModelKey,
+      modelName: task.billedModelName,
+    }),
   }
   // 续询恢复：task 上挂了 resumeVideoTask 标志时走续询(skip submit)，否则正常 submit+poll。
   if (task.resumeVideoTask) {
@@ -723,9 +733,10 @@ const resumeInflightVideoTasks = async () => {
     // 补全计费字段（老数据/缺失时按记录反查 CONSUME 流水）。
     let associationNo = String(videoTask.associationNo || '').trim()
     let billedPointCost = Number(videoTask.billedPointCost || 0)
-    if (!associationNo) {
+    // associationNo 或金额任一缺失都反查（金额=0 也算缺失，否则后续退款/补扣按 0 处理变空操作）。
+    if (!associationNo || !billedPointCost) {
       const consume = await findConsumeByRecordId(rec.id)
-      associationNo = String(consume?.associationNo || '').trim()
+      associationNo = associationNo || String(consume?.associationNo || '').trim()
       billedPointCost = billedPointCost || Number(consume?.pointCost || 0)
     }
 

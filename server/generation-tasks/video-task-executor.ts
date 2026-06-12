@@ -70,6 +70,8 @@ export interface VideoTaskExecutorContext {
   logGenerationTask: (stage: string, detail: Record<string, unknown>) => void
   // 提交成功后把 videoTask 元数据写进 GenerationRecord.metaJson（只改 metaJson 一列，不动 status/outputs）。
   persistVideoTaskMeta: (recordId: string, userId: string, videoTask: SavedVideoTask) => Promise<void>
+  // 视频完成时调用：若此前超时已退款则按原金额补扣（幂等）；正常完成无退款记录则跳过。
+  rechargeVideoIfRefundedForTask: () => Promise<unknown>
 }
 
 type VideoProtocol = 'openai-async' | 'chengmeng-async'
@@ -716,6 +718,16 @@ const pollVideoTask = async (
       metaJson: { taskNo, protocol },
     }],
   }, task.userId)
+
+  // 续询/重新查询拿到结果时：若此前超时已退款，按原金额补扣（幂等）；正常完成无退款则不补扣。
+  try {
+    await context.rechargeVideoIfRefundedForTask()
+  } catch (rechargeError) {
+    context.logGenerationTask('video_task:recharge_failed', {
+      recordId: task.recordId,
+      message: rechargeError instanceof Error ? rechargeError.message : String(rechargeError),
+    })
+  }
 
   const completedRecord = await context.getGenerationRecordById(task.recordId, task.userId)
   await context.syncSharedTaskRuntime(task, 'completed')

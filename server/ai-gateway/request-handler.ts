@@ -105,6 +105,7 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
             providerId: headerProviderId,
             modelKey: headerModelKey,
             modelName: billingDetail.modelName,
+            dedupeKey: `gen-refund:${associationNo}`,
             metaJson: { refundReason: reason },
           })
         } catch (error) {
@@ -239,6 +240,7 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
           providerId: normalized.providerId,
           modelKey: normalized.modelKey,
           modelName: billingDetail.modelName,
+          dedupeKey: `gen-refund:${associationNo}`,
           metaJson: { refundReason: reason },
         })
       } catch (error) {
