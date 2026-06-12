@@ -66,7 +66,7 @@
               <div class="video-record-item video-record-item--loading">
                 <div class="loading-container-VeCJoq">
                   <div class="animation-wrapper">
-                    <video class="loading-animation" autoplay loop muted preload="auto" :src="loadingVideoUrl"></video>
+                    <div class="loading-shimmer"></div>
                   </div>
                 </div>
               </div>
@@ -86,7 +86,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
-import loadingVideoUrl from '@/assets/animations/record-loading-animation.mp4'
 import RecordPromptReferenceHeader from './RecordPromptReferenceHeader.vue'
 
 const props = defineProps({
@@ -221,10 +220,20 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.loading-animation {
+/* 纯 CSS 流光占位（替代 2.2MB 加载动画 MP4），柔和多彩渐变缓慢流动 */
+.loading-shimmer {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  background: linear-gradient(120deg, #6a5cff, #c86dd7, #5b8def, #38c6c6, #6a5cff);
+  background-size: 300% 300%;
+  filter: blur(28px);
+  animation: loading-shimmer-move 6s ease-in-out infinite;
+}
+
+@keyframes loading-shimmer-move {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 /* 进度徽章 */

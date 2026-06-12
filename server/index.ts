@@ -1,6 +1,8 @@
 import { createServer } from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import zlib from 'node:zlib'
+import { promisify } from 'node:util'
 import { AI_GATEWAY_MATCH_PATHS } from './ai-gateway/constants'
 import { handleAiGatewayRequest } from './ai-gateway/request-handler'
 import { isAuthPath } from './auth/constants'
@@ -225,6 +227,54 @@ const isFileExists = async (filePath: string) => {
   }
 }
 
+const gzipAsync = promisify(zlib.gzip)
+
+// 可压缩的文本类资源(JS/CSS/JSON/SVG 等)。
+const isCompressibleType = (contentType: string) =>
+  /^(?:text\/|application\/(?:javascript|json|manifest\+json|xml)|image\/svg\+xml)/i.test(contentType)
+
+// 带内容哈希的产物(vite 的 /assets/*.hash.js 等)→ 永久强缓存(immutable)；html → 始终重验证；其它 → 短缓存。
+const resolveStaticCacheControl = (filePath: string, isHtml: boolean) => {
+  if (isHtml) return 'no-cache'
+  if (/[._-][0-9a-f]{8,}\.[a-z0-9]+$/i.test(filePath) || /[\\/]assets[\\/]/.test(filePath)) {
+    return 'public, max-age=31536000, immutable'
+  }
+  return 'public, max-age=3600'
+}
+
+// 统一静态文件响应：Cache-Control + ETag/304(非 html) + 按需 gzip。
+const serveStaticFile = async (req: any, res: any, filePath: string, isHtml: boolean): Promise<void> => {
+  const contentType = isHtml ? 'text/html; charset=utf-8' : getContentTypeByFilePath(filePath)
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Cache-Control', resolveStaticCacheControl(filePath, isHtml))
+  res.setHeader('Vary', 'Accept-Encoding')
+
+  let body: Buffer
+  if (isHtml) {
+    // html 注入运行时配置后内容与文件不同 → 不下 ETag，始终重验证。
+    const raw = await fs.readFile(filePath)
+    body = Buffer.from(injectRuntimeClientConfig(raw.toString('utf8')), 'utf8')
+  } else {
+    const stat = await fs.stat(filePath)
+    const etag = `W/"${stat.size.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`
+    res.setHeader('ETag', etag)
+    if (req.headers['if-none-match'] === etag) {
+      res.statusCode = 304
+      res.end()
+      return
+    }
+    body = await fs.readFile(filePath)
+  }
+
+  // 可压缩 + 客户端支持 + 够大 → gzip(减少传输体积)。
+  if (isCompressibleType(contentType) && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || '')) && body.length > 1024) {
+    body = await gzipAsync(body)
+    res.setHeader('Content-Encoding', 'gzip')
+  }
+  res.statusCode = 200
+  res.end(body)
+}
+
 // 处理静态资源与前端路由回退。
 const handleStaticRequest = async (req: any, res: any, requestPath: string) => {
   // 仅允许 GET 请求读取静态资源。
@@ -251,24 +301,15 @@ const handleStaticRequest = async (req: any, res: any, requestPath: string) => {
 
   // 优先返回精确命中的静态文件。
   if (await isFileExists(candidateFilePath)) {
-    const fileBuffer = await fs.readFile(candidateFilePath)
-    const contentType = getContentTypeByFilePath(candidateFilePath)
-    const responseBody = contentType.startsWith('text/html')
-      ? injectRuntimeClientConfig(fileBuffer.toString('utf8'))
-      : fileBuffer
-    res.statusCode = 200
-    res.setHeader('Content-Type', contentType)
-    res.end(responseBody)
+    const isHtml = getContentTypeByFilePath(candidateFilePath).startsWith('text/html')
+    await serveStaticFile(req, res, candidateFilePath, isHtml)
     return true
   }
 
   // 非文件请求尝试回退到单页应用入口。
   const indexFilePath = path.resolve(staticDistDir, 'index.html')
   if (await isFileExists(indexFilePath)) {
-    const fileBuffer = await fs.readFile(indexFilePath)
-    res.statusCode = 200
-    res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    res.end(injectRuntimeClientConfig(fileBuffer.toString('utf8')))
+    await serveStaticFile(req, res, indexFilePath, true)
     return true
   }
 
