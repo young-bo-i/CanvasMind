@@ -965,6 +965,9 @@ model PointAccountLog {
   // 幂等去重键：可空，唯一。同一逻辑动作(如某次生成退款)只能写一次。
   // MySQL 唯一索引允许多个 NULL，故既有/常规流水(NULL)不受影响。
   dedupeKey       String?           @unique(map: "uk_point_account_logs_dedupe_key") @map("dedupe_key") @db.VarChar(120)
+  // 关联的生成记录 ID：从 metaJson 抽为独立列+索引，按记录反查预扣流水(续询/孤儿回收退款)时
+  // 避免 metaJson JSON 路径全表扫描(O(n))。
+  generationRecordId String?        @map("generation_record_id") @db.VarChar(36)
   metaJson        Json?             @map("meta_json")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
@@ -974,6 +977,7 @@ model PointAccountLog {
 
   @@index([userId, createdAt], map: "idx_point_account_logs_user_created_at")
   @@index([sourceType, sourceId], map: "idx_point_account_logs_source_type_source_id")
+  @@index([generationRecordId, createdAt], map: "idx_point_account_logs_generation_record_id")
   @@map("point_account_logs")
 }
 

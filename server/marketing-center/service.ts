@@ -751,7 +751,8 @@ export const findConsumeByRecordId = async (recordId: string) => {
     where: {
       changeType: 'CONSUME',
       sourceType: 'GENERATION_CONSUME',
-      metaJson: { path: '$.generationRecordId', equals: id } as any,
+      // 走独立列+索引(generation_record_id)，替代 metaJson JSON 路径全表扫描。
+      generationRecordId: id,
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     select: { userId: true, associationNo: true, changeAmount: true, metaJson: true },
@@ -808,13 +809,16 @@ export const attachGenerationPointRecordId = async (input: {
     ? pointLog.metaJson as Record<string, unknown>
     : {}
 
-  if (String(currentMeta.generationRecordId || '').trim() === generationRecordId) {
+  if (String(currentMeta.generationRecordId || '').trim() === generationRecordId
+    && String((pointLog as { generationRecordId?: string }).generationRecordId || '').trim() === generationRecordId) {
     return pointLog
   }
 
   return prisma.pointAccountLog.update({
     where: { id: pointLog.id },
     data: {
+      // 独立列(走索引反查) + metaJson(保留供读取其它字段)双写。
+      generationRecordId,
       metaJson: {
         ...currentMeta,
         generationRecordId,
