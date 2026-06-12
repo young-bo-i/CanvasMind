@@ -32,6 +32,31 @@ const getExtensionByMimeType = (mimeType: string) => {
       return '.mp4'
     case 'video/webm':
       return '.webm'
+    case 'video/quicktime':
+      return '.mov'
+    case 'video/x-msvideo':
+      return '.avi'
+    case 'video/x-matroska':
+      return '.mkv'
+    // 音频：补齐常见类型，避免无扩展名上传(拖入/粘贴的无名 blob)落盘后丢失类型，
+    // 导致下游按 URL 后缀判类的 detectRefKind 把音频误判为图片、参考音频链路断。
+    case 'audio/mpeg':
+    case 'audio/mp3':
+      return '.mp3'
+    case 'audio/wav':
+    case 'audio/x-wav':
+      return '.wav'
+    case 'audio/mp4':
+    case 'audio/x-m4a':
+    case 'audio/m4a':
+      return '.m4a'
+    case 'audio/aac':
+      return '.aac'
+    case 'audio/ogg':
+      return '.ogg'
+    case 'audio/flac':
+    case 'audio/x-flac':
+      return '.flac'
     case 'text/plain':
       return '.txt'
     case 'application/json':

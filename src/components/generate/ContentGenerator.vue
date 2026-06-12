@@ -127,7 +127,8 @@ const videoLastFrameInputRef = ref<HTMLInputElement | null>(null)
 const videoReferenceInputRef = ref<HTMLInputElement | null>(null)
 const videoKeyframeInputRef = ref<HTMLInputElement | null>(null)
 const IMAGE_REFERENCE_LIMIT = 9
-const VIDEO_REFERENCE_LIMIT = 12
+// 全能参考可混合 图(≤9)+视频(≤3)+音频(≤3)=15（对齐 chengmeng references 模式上限）。
+const VIDEO_REFERENCE_LIMIT = 15
 const VIDEO_KEYFRAME_LIMIT = 8
 
 // 登录态与全局登录弹窗。

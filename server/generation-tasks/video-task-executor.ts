@@ -149,26 +149,6 @@ const parseDurationSeconds = (raw: unknown): number => {
 
 const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-// 比例（21:9 / 16:9 / 4:3 / 1:1 / 3:4 / 9:16 ...）映射到 chengmeng 的 orientation。
-// 优先用 extraJson.orientationMap 覆盖，否则按宽高数值自动判断横/竖/方。
-const resolveOrientation = (ratio: string, extraJson: Record<string, unknown> | null): string => {
-  const normalized = String(ratio || '').trim().toLowerCase().replace(/x/g, ':')
-  const override = readExtra(extraJson, 'orientationMap')
-  const map: Record<string, string> = override && typeof override === 'object'
-    ? override as Record<string, string>
-    : {}
-  if (map[normalized]) {
-    return map[normalized]
-  }
-  const [w, h] = normalized.split(':').map(Number)
-  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-    if (w > h) return 'landscape'
-    if (w < h) return 'portrait'
-    return 'square'
-  }
-  return 'landscape'
-}
-
 interface VideoRequestParams {
   modelKey: string
   prompt: string
@@ -279,25 +259,100 @@ const submitVideoTask = async (
 
   if (protocol === 'chengmeng-async') {
     const submitPath = readStringExtra(extraJson, 'submitPath', '/api/tasks')
+    // group_id 文档为必填：优先 model/provider 配置(extraJson.groupId)，缺失则在提交前报清晰错误。
     const groupId = String(readExtra(extraJson, 'groupId') ?? '').trim()
-    const size = readStringExtra(extraJson, 'size', 'large')
-    const minDuration = readNumberExtra(extraJson, 'minDuration', 5)
+    if (!groupId) {
+      throw new Error('缺少 chengmeng group_id 配置（model 默认参数 JSON 或厂商 extraJson 的 groupId 必填）')
+    }
+    // 比例：限定在文档允许集合内，不匹配则回落默认 16:9，避免 400。
+    const allowedRatios = ['1:1', '3:4', '4:3', '9:16', '16:9', '21:9']
+    const defaultAspectRatio = readStringExtra(extraJson, 'defaultAspectRatio', '16:9')
+    const requestedRatio = String(params.ratio || '').trim().toLowerCase().replace(/x/g, ':')
+    const aspectRatio = allowedRatios.includes(requestedRatio) ? requestedRatio : defaultAspectRatio
+    // 分辨率：文档当前仅支持 720p；前端默认下发大写 720P/1080P，这里统一小写 + 白名单回落，
+    // 避免大写或不支持的值(如 1080P)被上游 400 拒绝。可经 extraJson.allowedResolutions / resolution 扩展。
+    const allowedResolutions = Array.isArray(readExtra(extraJson, 'allowedResolutions'))
+      ? (readExtra(extraJson, 'allowedResolutions') as unknown[]).map(v => String(v).toLowerCase()).filter(Boolean)
+      : ['720p']
+    const defaultResolution = readStringExtra(extraJson, 'resolution', allowedResolutions[0] || '720p').toLowerCase()
+    const requestedResolution = params.resolution.trim().toLowerCase()
+    const resolution = allowedResolutions.includes(requestedResolution) ? requestedResolution : defaultResolution
+    // 时长：1~15，默认 5。
+    const minDuration = readNumberExtra(extraJson, 'minDuration', 1)
     const maxDuration = readNumberExtra(extraJson, 'maxDuration', 15)
-    const duration = clampNumber(params.durationSeconds || minDuration, minDuration, maxDuration)
+    const defaultDuration = readNumberExtra(extraJson, 'defaultDuration', 5)
+    const duration = clampNumber(params.durationSeconds || defaultDuration, minDuration, maxDuration)
+    // prompt 文档上限 1500 字，超出兜底截断(避免硬失败)。
+    const maxPromptChars = readNumberExtra(extraJson, 'maxPromptChars', 1500)
+    const prompt = params.prompt.length > maxPromptChars ? params.prompt.slice(0, maxPromptChars) : params.prompt
+
+    // mode 必填：首尾帧功能 → frames，其余(全能参考/智能多帧) → references。
+    const mode = params.feature === 'first-last-frame' ? 'frames' : 'references'
+
+    const values: Record<string, unknown> = {
+      mode,
+      aspect_ratio: aspectRatio,
+      duration,
+      resolution,
+    }
     const body: Record<string, unknown> = {
       model_id: params.modelKey,
-      prompt: params.prompt,
-      duration,
-      values: {
-        orientation: resolveOrientation(params.ratio, extraJson),
-        size,
-      },
+      prompt,
+      values,
     }
-    if (groupId) body.group_id = groupId
-    if (upstreamRefs.length) body.images = upstreamRefs
+    body.group_id = groupId
+
+    if (mode === 'frames') {
+      // 首尾帧模式：仅发 values.first_frame / last_frame，禁止 images/videos/audioUrls。
+      // first_frame 文档为必填，缺图时提交前报清晰错误，避免上游返回含糊的 Field required。
+      const frameImages = upstreamRefs.filter(url => detectRefKind(url) === 'image')
+      if (!frameImages[0]) {
+        throw new Error('首尾帧模式需要至少提供首帧图片（first_frame）')
+      }
+      values.first_frame = frameImages[0]
+      if (frameImages[1]) values.last_frame = frameImages[1]
+    } else {
+      // references 模式：按类型拆顶层 images / values.videos / values.audioUrls，按文档限额裁剪。
+      const maxImages = readNumberExtra(extraJson, 'maxImages', 9)
+      const maxVideos = readNumberExtra(extraJson, 'maxVideos', 3)
+      const maxAudios = readNumberExtra(extraJson, 'maxAudios', 3)
+      const images: string[] = []
+      const videos: string[] = []
+      const audioUrls: string[] = []
+      for (const url of upstreamRefs) {
+        const kind = detectRefKind(url)
+        if (kind === 'video') videos.push(url)
+        else if (kind === 'audio') audioUrls.push(url)
+        else images.push(url)
+      }
+      if (images.length) body.images = images.slice(0, maxImages)
+      if (videos.length) values.videos = videos.slice(0, maxVideos)
+      if (audioUrls.length) values.audioUrls = audioUrls.slice(0, maxAudios)
+    }
+
+    const submitUrl = `${trimmedBase}/${submitPath.replace(/^\/+/, '')}`
+    // 记录实际下发的完整请求体(不含 apiKey)，便于对照文档字段定位 mode/aspect_ratio 等问题。
+    let cmBodyPreview = ''
+    try {
+      cmBodyPreview = JSON.stringify(body)
+    } catch {
+      cmBodyPreview = '[unserializable body]'
+    }
+    context.logGenerationTask('video_task:submit_body', {
+      url: submitUrl,
+      protocol: 'chengmeng-async',
+      mode,
+      refCount: upstreamRefs.length,
+      feature: params.feature || '(none)',
+      groupId: groupId || '(missing!)',
+      assetBaseUrl: assetBaseUrl || '(none)',
+      isRelativeRef: upstreamRefs.some(url => url.startsWith('/')),
+      bodyKeys: Object.keys(body),
+      body: cmBodyPreview.slice(0, 2500),
+    })
 
     const result = await context.fetchUpstreamJson({
-      url: `${trimmedBase}/${submitPath.replace(/^\/+/, '')}`,
+      url: submitUrl,
       method: 'POST',
       apiKey,
       body,
@@ -305,6 +360,12 @@ const submitVideoTask = async (
     })
     if (!result.ok) {
       throw new Error(`视频任务提交失败（${result.status}）：${String(result.rawText || '').slice(0, 300)}`)
+    }
+    // chengmeng 业务码：HTTP 200 但 code!=0 仍是逻辑失败，给出清晰错误而非含糊「未返回任务号」。
+    const bizCode = readPath(result.data, 'code')
+    if (bizCode !== undefined && bizCode !== null && Number(bizCode) !== 0) {
+      const bizMsg = String(readPath(result.data, 'message') ?? '').trim() || '上游返回业务错误'
+      throw new Error(`视频任务提交失败（code=${bizCode}）：${bizMsg.slice(0, 300)}`)
     }
     const taskNoField = readStringExtra(extraJson, 'taskNoField', 'data.task_no')
     const taskNo = String(readPath(result.data, taskNoField) ?? '').trim()
@@ -446,6 +507,19 @@ const queryVideoTask = async (
     if (!result.ok) {
       throw new Error(`视频任务查询失败（${result.status}）`)
     }
+    // 业务码守卫：HTTP 200 但 code!=0(如 taskNo 非法/鉴权失败/任务不存在)是逻辑失败。
+    // 否则 data 为空 → status='' → 既不完成也不失败 → 会一路轮询到 60 分钟超时才收口。
+    const cmBizCode = readPath(result.data, 'code')
+    if (cmBizCode !== undefined && cmBizCode !== null && Number(cmBizCode) !== 0) {
+      const cmBizMsg = String(readPath(result.data, 'message') ?? '').trim() || '上游返回查询业务错误'
+      context.logGenerationTask('video_task:upstream_failed', {
+        taskNo,
+        status: `code=${cmBizCode}`,
+        failureReason: cmBizMsg,
+        rawSnippet: String(result.rawText || JSON.stringify(result.data) || '').slice(0, 1000),
+      })
+      return { done: false, failed: true, resultUrl: '', statusText: 'error', failureReason: cmBizMsg.slice(0, 300) }
+    }
     const status = toLowerStatus(readPath(result.data, readStringExtra(extraJson, 'statusField', 'data.status')))
     // 优先用配置的 resultField，取不到再退到递归健壮提取。
     const resultUrl = String(readPath(result.data, readStringExtra(extraJson, 'resultField', 'data.result_url')) ?? '').trim()
@@ -470,7 +544,9 @@ const queryVideoTask = async (
       })
     }
     return {
-      done: Boolean(resultUrl) && (completedStatuses.includes(status) || !status),
+      // 必须有明确的完成态才算 done：去掉 `|| !status` 兜底，避免空状态 + 递归 URL 兜底
+      // 在降级响应里误命中某个 url 字段而提前“完成”（文档保证成功必带 status）。
+      done: Boolean(resultUrl) && completedStatuses.includes(status),
       failed: cmFailed,
       resultUrl,
       statusText: status,
