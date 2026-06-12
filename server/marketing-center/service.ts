@@ -939,18 +939,25 @@ const grantRewardByTrigger = async (tx: any, input: {
     ],
   })
 
+  // 一次取该用户在这些规则下的全部领取记录，逐规则在内存里按 cyclePrefix 计数，替代逐规则 count(N+1)。
+  const ruleIds = rewardRules.map(rule => rule.id)
+  const claimRecords = ruleIds.length
+    ? await tx.rewardClaimRecord.findMany({
+        where: { userId: input.userId, ruleId: { in: ruleIds } },
+        select: { ruleId: true, cycleKey: true },
+      })
+    : []
+  const claimKeysByRule = new Map<string, string[]>()
+  for (const claim of claimRecords) {
+    const keys = claimKeysByRule.get(claim.ruleId) || []
+    keys.push(claim.cycleKey)
+    claimKeysByRule.set(claim.ruleId, keys)
+  }
+
   const results: Array<{ ruleId: string; rewardPoints: number; claimId: string }> = []
   for (const rule of rewardRules) {
     const cyclePrefix = buildCyclePrefix(rule.cycleType)
-    const claimedCount = await tx.rewardClaimRecord.count({
-      where: {
-        userId: input.userId,
-        ruleId: rule.id,
-        cycleKey: {
-          startsWith: cyclePrefix,
-        },
-      },
-    })
+    const claimedCount = (claimKeysByRule.get(rule.id) || []).filter(key => key.startsWith(cyclePrefix)).length
 
     if (claimedCount >= Math.max(1, rule.limitPerCycle || 1)) {
       continue

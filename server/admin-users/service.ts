@@ -3,10 +3,10 @@ import type {
   AuthMethodType,
   MembershipOrderSource,
   PointActionType,
-  Prisma,
   UserRole,
   UserStatus,
 } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import prisma from '../db/prisma'
 import { lockUserBillingRow, invalidateMarketingCenterOverviewCache } from '../marketing-center/service'
 import { invalidateRedisCachePatterns, invalidateRedisCaches } from '../redis/cache-manager'
@@ -397,20 +397,15 @@ const getUserOperationalSummaryMaps = async (userIds: string[]) => {
         },
       },
     }),
-    Promise.all(userIds.map(async (userId) => {
-      const latestLog = await prisma.pointAccountLog.findFirst({
-        where: { userId },
-        orderBy: [
-          { createdAt: 'desc' },
-          { id: 'desc' },
-        ],
-        select: {
-          userId: true,
-          balanceAfter: true,
-        },
-      })
-      return latestLog
-    })),
+    // 每个用户「最新一条积分流水」的余额：单条窗口函数查询，替代逐用户 findFirst(N 条并发查询打满连接池)。
+    prisma.$queryRaw<Array<{ userId: string; balanceAfter: number | bigint }>>(Prisma.sql`
+      SELECT user_id AS userId, balance_after AS balanceAfter FROM (
+        SELECT user_id, balance_after,
+               ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC, id DESC) AS rn
+        FROM point_account_logs
+        WHERE user_id IN (${Prisma.join(userIds)})
+      ) t WHERE t.rn = 1
+    `),
   ])
 
   for (const item of authIdentityGroups) {
