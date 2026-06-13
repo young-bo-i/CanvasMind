@@ -7,18 +7,18 @@ FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS deps
 WORKDIR /app
 
 # 复制依赖声明文件与 Prisma 生成所需元数据。
-# 同时复制 lockfile，使用 npm ci 保证"同一提交=同一依赖树"的可复现构建。
-COPY package.json package-lock.json ./
+COPY package.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 
 # 安装构建阶段所需依赖(含 dev)。
-# 用 npm ci 严格按 package-lock.json 安装，避免 caret 范围在不同时间漂移。
+# 注：本仓库刻意不维护 package-lock.json(见 .gitignore，便于 upstream-sync 自动合并)，
+# CI 检出时无 lockfile，故用 npm install 而非 npm ci。
 # Prisma 7 在 postinstall 的 prisma generate 阶段会读取 DATABASE_URL，
 # 这里提供一个仅用于生成客户端的占位值，避免镜像构建期因缺少真实数据库配置而失败。
 RUN --mount=type=cache,target=/root/.npm \
   DATABASE_URL='mysql://root:placeholder@127.0.0.1:3306/canana_mind' \
-  npm ci --include=dev --no-fund --no-audit
+  npm install --include=dev --no-fund --no-audit
 # ==================== Stage 2: 构建产物 ====================
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS builder
 
