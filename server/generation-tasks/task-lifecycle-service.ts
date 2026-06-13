@@ -102,7 +102,25 @@ interface TaskLifecycleContext {
     modelKey: string
     modelName: string
     metaJson: Record<string, unknown>
+    // 预扣幂等键:Redis 幂等失效(降级)时由 DB 唯一约束兜底,防止重复扣费。
+    dedupeKey?: string
   }) => Promise<unknown>
+  // 任务创建链路失败时的退款(与后台退款同源 dedupeKey,幂等互斥)。
+  refundGenerationPoints: (input: {
+    userId: string
+    pointCost: number
+    sourceId: string
+    associationNo: string
+    endpointType: 'chat' | 'image' | 'video'
+    providerId: string
+    modelKey: string
+    modelName?: string
+    dedupeKey?: string
+    remark?: string
+    metaJson?: Record<string, unknown>
+  }) => Promise<unknown>
+  // 基于幂等键 + 时间桶构造预扣 dedupeKey(时间桶与幂等窗口对齐,过窗后可再次生成)。
+  buildConsumeDedupeKey: (idempotencyKey: string) => string
   acquireTaskConcurrencySlots: (input: {
     userId: string
     providerId: string
@@ -268,7 +286,20 @@ export const startGenerationTask = async (
   // 会员折扣倍率：乘进本次扣点（含预扣与结算）。
   const membershipMultiplier = await context.getMembershipBillingMultiplier(currentUserId)
 
+  // 预扣 dedupeKey:Redis 幂等降级时由 DB 唯一约束兜底,防重复扣费(H2)。
+  const consumeDedupeKey = context.buildConsumeDedupeKey(idempotencyKey)
+
   let concurrencySlots: ConcurrencySlot[] = []
+  // 已成功预扣的费用快照:任务进入后台前的任意步骤(建记录/attach/完成幂等)失败时,
+  // 由 catch 据此幂等退款,杜绝「扣了钱但没产出也没退款」(H1)。
+  let committedCharge: {
+    associationNo: string
+    pointCost: number
+    endpointType: 'chat' | 'image' | 'video'
+    providerId: string
+    modelKey: string
+    modelName?: string
+  } | null = null
 
   try {
     if (strategy.key === 'agent-chat' || strategy.key === 'research-report') {
@@ -296,12 +327,16 @@ export const startGenerationTask = async (
           providerId,
           modelKey,
           modelName: billingDetail.modelName,
+          dedupeKey: consumeDedupeKey,
           metaJson: {
             source: 'generation-task',
             taskType: strategy.key,
           },
         })
         : null
+      if (pointLog) {
+        committedCharge = { associationNo, pointCost: billingDetail.pointCost, endpointType: 'chat', providerId, modelKey, modelName: billingDetail.modelName }
+      }
 
       const createdRecord = await context.createGenerationRecord(buildInitialRecordPayload(payload), currentUserId)
       await context.attachGenerationPointRecordId({
@@ -377,6 +412,7 @@ export const startGenerationTask = async (
           providerId,
           modelKey,
           modelName: billingDetail.modelName,
+          dedupeKey: consumeDedupeKey,
           metaJson: {
             source: 'generation-task',
             taskType: 'agent-workspace',
@@ -384,6 +420,9 @@ export const startGenerationTask = async (
           },
         })
         : null
+      if (pointLog) {
+        committedCharge = { associationNo, pointCost: billingDetail.pointCost, endpointType: 'chat', providerId, modelKey, modelName: billingDetail.modelName }
+      }
 
       const initialPayload = {
         ...buildInitialRecordPayload(payload),
@@ -470,6 +509,7 @@ export const startGenerationTask = async (
           providerId,
           modelKey,
           modelName: billingDetail.modelName,
+          dedupeKey: consumeDedupeKey,
           metaJson: {
             source: 'generation-task',
             taskType: 'video',
@@ -477,6 +517,9 @@ export const startGenerationTask = async (
           },
         })
         : null
+      if (pointLog) {
+        committedCharge = { associationNo, pointCost: billingDetail.pointCost, endpointType: 'video', providerId, modelKey, modelName: billingDetail.modelName }
+      }
 
       const createdRecord = await context.createGenerationRecord(buildInitialRecordPayload(payload), currentUserId)
       await context.attachGenerationPointRecordId({
@@ -554,12 +597,16 @@ export const startGenerationTask = async (
         providerId,
         modelKey,
         modelName: billingDetail.modelName,
+        dedupeKey: consumeDedupeKey,
         metaJson: {
           source: 'generation-task',
           imageCount,
         },
       })
       : null
+    if (pointLog) {
+      committedCharge = { associationNo, pointCost: billingDetail.pointCost, endpointType: 'image', providerId, modelKey, modelName: billingDetail.modelName }
+    }
 
     const createdRecord = await context.createGenerationRecord(buildInitialRecordPayload(payload), currentUserId)
     await context.attachGenerationPointRecordId({
@@ -609,6 +656,32 @@ export const startGenerationTask = async (
     context.runTaskInBackground(task, payload)
     return createdRecord
   } catch (error) {
+    // H1:扣费成功但任务未进入后台(建记录/attach/完成幂等失败)→ 幂等退款,杜绝无主扣费。
+    // dedupeKey 与后台 refundTaskPointsIfNeeded 同源(gen-refund:associationNo),互斥不会重复退。
+    if (committedCharge) {
+      try {
+        await context.refundGenerationPoints({
+          userId: currentUserId,
+          pointCost: committedCharge.pointCost,
+          sourceId: committedCharge.associationNo,
+          associationNo: committedCharge.associationNo,
+          endpointType: committedCharge.endpointType,
+          providerId: committedCharge.providerId,
+          modelKey: committedCharge.modelKey,
+          modelName: committedCharge.modelName,
+          dedupeKey: `gen-refund:${committedCharge.associationNo}`,
+          remark: '任务创建失败，积分已退回',
+          metaJson: { refundReason: 'task_setup_failed' },
+        })
+      } catch (refundError) {
+        // 退款失败仅记录,不能吞掉原始错误(尤其 INSUFFICIENT_POINTS 的 code 需冒泡)。
+        context.logGenerationTask('task_setup_refund_failed', {
+          associationNo: committedCharge.associationNo,
+          userId: currentUserId,
+          errorMessage: refundError instanceof Error ? refundError.message : String(refundError || ''),
+        })
+      }
+    }
     if (concurrencySlots.length) {
       await context.releaseTaskConcurrencySlots(concurrencySlots)
     }

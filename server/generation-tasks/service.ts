@@ -3,7 +3,7 @@ import type { GenerationRecordPayload } from '../generation-records/shared'
 import type { GenerationTaskStartPayload, GenerationTaskStreamEvent } from './shared'
 import { prisma } from '../db/prisma'
 import { acquireRedisLock, releaseRedisLock } from '../redis/lock'
-import { isRedisEnabled } from '../redis/config'
+import { REDIS_CONFIG, isRedisEnabled } from '../redis/config'
 import { redisKeys } from '../redis/keys'
 import { resolveGatewayProviderUpstream, resolveVideoProviderUpstream } from '../provider-config/service'
 import { resolveImageModelMaxImagesPerRequest } from '../provider-config/model-service'
@@ -584,20 +584,27 @@ const buildTaskLifecycleContext = () => ({
   attachGenerationPointRecordId,
   resolveGenerationPointCost,
   consumeGenerationPoints,
+  refundGenerationPoints,
   getMembershipBillingMultiplier,
   checkUserModelMembershipAccess,
+  // 预扣 dedupeKey:幂等键末段哈希 + 时间桶(与幂等窗口对齐),避免超出 dedupe_key 列(VarChar 120)、
+  // 且过窗后允许相同入参再次生成。Redis 幂等降级时由 DB 唯一约束兜底防重扣。
+  buildConsumeDedupeKey: (idempotencyKey: string) => {
+    const windowSec = REDIS_CONFIG.taskIdempotencyTtlSeconds || 600
+    const bucket = Math.floor(Date.now() / (windowSec * 1000))
+    const hash = String(idempotencyKey || '').split(':').pop() || idempotencyKey
+    return `gen-consume:${hash}:${bucket}`
+  },
   acquireTaskConcurrencySlots: async ({ userId, providerId, skillKey }: {
     userId: string
     providerId: string
     skillKey: string
   }) => {
+    // 已移除「每账号并发上限」：产品为先扣费，多任务并发不会造成免费滥用，允许同一账号多个任务并行。
+    // 仍保留 skill / provider 槽，作为对上游厂商的并发保护(避免打爆上游)。userId 入参保留以兼容签名。
+    void userId
     const acquiredSlots: RedisConcurrencySlot[] = []
     const runtimeSettings = await getRedisRuntimeSettings()
-    const userResult = await tryAcquireUserTaskSlot(userId, runtimeSettings.taskUserConcurrencyLimit)
-    if (!userResult.acquired || !userResult.slot) {
-      throw new GenerationTaskRequestError(429, `当前账号正在执行的任务过多，请稍后再试（上限 ${userResult.limit}）`)
-    }
-    acquiredSlots.push(userResult.slot)
 
     try {
       const skillResult = await tryAcquireSkillTaskSlot(skillKey, runtimeSettings.taskSkillConcurrencyLimit)
@@ -865,6 +872,20 @@ const reapInflightImageTasks = async () => {
   }
 }
 
+// AGENT 类(对话/工作台/研究,均映射为 type=AGENT)同样不可续询，崩在途会卡 RUNNING 且不退款。
+// 此前 bootstrap 只回收 IMAGE/VIDEO,AGENT 永久悬空且已扣费不退(H3)。启动时一并回收。
+const reapInflightChatLikeTasks = async () => {
+  const records = await prisma.generationRecord.findMany({
+    where: { type: 'AGENT', status: { in: ['PENDING', 'RUNNING'] }, finishedAt: null },
+    select: { id: true, userId: true },
+  })
+  for (const rec of records) {
+    if (getLocalRunningTask(rec.id)) continue
+    await reapAbandonedTask(rec.id, rec.userId, '服务重启，任务已中断')
+    logGenerationTask('task_resume:reap_agent', { recordId: rec.id })
+  }
+}
+
 // 启动钩子：扫描在途任务，恢复视频续询、回收孤儿。best-effort 全局扫描锁防多实例重复扫库；
 // per-record 执行锁(runTaskWithExecutionLock)是去重的最终保证。
 export const bootstrapTaskResume = async () => {
@@ -880,6 +901,7 @@ export const bootstrapTaskResume = async () => {
     try {
       await resumeInflightVideoTasks()
       await reapInflightImageTasks()
+      await reapInflightChatLikeTasks()
       logGenerationTask('task_resume:bootstrap_done', {})
     } finally {
       if (scanLock) await releaseRedisLock(scanLock)
