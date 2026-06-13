@@ -27,7 +27,7 @@ model AppUser {
   // 权威积分余额：账本(point_account_logs)的去规范化镜像。所有积分增减必须通过
   // appendPointLog/appendAdminPointLog 以原子 UPDATE 维护此列(行级锁自串行化)，
   // 既消除"扫描账本算余额"的并发丢更新，又把余额读取降为 O(1)。允许为负(结算补扣)。
-  pointsBalance      Int                    @default(0) @map("points_balance")
+  pointsBalance      Decimal                @default(0) @map("points_balance") @db.Decimal(12, 2)
   // 归属管理员：该用户由哪个管理员创建。NULL = 平台直属（自助注册/历史数据，仅超管可见）。
   ownerAdminId       String?                @map("owner_admin_id") @db.VarChar(36)
   createdAt          DateTime               @default(now()) @map("created_at")
@@ -958,9 +958,10 @@ model PointAccountLog {
   accountNo       String            @unique(map: "uk_point_account_logs_account_no") @map("account_no") @db.VarChar(64)
   changeType      PointChangeType   @map("change_type")
   action          PointActionType   @map("action")
-  changeAmount    Int               @map("change_amount")
-  balanceAfter    Int               @map("balance_after")
-  availableAmount Int               @default(0) @map("available_amount")
+  // 积分支持小数(模型可按小数计价):金额/余额改用 Decimal,精度 2 位,DB 侧做权威加减避免浮点误差。
+  changeAmount    Decimal           @map("change_amount") @db.Decimal(12, 2)
+  balanceAfter    Decimal           @map("balance_after") @db.Decimal(12, 2)
+  availableAmount Decimal           @default(0) @map("available_amount") @db.Decimal(12, 2)
   sourceType      PointSourceType   @map("source_type")
   sourceId        String?           @map("source_id") @db.VarChar(64)
   associationNo   String?           @map("association_no") @db.VarChar(64)

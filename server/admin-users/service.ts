@@ -8,7 +8,7 @@ import type {
 } from '@prisma/client'
 import { Prisma } from '@prisma/client'
 import prisma from '../db/prisma'
-import { lockUserBillingRow, invalidateMarketingCenterOverviewCache } from '../marketing-center/service'
+import { lockUserBillingRow, invalidateMarketingCenterOverviewCache, roundPoints } from '../marketing-center/service'
 import { invalidateRedisCachePatterns, invalidateRedisCaches } from '../redis/cache-manager'
 import { getOrSetJsonCache } from '../redis/json-cache'
 import { redisKeys } from '../redis/keys'
@@ -228,7 +228,7 @@ const readCurrentPointBalance = async (userId: string, tx: typeof prisma | any =
     select: { pointsBalance: true },
   })
 
-  return Number(user?.pointsBalance ?? 0)
+  return roundPoints(user?.pointsBalance ?? 0)
 }
 
 // 追加管理员积分流水，确保用户管理与营销中心共用同一套账本口径。
@@ -243,7 +243,8 @@ const appendAdminPointLog = async (tx: typeof prisma | any, input: {
   sourceId?: string | null
   associationNo?: string | null
 }) => {
-  const normalizedAmount = Math.max(0, Math.round(Number(input.changeAmount) || 0))
+  // 支持小数:管理员调整积分可为小数,四舍五入到 2 位(此前 Math.round 会强制取整)。
+  const normalizedAmount = Math.max(0, roundPoints(input.changeAmount))
 
   if (normalizedAmount <= 0) {
     throw new Error('调整积分必须大于 0')

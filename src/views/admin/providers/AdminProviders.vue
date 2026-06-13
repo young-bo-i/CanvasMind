@@ -485,7 +485,7 @@
                   <span class="admin-composite-input__suffix">缓存 · 积分 / 1k</span>
                 </div>
                 <div class="admin-composite-input">
-                  <input v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" placeholder="每次保底预扣">
+                  <input v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="每次保底预扣">
                   <span class="admin-composite-input__suffix">保底预扣 · 积分</span>
                 </div>
               </div>
@@ -507,7 +507,7 @@
             </template>
             <label class="admin-form__label" for="model-billing-power">计费规则</label>
             <div class="admin-composite-input">
-              <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" placeholder="请输入模型计费">
+              <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="请输入模型计费">
               <span class="admin-composite-input__suffix">{{ billingUnitSuffix }}</span>
             </div>
             <div v-if="modelForm.category === 'VIDEO' && modelForm.videoBillingMode === 'per_second'" class="admin-form__hint">

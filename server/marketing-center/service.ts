@@ -169,13 +169,22 @@ const parsePlanPurchaseSelection = (value: string) => {
   }
 }
 
+// 积分四舍五入到 2 位小数(精度安全):用于一切扣费/退款/调账/计价金额,规避浮点尾差。
+// 余额的权威加减在 DB 侧(DECIMAL)进行,JS 只负责把"单笔金额"四舍五入到 2 位后传参。
+export const roundPoints = (value: unknown): number => {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
 // 读取用户当前积分余额：直接读权威列 points_balance(O(1))，不再扫描账本。
+// 列为 DECIMAL,Prisma 返回 Decimal 对象,这里统一转为 number(≤2 位小数在 float 下精确)。
 const readCurrentPointBalance = async (userId: string, tx: typeof prisma | any = prisma) => {
   const user = await tx.appUser.findUnique({
     where: { id: userId },
     select: { pointsBalance: true },
   })
-  return user?.pointsBalance ?? 0
+  return roundPoints(user?.pointsBalance ?? 0)
 }
 
 // 判断 Prisma P2002 是否由"幂等去重键(dedupe_key)"唯一冲突触发。
@@ -215,7 +224,8 @@ const appendPointLog = async (tx: any, input: {
 }) => {
   // 原子维护权威余额列：UPDATE 自带行锁，使所有增减(含未显式加锁的入账路径)
   // 自动串行化，从根本上消除"读-改-写"的丢更新。delta 含正负。
-  const amount = Math.abs(input.changeAmount)
+  // 金额四舍五入到 2 位小数后参与 DECIMAL 运算,避免浮点尾差进库。
+  const amount = roundPoints(Math.abs(input.changeAmount))
   const delta = input.action === 'DECREASE' ? -amount : amount
   await tx.$executeRaw`UPDATE app_users SET points_balance = points_balance + ${delta} WHERE id = ${input.userId}`
   const nextBalance = await readCurrentPointBalance(input.userId, tx)
@@ -300,7 +310,8 @@ export const resolveChatPointCostByUsage = (input: {
   const inputPoints = (nonCachedInput / 1000) * rule.inputPricePer1k
   const cachePoints = (cachedTokens / 1000) * rule.cachedPricePer1k
   const outputPoints = (completionTokens / 1000) * rule.outputPricePer1k
-  const pointCost = Math.max(0, Math.ceil((inputPoints + cachePoints + outputPoints) * mult))
+  // 支持小数计价:不再向上取整到整数,改为四舍五入到 2 位小数。
+  const pointCost = Math.max(0, roundPoints((inputPoints + cachePoints + outputPoints) * mult))
 
   return {
     pointCost,
@@ -470,7 +481,8 @@ export const resolveGenerationPointCost = async (input: {
   const membershipMultiplier = input.membershipMultiplier && input.membershipMultiplier > 0
     ? Math.min(1, input.membershipMultiplier)
     : 1
-  const finalPointCost = Math.max(0, Math.ceil(basePointCost * durationMultiplier * imageMultiplier * (applied.billingMultiplier || 1) * membershipMultiplier))
+  // 支持小数计价:不再向上取整,改为四舍五入到 2 位小数(power 本身已可为小数)。
+  const finalPointCost = Math.max(0, roundPoints(basePointCost * durationMultiplier * imageMultiplier * (applied.billingMultiplier || 1) * membershipMultiplier))
 
   return {
     pointCost: finalPointCost,
@@ -1165,7 +1177,13 @@ export const getMarketingCenterOverview = async (userId?: string | null) => {
         points: {
           balance: currentBalance,
           available: currentBalance,
-          logs: recentPointLogs,
+          // 积分金额列现为 Decimal,显式转为 number(否则通用序列化会变成带尾零的字符串)。
+          logs: recentPointLogs.map((log) => ({
+            ...log,
+            changeAmount: roundPoints(log.changeAmount),
+            balanceAfter: roundPoints(log.balanceAfter),
+            availableAmount: roundPoints(log.availableAmount),
+          })),
         },
         subscription: activeSubscription,
         membershipPlans,
