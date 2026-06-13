@@ -29,3 +29,19 @@ export interface ImageGroup {
   isFirst?: boolean
   images: ImageItem[]
 }
+
+export interface VideoItem {
+  id: string
+  src: string
+  poster?: string
+  promptText?: string
+  modelLabel?: string
+  durationLabel?: string
+  createDate?: string
+}
+
+export interface VideoGroup {
+  date: string
+  isFirst?: boolean
+  videos: VideoItem[]
+}

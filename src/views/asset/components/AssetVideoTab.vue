@@ -70,7 +70,46 @@
             </div>
           </div>
         </div>
-        <div class="video-cv8">
+        <div v-if="videoGroups.length" class="image-s9z">
+          <div class="vList-q9n style-FG29L">
+            <div class="style-MK2n3">
+              <div class="style-TK4rG">
+                <template v-for="group in videoGroups" :key="group.date">
+                  <div>
+                    <div class="container-c5d">
+                      <div class="time-gcp" :class="{ 'first-fo4': group.isFirst }">{{ group.date }}</div>
+                    </div>
+                  </div>
+                  <div class="row-zep">
+                    <div class="container-c5d">
+                      <div class="image-qvw">
+                        <div
+                          v-for="video in group.videos"
+                          :key="video.id"
+                          class="image-bqm"
+                        >
+                          <div>
+                            <div class="container-pm3">
+                              <video
+                                class="image-w9g"
+                                :src="video.src"
+                                :poster="video.poster"
+                                controls
+                                playsinline
+                                preload="metadata"
+                              ></video>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="video-cv8">
           <div class="empty-page-ij3">
             <img src="/placeholder.svg" class="image-eyv">
             <div class="description-96w">暂无相关资产</div>
@@ -82,12 +121,13 @@
 </template>
 
 <script setup lang="ts">
-import type { FilterOption, VideoFilterType } from '@/views/asset/types'
+import type { FilterOption, VideoFilterType, VideoGroup } from '@/views/asset/types'
 
 defineProps<{
   active: boolean
   videoFilterOptions: FilterOption<VideoFilterType>[]
   videoFilter: VideoFilterType
+  videoGroups: VideoGroup[]
 }>()
 
 const emit = defineEmits<{

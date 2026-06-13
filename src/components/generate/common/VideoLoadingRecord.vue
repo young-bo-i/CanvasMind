@@ -113,58 +113,68 @@ defineEmits(['stop', 'make-same', 'download', 'delete', 'requery'])
 // 仅「超时」失败才提供重新查询（上游可能只是排队慢）；明确失败(如 file_download_error)不给该按钮。
 const isTimeoutError = computed(() => /超时|timeout/i.test(String(props.error || '')))
 
-const currentProgress = ref(props.progress)
-const currentProgressText = ref(props.progressText)
+// 视频进度按「时间匀速」模拟,不再依赖上游不准的进度:
+// - 10 分钟内从 0 匀速增长到 95%;
+// - 满 10 分钟仍无结果则卡在 95% 一直等待;
+// - 结果回来(done)立即快速补到 100%。
+const VIDEO_PROGRESS_TOTAL_MS = 10 * 60 * 1000
+const VIDEO_PROGRESS_CAP = 95
+
+const currentProgress = ref(0)
+// 文案固定为"视频生成中",不再展示「第 N 次查询/上游状态」。
+const currentProgressText = ref('视频生成中')
 let timer: ReturnType<typeof setInterval> | null = null
+let completeTimer: ReturnType<typeof setInterval> | null = null
+let startAt = Date.now()
 
-// 当父级已经通过 SSE 提供明确进度时，不再使用本地假进度动画。
-const hasControlledProgress = () => Number(props.progress) > 0 || Boolean(String(props.progressText || '').trim())
-
-const startTimer = () => {
-  if (hasControlledProgress()) {
-    return
-  }
-  timer = setInterval(() => {
-    if (currentProgress.value < 99) {
-      const remaining = 99 - currentProgress.value
-      const step = Math.max(1, Math.floor(remaining * 0.05))
-      currentProgress.value = Math.min(99, currentProgress.value + step)
-    }
-  }, 1000)
-}
+const isLoadingState = () => !props.done && !props.error && !props.stopped
 
 const stopTimer = () => {
   if (timer) { clearInterval(timer); timer = null }
 }
 
-watch(() => props.done, (val) => { if (val) stopTimer() })
-watch(() => props.error, (val) => { if (val) stopTimer() })
-watch(() => props.stopped, (val) => { if (val) stopTimer() })
+const stopCompleteTimer = () => {
+  if (completeTimer) { clearInterval(completeTimer); completeTimer = null }
+}
 
-watch(() => props.progress, (val) => {
-  currentProgress.value = Number.isFinite(Number(val)) ? Number(val) : 0
-  if (hasControlledProgress()) {
-    stopTimer()
-  } else if (!props.done && !props.error && !props.stopped && !timer) {
-    startTimer()
-  }
-})
+// 按经过时间匀速推进到 95% 封顶。
+const tickByElapsed = () => {
+  const elapsed = Date.now() - startAt
+  const pct = Math.min(VIDEO_PROGRESS_CAP, Math.round((elapsed / VIDEO_PROGRESS_TOTAL_MS) * VIDEO_PROGRESS_CAP))
+  // 只增不减,避免抖动。
+  if (pct > currentProgress.value) currentProgress.value = pct
+}
 
-watch(() => props.progressText, (val) => {
-  currentProgressText.value = val || ''
-  if (hasControlledProgress()) {
-    stopTimer()
-  } else if (!props.done && !props.error && !props.stopped && !timer) {
-    startTimer()
-  }
-})
+const startTimer = () => {
+  stopTimer()
+  startAt = Date.now()
+  currentProgress.value = 0
+  tickByElapsed()
+  timer = setInterval(tickByElapsed, 1000)
+}
+
+// 结果回来:停掉匀速计时,快速补到 100%。
+const rushToComplete = () => {
+  stopTimer()
+  stopCompleteTimer()
+  completeTimer = setInterval(() => {
+    currentProgress.value = Math.min(100, currentProgress.value + 5)
+    if (currentProgress.value >= 100) stopCompleteTimer()
+  }, 30)
+}
+
+watch(() => props.done, (val) => { if (val) rushToComplete() })
+watch(() => props.error, (val) => { if (val) { stopTimer(); stopCompleteTimer() } })
+watch(() => props.stopped, (val) => { if (val) { stopTimer(); stopCompleteTimer() } })
 
 onMounted(() => {
-  if (!props.done && !props.error && !props.stopped) startTimer()
+  if (isLoadingState()) startTimer()
+  else if (props.done) currentProgress.value = 100
 })
 
 onUnmounted(() => {
   stopTimer()
+  stopCompleteTimer()
 })
 </script>
 

@@ -770,10 +770,11 @@ const pollVideoTask = async (
     }
 
     pollCount += 1
+    // 文案不再暴露「第 N 次查询/上游状态」;进度改由前端按时间匀速模拟(10 分钟→95%),
+    // 故这里也不再上报 progressPercent(上游进度不准),只发一个稳定的"生成中"提示。
     context.emitTaskProgressEvent(task.recordId, {
       stage: 'polling_upstream',
-      message: `视频生成中…（第 ${pollCount} 次查询，状态：${outcome.statusText || 'pending'}）`,
-      progressPercent: outcome.progressPercent,
+      message: '视频生成中…',
     })
 
     if (Date.now() - startedAt > pollTimeoutMs) {

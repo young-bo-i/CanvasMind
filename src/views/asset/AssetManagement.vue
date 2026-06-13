@@ -39,6 +39,7 @@
           :active="activeTab === 'video'"
           :video-filter-options="videoFilterOptions"
           :video-filter="videoFilter"
+          :video-groups="videoGroups"
           @set-video-filter="setVideoFilter"
           @enter-batch-mode="enterBatchMode"
           @edit-in-capcut="handleEditInCapCut"
@@ -109,6 +110,7 @@ import AssetEditorTab from '@/views/asset/components/AssetEditorTab.vue'
 import AssetStoryTab from '@/views/asset/components/AssetStoryTab.vue'
 import AssetAudioTab from '@/views/asset/components/AssetAudioTab.vue'
 import { useAssetImages } from '@/views/asset/composables/useAssetImages'
+import { useAssetVideos } from '@/views/asset/composables/useAssetVideos'
 import {
   tabs,
   imageFilterOptions,
@@ -156,6 +158,9 @@ const publishSubmitting = ref<boolean>(false)
 const publishTargetImage = ref<ImageItem | null>(null)
 
 const { imageGroups, allImages, loadImageAssets, resolvePreviewIndexByItemId } = useAssetImages()
+const { videoGroups, loadVideoAssets } = useAssetVideos()
+// 视频资产是否已加载过(首次切到视频 tab 再懒加载,避免无谓请求)。
+const videoAssetsLoaded = ref(false)
 
 // 选中数量计算属性
 const selectedCount = computed(() => selectedItems.value.size)
@@ -223,6 +228,7 @@ onMounted(async () => {
 
   authLoginSuccessListener = () => {
     void loadImageAssets()
+    if (videoAssetsLoaded.value) void loadVideoAssets()
   }
   window.addEventListener(AUTH_LOGIN_SUCCESS_EVENT, authLoginSuccessListener)
 })
@@ -237,6 +243,11 @@ onBeforeUnmount(() => {
 // 切换标签页
 const switchTab = (tab: TabType) => {
   activeTab.value = tab
+  // 首次切到视频 tab 时懒加载视频资产(与图片同源 /api/asset-items?scope=mine&assetType=video)。
+  if (tab === 'video' && !videoAssetsLoaded.value) {
+    videoAssetsLoaded.value = true
+    void loadVideoAssets()
+  }
 }
 
 // 设置筛选条件
