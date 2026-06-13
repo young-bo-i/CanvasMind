@@ -242,17 +242,26 @@ const appendPointLog = async (tx: any, input: {
 }
 
 
+// 视频计费模式:按秒(power=每秒积分 × 时长) / 按次(power=每次固定积分,忽略时长)。二选一。
+export type VideoBillingMode = 'per_second' | 'per_count'
+
+export const normalizeVideoBillingMode = (value: unknown): VideoBillingMode => (
+  String(value || '').trim() === 'per_count' ? 'per_count' : 'per_second'
+)
+
 // 对话按 token 分档单价（积分 / 1k token）+ 按次保底 power。
 export interface ModelBillingRule {
   power: number
   inputPricePer1k: number
   outputPricePer1k: number
   cachedPricePer1k: number
+  // 仅 VIDEO 使用:按秒 / 按次。缺省 per_second(向后兼容既有配置)。
+  videoBillingMode: VideoBillingMode
 }
 
 // 从模型 defaultParamsJson.billingRule 解析出归一化计费规则；缺失字段一律按 0。
 export const readModelBillingRule = (value: unknown): ModelBillingRule => {
-  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0 }
+  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second' }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return empty
   }
@@ -267,10 +276,9 @@ export const readModelBillingRule = (value: unknown): ModelBillingRule => {
     inputPricePer1k: num(rule.inputPricePer1k),
     outputPricePer1k: num(rule.outputPricePer1k),
     cachedPricePer1k: num(rule.cachedPricePer1k),
+    videoBillingMode: normalizeVideoBillingMode(rule.videoBillingMode),
   }
 }
-
-const readModelBillingPower = (value: unknown) => readModelBillingRule(value).power
 
 // 对话按真实 usage 分档计费：非缓存输入 / 输出 / 缓存命中 各自单价。
 // 语义按 OpenAI：cachedTokens 是 promptTokens 的子集，故非缓存输入 = prompt - cached（clamp >=0）。
@@ -425,8 +433,9 @@ export const resolveGenerationPointCost = async (input: {
     }
   }
 
-  // 基础点数。
-  const basePointCost = readModelBillingPower(model.defaultParamsJson)
+  // 基础点数 + 计费规则(含视频按秒/按次模式)。
+  const billingRule = readModelBillingRule(model.defaultParamsJson)
+  const basePointCost = billingRule.power
 
   // 应用能力开关倍率（联网/深度思考通常更贵），未配置或不支持则倍率为 1。
   const capabilitySpec = (() => {
@@ -436,10 +445,14 @@ export const resolveGenerationPointCost = async (input: {
   })()
   const applied = applyCapabilityFlags(input.capabilityFlags || null, capabilitySpec)
 
-  // 视频按秒计费：power 为「每秒积分」，乘以本次时长（秒）。
-  // 对话维持按次（乘数为 1）。秒数做安全 clamp 到 [1, 60]，缺失则退化为 1（按次）。
+  // 视频计费两种模式二选一:
+  // - per_second(按秒):power 为「每秒积分」,乘以本次时长(秒,clamp 到 [1,60])。
+  // - per_count(按次):power 为「每次固定积分」,忽略时长(乘数恒为 1)。
+  // 对话维持按次(乘数为 1)。
   const durationMultiplier = category === 'VIDEO'
-    ? Math.min(60, Math.max(1, Math.round(Number(input.durationSeconds) || 1)))
+    ? (billingRule.videoBillingMode === 'per_count'
+      ? 1
+      : Math.min(60, Math.max(1, Math.round(Number(input.durationSeconds) || 1))))
     : 1
 
   // 图片按张计费：power 为「每张积分」，乘以本次出图张数。

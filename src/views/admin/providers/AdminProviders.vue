@@ -495,15 +495,26 @@
             </div>
           </template>
 
-          <!-- 图片(按次) / 视频(按秒)：单一单价 -->
+          <!-- 图片(按次) / 视频(按秒 或 按次,二选一)：单一单价 -->
           <div v-else class="admin-form__field">
+            <!-- 视频:先选计费模式(按秒 / 按次),二选一 -->
+            <template v-if="modelForm.category === 'VIDEO'">
+              <label class="admin-form__label">视频计费模式</label>
+              <select v-model="modelForm.videoBillingMode" class="admin-input" style="margin-bottom:8px">
+                <option value="per_second">按秒计费(单价 × 时长)</option>
+                <option value="per_count">按次计费(每次固定积分)</option>
+              </select>
+            </template>
             <label class="admin-form__label" for="model-billing-power">计费规则</label>
             <div class="admin-composite-input">
               <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" placeholder="请输入模型计费">
               <span class="admin-composite-input__suffix">{{ billingUnitSuffix }}</span>
             </div>
-            <div v-if="modelForm.category === 'VIDEO'" class="admin-form__hint">
+            <div v-if="modelForm.category === 'VIDEO' && modelForm.videoBillingMode === 'per_second'" class="admin-form__hint">
               视频按秒计费：此处填「每秒消耗积分」，实际扣费 = 单价 × 时长(秒)。例如填 10，生成 5 秒视频扣 50 积分。
+            </div>
+            <div v-else-if="modelForm.category === 'VIDEO'" class="admin-form__hint">
+              视频按次计费：此处填「每次消耗积分」，与时长无关。例如填 50，无论几秒每次都扣 50 积分。
             </div>
             <div v-else-if="modelForm.category === 'IMAGE'" class="admin-form__hint">
               图片按张计费：此处填「每张消耗积分」，一次生成 N 张扣 N 份（N 受下方「单次最大出图张数」限制）。
@@ -756,6 +767,8 @@ const modelForm = reactive({
   capabilityJson: {} as Record<string, any>,
   defaultParamsJsonText: '',
   billingPower: 0,
+  // 视频计费模式:按秒(per_second) / 按次(per_count)。二选一,缺省按秒。
+  videoBillingMode: 'per_second' as 'per_second' | 'per_count',
   billingTokens: 1000,
   // 对话(CHAT)按 token 分档单价（积分 / 1k token）。IMAGE/VIDEO 不用。
   inputPrice1k: 0,
@@ -769,9 +782,9 @@ const modelForm = reactive({
   maxImagesPerRequest: 1,
 })
 
-// 计费规则单位后缀：按模型类型区分。视频按秒、图片按次、对话按 token。
+// 计费规则单位后缀：按模型类型区分。视频按秒/按次、图片按张、对话按 token。
 const billingUnitSuffix = computed(() => {
-  if (modelForm.category === 'VIDEO') return '积分 / 秒'
+  if (modelForm.category === 'VIDEO') return modelForm.videoBillingMode === 'per_count' ? '积分 / 次' : '积分 / 秒'
   if (modelForm.category === 'IMAGE') return '积分 / 张'
   return `积分 / ${modelForm.billingTokens || 1000} Tokens`
 })
@@ -913,6 +926,7 @@ const resetModelForm = () => {
   modelForm.capabilityJson = {}
   modelForm.defaultParamsJsonText = ''
   modelForm.billingPower = 0
+  modelForm.videoBillingMode = 'per_second'
   modelForm.billingTokens = 1000
   modelForm.inputPrice1k = 0
   modelForm.outputPrice1k = 0
@@ -940,6 +954,7 @@ const applyModelForm = (model: AdminProviderModelItem) => {
   modelForm.capabilityJson = capabilityJson
   modelForm.defaultParamsJsonText = stringifyJson(defaultParamsJson)
   modelForm.billingPower = Number(billingRule.power || 0) || 0
+  modelForm.videoBillingMode = billingRule.videoBillingMode === 'per_count' ? 'per_count' : 'per_second'
   modelForm.billingTokens = Number(billingRule.tokens || 1000) || 1000
   modelForm.inputPrice1k = Number(billingRule.inputPricePer1k || 0) || 0
   modelForm.outputPrice1k = Number(billingRule.outputPricePer1k || 0) || 0
@@ -1274,6 +1289,8 @@ const mergeModelDefaultParams = () => {
     billingRule: {
       power: Number(modelForm.billingPower) || 0,
       tokens: Number(modelForm.billingTokens) || 1000,
+      // 视频计费模式:按秒 / 按次,二选一(仅 VIDEO 生效;其它类别忽略)。
+      videoBillingMode: modelForm.videoBillingMode === 'per_count' ? 'per_count' : 'per_second',
       // 对话按 token 分档单价；非 CHAT 时这三档保持 0、不参与计费。
       inputPricePer1k: Number(modelForm.inputPrice1k) || 0,
       outputPricePer1k: Number(modelForm.outputPrice1k) || 0,

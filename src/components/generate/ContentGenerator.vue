@@ -519,19 +519,22 @@ const showPrice = computed(() => {
   return !isCollapsed.value && (currentType.value === 'image' || currentType.value === 'video')
 })
 
-// 获取价格文本
-const readCurrentModelPointCost = () => {
+// 读取当前模型的计费规则(含视频按秒/按次模式)。
+const readCurrentModelBillingRule = (): Record<string, any> => {
   const currentModelKey = currentType.value === 'image'
     ? imageToolbarRef.value?.currentModelVersion
     : currentType.value === 'video'
       ? videoToolbarRef.value?.currentModelVersion
       : ''
 
-  if (!currentModelKey) return 0
+  if (!currentModelKey) return {}
 
   const model = getModelByName(currentModelKey) as { defaultParams?: Record<string, any> } | null
-  return Math.max(0, Number(model?.defaultParams?.billingRule?.power || 0))
+  return (model?.defaultParams?.billingRule || {}) as Record<string, any>
 }
+
+// 获取价格文本
+const readCurrentModelPointCost = () => Math.max(0, Number(readCurrentModelBillingRule().power || 0))
 
 const priceText = computed(() => {
   const pointCost = readCurrentModelPointCost()
@@ -539,8 +542,11 @@ const priceText = computed(() => {
   switch (currentType.value) {
     case 'image':
       return `${pointCost || 0} / 张`
-    case 'video':
-      return String(pointCost || 0)
+    case 'video': {
+      // 视频两种计费模式:按秒显示「X / 秒」,按次显示「X / 次」。
+      const mode = String(readCurrentModelBillingRule().videoBillingMode || 'per_second')
+      return mode === 'per_count' ? `${pointCost || 0} / 次` : `${pointCost || 0} / 秒`
+    }
     default:
       return ''
   }
