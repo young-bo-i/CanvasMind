@@ -103,6 +103,10 @@ export interface AgentChatTaskExecutorContext {
   logGenerationTask: (stage: string, detail: Record<string, unknown>) => void
 }
 
+// 流式过程中轮询"共享停止标志"的时间节流间隔(毫秒)。
+// 逐 token 检查会产生大量 Redis GET，故按时间节流，默认 2s。
+const CHAT_SHARED_ABORT_POLL_MS = Number.parseInt(process.env.CHAT_SHARED_ABORT_POLL_MS || '2000', 10)
+
 // 独立承接 Agent 对话执行主干，便于后续继续从中心 service 中抽离。
 export const executeAgentChatTaskFlow = async (
   task: AgentChatExecutionTask,
@@ -252,10 +256,23 @@ export const executeAgentChatTaskFlow = async (
     lastPersistContentLength: 0,
   }
 
+  let lastSharedAbortCheckAt = Date.now()
   while (!task.abortController.signal.aborted) {
     const { done, value } = await reader.read()
     if (done) {
       break
+    }
+
+    // 跨实例 STOP：本地 AbortController 只能感知本实例发起的停止。
+    // 时间节流地轮询共享停止标志，让"非执行实例发起的 STOP"也能中断流式(否则会继续流式+继续计费)。
+    if (Date.now() - lastSharedAbortCheckAt > CHAT_SHARED_ABORT_POLL_MS) {
+      lastSharedAbortCheckAt = Date.now()
+      try {
+        await context.ensureTaskNotAborted(task)
+      } catch {
+        // 已请求停止：优雅退出循环，按已生成内容收尾(与本地停止一致)。
+        break
+      }
     }
 
     const decodedChunk = decoder.decode(value, { stream: true })

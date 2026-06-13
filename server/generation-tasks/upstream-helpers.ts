@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { safeFetch } from '../shared/safe-fetch'
 import { getPublicModelCatalog, resolveGatewayProviderUpstream } from '../provider-config/service'
 import { getUploadsDir } from '../storage/service'
 import { buildAgentChatMessages } from '../../src/shared/agent-skills-core'
@@ -123,7 +124,8 @@ const resolveServerReferenceImageBlob = async (imageValue: string) => {
     return new Blob([fileBuffer], { type: mimeType })
   }
 
-  const response = await fetch(normalizedValue)
+  // 参考图地址来自用户/模型输入(任意公网 URL)：禁止私网目标，防 SSRF。
+  const response = await safeFetch(normalizedValue, {}, { allowPrivateHosts: false })
   if (!response.ok) {
     throw new Error(`参考图读取失败 (${response.status})`)
   }

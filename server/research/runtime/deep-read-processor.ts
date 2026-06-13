@@ -69,6 +69,27 @@ export const inferResearchFactNature = (
   return 'soft_claim'
 }
 
+// 深读单页 LLM 抽取的结构化结果类型。
+type DeepReadExtraction = {
+  entityMatched?: boolean
+  pageRole?: 'framework' | 'evidence' | 'case' | 'opinion' | 'tool_tutorial' | 'noisy'
+  topicAlignment?: 'high' | 'medium' | 'low'
+  usableFor?: '主论证' | '补充案例' | '风险提示' | '不建议入正文'
+  scopeWarning?: string
+  summary?: string
+  extractedFacts?: string[]
+  extractedClaims?: string[]
+  extractedNumbers?: string[]
+  contradictions?: string[]
+  freshnessSignals?: string[]
+  authorityHints?: string[]
+}
+
+// 深读 LLM 抽取的有界并发数：此前逐页串行(N 次 90s 超时串起来)，这里与 HTTP 抓取一样并行。
+const DEEP_READ_EXTRACT_CONCURRENCY = Math.max(1, Number.parseInt(process.env.DEEP_READ_CONCURRENCY || '4', 10))
+// 研究全局 token 预算(0=不限)：超过后跳过剩余深读 LLM 调用，避免成本随页数线性失控。
+const RESEARCH_TOKEN_BUDGET = Math.max(0, Number.parseInt(process.env.RESEARCH_TOKEN_BUDGET || '0', 10))
+
 export const processDeepReadBatchResults = async (input: {
   ctx: ResearchStepContext
   readBatchResults: ResearchReaderBatchResult[]
@@ -76,60 +97,90 @@ export const processDeepReadBatchResults = async (input: {
   rankedResults: ResearchSearchResultItem[]
 }) => {
   const { ctx } = input
-  for (const item of input.readBatchResults) {
-    await ctx.executor.ensureTaskNotAborted(ctx.task)
-    if (!item.readResult) {
+  const pages = input.readBatchResults.filter((item) => item.readResult)
+  if (!pages.length) {
+    return
+  }
+
+  ctx.executor.emitTaskStreamEvent(ctx.task.recordId, {
+    type: 'stage_changed',
+    recordId: ctx.task.recordId,
+    done: false,
+    stopped: false,
+    stage: 'deep_reading',
+    message: `正在并行分析 ${pages.length} 个页面`,
+    researchStage: {
+      stage: 'deep_reading',
+      message: `正在并行分析 ${pages.length} 个页面`,
+    },
+  })
+
+  // 阶段 A：有界并发调用 LLM 抽取(贵且独立)，结果按原顺序回填；usage 同步累加(单线程安全)。
+  const extractions: Array<{ item: ResearchReaderBatchResult; data: DeepReadExtraction } | null> = new Array(pages.length).fill(null)
+  let cursor = 0
+  const runExtractWorker = async () => {
+    for (;;) {
+      const myIndex = cursor
+      cursor += 1
+      if (myIndex >= pages.length) {
+        break
+      }
+      const item = pages[myIndex]
+      const readResult = item.readResult
+      if (!readResult) {
+        continue
+      }
+      const target = item.target
+      try {
+        await ctx.executor.ensureTaskNotAborted(ctx.task)
+        // 命中全局 token 预算则跳过剩余抽取，控制成本。
+        if (RESEARCH_TOKEN_BUDGET > 0 && ctx.usageAccumulator.snapshot().totalTokens >= RESEARCH_TOKEN_BUDGET) {
+          break
+        }
+        const stageResult = await runResearchStageModel<DeepReadExtraction>({
+          payloadRequestBody: ctx.payload.requestBody,
+          modelKey: ctx.modelKey,
+          systemPrompt: buildResearchDeepReadingSystemPrompt(),
+          userPrompt: buildResearchDeepReadingUserPrompt({
+            subject: ctx.subject,
+            goal: ctx.goal,
+            url: readResult.url,
+            title: readResult.title,
+            content: readResult.content,
+          }),
+          signal: ctx.task.abortController.signal,
+          stage: `deep_reading_${target.batchIndex || 1}`,
+          logGenerationTask: ctx.executor.logGenerationTask,
+        })
+        ctx.usageAccumulator.add(stageResult.usage)
+        extractions[myIndex] = { item, data: stageResult.data }
+      } catch (error) {
+        ctx.executor.logGenerationTask('research_reader:skip', {
+          recordId: ctx.task.recordId,
+          url: target.url,
+          errorMessage: error instanceof Error ? error.message : String(error || ''),
+        })
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(DEEP_READ_EXTRACT_CONCURRENCY, pages.length) }, () => runExtractWorker()),
+  )
+
+  // 阶段 B：顺序消化抽取结果(evidenceStore/emit 有状态，串行避免竞态与 id 抖动)。
+  for (const extraction of extractions) {
+    if (!extraction) {
       continue
     }
+    const item = extraction.item
     const readResult = item.readResult
+    if (!readResult) {
+      continue
+    }
     const target = item.target
-    const currentIndex = target.batchIndex || 1
-
-    ctx.executor.emitTaskStreamEvent(ctx.task.recordId, {
-      type: 'stage_changed',
-      recordId: ctx.task.recordId,
-      done: false,
-      stopped: false,
-      stage: 'deep_reading',
-      message: `正在分析第 ${currentIndex}/${input.rankedResults.length} 个页面`,
-      researchStage: {
-        stage: 'deep_reading',
-        message: `正在分析第 ${currentIndex}/${input.rankedResults.length} 个页面`,
-      },
-    })
 
     try {
-      const stageResult = await runResearchStageModel<{
-        entityMatched?: boolean
-        pageRole?: 'framework' | 'evidence' | 'case' | 'opinion' | 'tool_tutorial' | 'noisy'
-        topicAlignment?: 'high' | 'medium' | 'low'
-        usableFor?: '主论证' | '补充案例' | '风险提示' | '不建议入正文'
-        scopeWarning?: string
-        summary?: string
-        extractedFacts?: string[]
-        extractedClaims?: string[]
-        extractedNumbers?: string[]
-        contradictions?: string[]
-        freshnessSignals?: string[]
-        authorityHints?: string[]
-      }>({
-        payloadRequestBody: ctx.payload.requestBody,
-        modelKey: ctx.modelKey,
-        systemPrompt: buildResearchDeepReadingSystemPrompt(),
-        userPrompt: buildResearchDeepReadingUserPrompt({
-          subject: ctx.subject,
-          goal: ctx.goal,
-          url: readResult.url,
-          title: readResult.title,
-          content: readResult.content,
-        }),
-        signal: ctx.task.abortController.signal,
-        stage: `deep_reading_${target.batchIndex || 1}`,
-        logGenerationTask: ctx.executor.logGenerationTask,
-      })
-
-      ctx.usageAccumulator.add(stageResult.usage)
-      const deepReadResult = stageResult.data
+      const deepReadResult = extraction.data
 
       const evidence = ctx.evidenceStore.addEvidence({
         id: `evidence-read-${target.batchIndex || 1}`,

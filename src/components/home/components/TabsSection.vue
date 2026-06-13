@@ -77,7 +77,11 @@
       <div class="lv-tabs-content-inner">
         <div class="lv-tabs-content-item lv-tabs-content-item-active" role="tabpanel">
           <div data-apm-action="tab-pane" class="lv-tabs-pane">
-            <DiscoverContent :filter-type="activeFilterType" @open-work-detail="$emit('open-work-detail', $event)" />
+            <DiscoverContent
+              :filter-type="activeFilterType"
+              :search-keyword="props.searchKeyword"
+              @open-work-detail="$emit('open-work-detail', $event)"
+            />
           </div>
         </div>
       </div>
@@ -97,7 +101,9 @@ const props = defineProps({
       { label: '图片' },
       { label: '视频' }
     ]
-  }
+  },
+  // 由首页透传的搜索关键词，向下交给瀑布流做本地标题/提示词过滤
+  searchKeyword: { type: String, default: '' }
 })
 
 const emit = defineEmits(['tab-change', 'search', 'open-work-detail'])

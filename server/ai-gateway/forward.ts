@@ -6,6 +6,7 @@ import {
   toDebugSnippet,
 } from './shared'
 import { writeScopedLog } from '../shared/logging'
+import { safeFetch } from '../shared/safe-fetch'
 
 const logGatewayForward = (payload: {
   method: string
@@ -46,6 +47,9 @@ export const forwardMultipartRequest = async (params: {
   endpoint: string
   apiKey?: string
   method: string
+  // 是否允许私网上游：管理员配置的厂商上游可信(支持自建本地模型)→true；
+  // 客户端自定义上游地址必须 false，防止 SSRF。
+  allowPrivateHosts?: boolean
 } & ForwardLifecycleParams) => {
   const headers = new Headers()
   const contentType = String(params.req.headers['content-type'] || '').trim()
@@ -64,11 +68,11 @@ export const forwardMultipartRequest = async (params: {
       upstreamUrl,
     })
 
-    const upstreamResponse = await fetch(upstreamUrl, {
+    const upstreamResponse = await safeFetch(upstreamUrl, {
       method: params.method,
       headers,
       body: bodyBuffer as unknown as BodyInit,
-    })
+    }, { allowPrivateHosts: params.allowPrivateHosts === true })
 
     setGatewayDebugHeaders(params.res, {
       upstreamUrl,
@@ -95,6 +99,8 @@ export const forwardGatewayPayload = async (params: {
   method: string
   headers?: Record<string, string>
   body?: unknown
+  // 见 forwardMultipartRequest 同名参数说明。
+  allowPrivateHosts?: boolean
 } & ForwardLifecycleParams) => {
   logGatewayForward({
     method: params.method,
@@ -131,11 +137,11 @@ export const forwardGatewayPayload = async (params: {
   }
 
   try {
-    const upstreamResponse = await fetch(params.upstreamUrl, {
+    const upstreamResponse = await safeFetch(params.upstreamUrl, {
       method: params.method,
       headers,
       body,
-    })
+    }, { allowPrivateHosts: params.allowPrivateHosts === true })
 
     setGatewayDebugHeaders(params.res, {
       upstreamUrl: params.upstreamUrl,

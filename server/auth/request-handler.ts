@@ -119,6 +119,8 @@ export const handleAuthRequest = async (req: any, res: any) => {
         identifier: `${readRequesterIp(req)}:${verificationTarget || 'unknown'}`,
         limit: runtimeSettings.authVerificationRateLimit || REDIS_CONFIG.authVerificationRateLimit,
         windowSeconds: REDIS_CONFIG.rateLimitWindowSeconds,
+        // 验证码发送通常对应短信/邮件成本：Redis 抖动时宁可短暂拒绝也不放开盗刷。
+        failClosedOnUnavailable: true,
       })
 
       if (!verificationRateLimit.allowed) {
@@ -161,6 +163,8 @@ export const handleAuthRequest = async (req: any, res: any) => {
         identifier: `${readRequesterIp(req)}:${loginTarget || 'unknown'}`,
         limit: runtimeSettings.authLoginRateLimit || REDIS_CONFIG.authLoginRateLimit,
         windowSeconds: REDIS_CONFIG.rateLimitWindowSeconds,
+        // 登录爆破防护：Redis 抖动时 fail-closed，避免限流被静默放开。
+        failClosedOnUnavailable: true,
       })
 
       if (!loginRateLimit.allowed) {

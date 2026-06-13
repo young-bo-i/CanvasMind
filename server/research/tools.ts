@@ -1,4 +1,5 @@
 import { getResearchReaderCache, getResearchSearchCache } from './fetch-cache'
+import { safeFetch } from '../shared/safe-fetch'
 import {
   resolveSearchProviderUpstream,
   resolveSearchStrategy,
@@ -290,14 +291,17 @@ export const runWebReader = async (input: {
 
   const { signal, cleanup } = withTimeoutSignal(input.signal, DEFAULT_READER_TIMEOUT_MS)
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       signal,
-      redirect: 'follow',
       headers: {
         'User-Agent': RESEARCH_FETCH_USER_AGENT,
         Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
         'Cache-Control': 'no-cache',
       },
+    }, {
+      // 联网研究读取的是模型/搜索结果给出的任意公网 URL：必须禁止私网目标，防 SSRF。
+      allowPrivateHosts: false,
+      timeoutMs: DEFAULT_READER_TIMEOUT_MS,
     })
 
     if (!response.ok) {

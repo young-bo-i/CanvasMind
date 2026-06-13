@@ -169,15 +169,24 @@ const parsePlanPurchaseSelection = (value: string) => {
   }
 }
 
+// 读取用户当前积分余额：直接读权威列 points_balance(O(1))，不再扫描账本。
 const readCurrentPointBalance = async (userId: string, tx: typeof prisma | any = prisma) => {
-  const latestLog = await tx.pointAccountLog.findFirst({
-    where: { userId },
-    orderBy: [
-      { createdAt: 'desc' },
-      { id: 'desc' },
-    ],
+  const user = await tx.appUser.findUnique({
+    where: { id: userId },
+    select: { pointsBalance: true },
   })
-  return latestLog?.balanceAfter || 0
+  return user?.pointsBalance ?? 0
+}
+
+// 判断 Prisma P2002 是否由"幂等去重键(dedupe_key)"唯一冲突触发。
+// 仅这种冲突才代表"同一逻辑动作已写过"→ 可安全静默成功；其余唯一冲突(如 account_no 撞号)
+// 绝不能当成功吞掉，否则会静默丢失一笔真实扣费/退款。
+const isDedupeKeyConflict = (error: unknown) => {
+  const typed = error as { code?: string; meta?: { target?: unknown } }
+  if (typed?.code !== 'P2002') return false
+  const target = typed?.meta?.target
+  const targets = Array.isArray(target) ? target.map((item) => String(item)) : [String(target ?? '')]
+  return targets.some((item) => item.toLowerCase().includes('dedupe'))
 }
 
 // 在事务内对用户主表加行锁，串行化同一用户的积分账本写入。
@@ -204,10 +213,12 @@ const appendPointLog = async (tx: any, input: {
   // 幂等去重键：唯一，写重复直接抛 P2002（由调用方决定是否静默吞掉）。
   dedupeKey?: string | null
 }) => {
-  const currentBalance = await readCurrentPointBalance(input.userId, tx)
-  const nextBalance = input.action === 'DECREASE'
-    ? currentBalance - Math.abs(input.changeAmount)
-    : currentBalance + Math.abs(input.changeAmount)
+  // 原子维护权威余额列：UPDATE 自带行锁，使所有增减(含未显式加锁的入账路径)
+  // 自动串行化，从根本上消除"读-改-写"的丢更新。delta 含正负。
+  const amount = Math.abs(input.changeAmount)
+  const delta = input.action === 'DECREASE' ? -amount : amount
+  await tx.$executeRaw`UPDATE app_users SET points_balance = points_balance + ${delta} WHERE id = ${input.userId}`
+  const nextBalance = await readCurrentPointBalance(input.userId, tx)
 
   return tx.pointAccountLog.create({
     data: {
@@ -217,7 +228,7 @@ const appendPointLog = async (tx: any, input: {
       accountNo: buildSerialNo('PTS'),
       changeType: input.changeType,
       action: input.action,
-      changeAmount: Math.abs(input.changeAmount),
+      changeAmount: amount,
       balanceAfter: nextBalance,
       availableAmount: nextBalance,
       sourceType: input.sourceType,
@@ -524,8 +535,9 @@ export const consumeGenerationPoints = async (input: {
       })
     })
   } catch (error) {
-    // P2002 = dedupeKey 唯一冲突 → 已扣过，静默成功（幂等）。其余错误（含 INSUFFICIENT_POINTS）抛出。
-    if ((error as { code?: string })?.code === 'P2002') {
+    // 仅 dedupeKey 唯一冲突才视为"已扣过"静默成功(幂等)；account_no 撞号等其它唯一冲突
+    // 必须抛出，避免静默丢失一笔真实扣费。其余错误(含 INSUFFICIENT_POINTS)同样抛出。
+    if (isDedupeKeyConflict(error)) {
       return null
     }
     throw error
@@ -590,8 +602,8 @@ export const refundGenerationPoints = async (input: {
       })
     })
   } catch (error) {
-    // P2002 = dedupeKey 唯一冲突 → 已退过，静默成功（幂等）。其余错误抛出。
-    if ((error as { code?: string })?.code === 'P2002') {
+    // 仅 dedupeKey 唯一冲突才视为"已退过"静默成功(幂等)；其余唯一冲突抛出，避免静默丢失退款。
+    if (isDedupeKeyConflict(error)) {
       return null
     }
     throw error

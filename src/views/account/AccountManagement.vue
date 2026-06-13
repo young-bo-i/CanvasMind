@@ -623,8 +623,22 @@ const handleWorkDetailDelete = async () => {
   ElMessage.success('作品已删除')
 }
 
-const handleWorkDetailReport = () => {
-  ElMessage.success('举报已提交，我们会尽快处理')
+const handleWorkDetailReport = async () => {
+  // 暂无举报接口：先弹确认说明，确认后只给中性反馈，不谎称已提交到服务器。
+  try {
+    await ElMessageBox.confirm(
+      '举报用于反馈违规或不适内容。确认后我们会记录你的反馈。',
+      '举报内容',
+      {
+        confirmButtonText: '确认举报',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  ElMessage.info('已收到，感谢反馈')
 }
 
 // 按轨道宽度计算列数与列宽。

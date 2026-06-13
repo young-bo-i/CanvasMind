@@ -1,7 +1,7 @@
 import type { GenerationTaskStreamEvent } from './shared'
 import { REDIS_CONFIG, publishJsonMessage, redisKeys, subscribeJsonMessage } from '../redis'
 import { emitLocalTaskStreamEvent, getTaskStreamSubscriberCount } from './local-runtime'
-import { recordReplayEvent } from './task-event-replay'
+import { recordReplayEvent, scheduleReplayCleanup } from './task-event-replay'
 
 interface SharedTaskEventEnvelope {
   sourceInstanceId: string
@@ -42,6 +42,11 @@ export const ensureDistributedTaskSubscription = async (recordId: string) => {
         recordReplayEvent(recordId, { id: payload.event.id, event: payload.event })
       }
       emitLocalTaskStreamEvent(recordId, payload.event)
+
+      // 终态事件：本订阅实例也安排延迟清理本地重放缓存(否则每个非执行节点同样泄漏)。
+      if (payload.event.done === true) {
+        scheduleReplayCleanup(recordId)
+      }
     },
   )
 

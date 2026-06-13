@@ -13,7 +13,8 @@ export type MasonryRect = {
 export type MasonryMetrics = {
   columnGap: number
   colWidth: number
-  colLefts: readonly [number, number, number, number, number]
+  // 列数随屏宽自适应：列起点数组长度即列数（移动端 2 列，桌面最多 6 列）
+  colLefts: readonly number[]
   heroRect: MasonryRect
 }
 
@@ -26,18 +27,28 @@ export type PlainMasonryMetrics = {
 const DEFAULT_TRACK = 1653
 
 /**
+ * 按轨道宽度选列数：移动端少列、桌面多列；统一 clamp 到 2..6。
+ */
+function resolveResponsiveColumnCount(trackWidth: number): number {
+  let columns: number
+  if (trackWidth < 520) columns = 2
+  else if (trackWidth < 900) columns = 3
+  else if (trackWidth < 1280) columns = 4
+  else columns = 5
+  return Math.max(2, Math.min(6, columns))
+}
+
+/**
  * 根据轨道宽度算列宽、列起点与顶部大卡占位（大卡占左两列，比例接近 660×248）。
+ * 列数随屏宽自适应（移动端 2 列、桌面最多 5 列），不再固定 5 列。
  */
 export function computeMasonryMetrics(trackWidth: number, columnGap = 2): MasonryMetrics {
   const tw = Math.max(320, Math.floor(trackWidth || DEFAULT_TRACK))
-  const colWidth = Math.max(1, Math.floor((tw - 4 * columnGap) / 5))
-  const colLefts = [
-    0,
-    colWidth + columnGap,
-    2 * (colWidth + columnGap),
-    3 * (colWidth + columnGap),
-    4 * (colWidth + columnGap),
-  ] as const
+  const columnCount = resolveResponsiveColumnCount(tw)
+  const colWidth = Math.max(1, Math.floor((tw - (columnCount - 1) * columnGap) / columnCount))
+  const colLefts = Array.from({ length: columnCount }, (_, index) => (
+    index * (colWidth + columnGap)
+  ))
   const heroW = 2 * colWidth + columnGap
   const heroH = Math.max(1, Math.round((heroW * 248) / 660))
   const heroRect: MasonryRect = { left: 0, top: 0, width: heroW, height: heroH }
@@ -98,8 +109,10 @@ export function buildFeedLayoutsFromSizes(
   metrics: MasonryMetrics,
 ): MasonryRect[] {
   const { colWidth, colLefts, heroRect, columnGap } = metrics
+  const columnCount = colLefts.length
   const heroBottom = heroRect.top + heroRect.height
-  const colBottom = [heroBottom, heroBottom, 0, 0, 0]
+  // 顶部大卡占左侧两列（列数允许时），其余列从 0 起算。
+  const colBottom = Array.from({ length: columnCount }, (_, k) => (k < 2 ? heroBottom : 0))
   const out: MasonryRect[] = []
 
   for (let i = 0; i < sizes.length; i++) {
@@ -110,7 +123,7 @@ export function buildFeedLayoutsFromSizes(
 
     let c = 0
     let minB = colBottom[0]
-    for (let k = 1; k < 5; k++) {
+    for (let k = 1; k < columnCount; k++) {
       if (colBottom[k] < minB) {
         minB = colBottom[k]
         c = k

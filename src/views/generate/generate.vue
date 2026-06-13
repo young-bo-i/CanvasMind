@@ -60,6 +60,7 @@ import type {
 } from './components/research-report-record.types'
 import GenerateSessionList from './components/GenerateSessionList.vue'
 import GenerateConversationSidebar, { type GenerateConversationSidebarItem } from './components/GenerateConversationSidebar.vue'
+import { parseStageConversationEntries, stringifyStageConversationEntries } from './stage-conversation'
 
 const route = useRoute()
 const router = useRouter()
@@ -223,40 +224,6 @@ const writeStoredConversationSidebarCollapsed = (collapsed: boolean) => {
     return
   }
   window.localStorage.setItem(GENERATE_SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0')
-}
-
-interface StageConversationEntry {
-  stageKey: string
-  text: string
-}
-
-// 用现有 content 字段持久化图片任务阶段对话，避免额外改表。
-const parseStageConversationEntries = (content: string): StageConversationEntry[] => {
-  return String(content || '')
-      .split('\n')
-      .map(item => item.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const match = line.match(/^\[\[(.+?)\]\](.+)$/)
-        if (!match) {
-          return {
-            stageKey: '',
-            text: line,
-          }
-        }
-        return {
-          stageKey: String(match[1] || '').trim(),
-          text: String(match[2] || '').trim(),
-        }
-      })
-      .filter(item => item.text)
-}
-
-// 把阶段对话序列化回 content，便于刷新后恢复。
-const stringifyStageConversationEntries = (entries: StageConversationEntry[]) => {
-  return entries
-      .map(item => item.stageKey ? `[[${item.stageKey}]]${item.text}` : item.text)
-      .join('\n')
 }
 
 // 生成当前记录在对话区展示的阶段文案。
@@ -879,12 +846,21 @@ const readResearchPreviewMeta = (preview?: Record<string, unknown>) => {
   return Object.keys(meta).length ? meta : undefined
 }
 
+// 记忆化：该判定在 v-for 模板中每条记录每次渲染会被调用多次(含正则)。
+// 按 record 对象 + content 缓存，content 未变时直接命中，避免重复正则扫描。
+const researchReportFlagCache = new WeakMap<GeneratingRecord, { content: string; result: boolean }>()
 const isResearchReportRecord = (record: GeneratingRecord) => {
   const content = String(record.content || '')
-  return record.type === 'research'
+  const cached = researchReportFlagCache.get(record)
+  if (cached && cached.content === content) {
+    return cached.result
+  }
+  const result = record.type === 'research'
       || record.skill === RESEARCH_REPORT_SKILL_KEY
       || /^#\s*Deep Research\s*执行结果/m.test(content)
       || /^##\s*核查说明/m.test(content)
+  researchReportFlagCache.set(record, { content, result })
+  return result
 }
 
 const isResearchPersistedRecord = (record?: PersistedGenerationRecord | null) => {
@@ -1289,6 +1265,20 @@ const isCurrentSessionEmpty = computed(() => {
   }
   return visibleGeneratingRecords.value.length === 0
 })
+
+// 因搜索/筛选导致的空结果：需要给出"无匹配结果 + 清除筛选"的明确反馈，
+// 而不是像此前那样渲染空白列表，让用户无法判断是筛选所致还是真的没有记录。
+const isFilteredEmpty = computed(() => (
+  (sessionSearchKeyword.value.trim() !== '' || isRecordFilterActive.value)
+  && visibleGeneratingRecords.value.length === 0
+))
+
+const clearRecordFilters = () => {
+  sessionSearchKeyword.value = ''
+  recordTimeFilter.value = 'all'
+  recordTypeFilter.value = 'all'
+  recordActionFilter.value = 'all'
+}
 
 // 日期分组头（即梦式）：连续相同日期只在该组第一条显示标签，避免每条都重复「今天」。
 const shouldShowRecordDate = (index: number) => {
@@ -2605,6 +2595,25 @@ const connectGenerationTaskStream = (record: GeneratingRecord) => {
   })()
 }
 
+const isTimeoutErrorMessage = (message?: string | null) => /超时|timed?\s*out|timeout/i.test(String(message || ''))
+
+// 页面重新进入时，对「超时失败」的视频异步任务自动重新查询一次：
+// 超时后任务很可能仍在上游处理中（本项目超时不退款），主动取回结果，省去手动点「重新查询」。
+// 仅对本次新载入的记录触发（loadPersistedGeneratingRecords 会跳过已存在 dbId），天然每次页面打开只查一次；
+// 真实失败 / 成功 / 已停止的记录不动。图片为同步任务、无上游任务号可续询，不在此列。
+const AUTO_REQUERY_MAX_PER_LOAD = 8
+const autoRequeryTimedOutVideoRecords = (records: GeneratingRecord[]) => {
+  let triggered = 0
+  for (const record of records) {
+    if (triggered >= AUTO_REQUERY_MAX_PER_LOAD) break
+    if (record.type !== 'video' || !record.dbId || record.requerying) continue
+    if (record.done && !record.stopped && record.error && isTimeoutErrorMessage(record.error)) {
+      triggered += 1
+      void handleRequeryVideoRecord(record)
+    }
+  }
+}
+
 // 首屏加载最近的生成记录，用于刷新后回放历史。
 const loadPersistedGeneratingRecords = async () => {
   try {
@@ -2630,7 +2639,9 @@ const loadPersistedGeneratingRecords = async () => {
     if (!nextRecords.length) return
 
     generatingRecords.value = [...generatingRecords.value, ...nextRecords]
+    // 运行中(未完成)的记录重新订阅事件流；超时失败的视频记录页面重进时自动重查一次。
     nextRecords.forEach(connectGenerationTaskStream)
+    autoRequeryTimedOutVideoRecords(nextRecords)
   } catch {
     // 数据库未配置或接口失败时，继续使用前端内存态。
   }
@@ -3318,6 +3329,17 @@ onUnmounted(() => {
               @action-filter-change="handleSessionActionFilterChange"
               @scroll-state="handleSessionListScrollState"
           >
+            <div
+                v-if="isFilteredEmpty"
+                style="padding:48px 16px;text-align:center;color:var(--el-text-color-secondary,#909399);"
+            >
+              <p style="margin:0 0 12px;">没有符合当前筛选/搜索条件的记录</p>
+              <button
+                  type="button"
+                  style="padding:6px 16px;border-radius:8px;border:1px solid var(--el-border-color,#dcdfe6);background:transparent;cursor:pointer;color:inherit;"
+                  @click="clearRecordFilters"
+              >清除筛选</button>
+            </div>
             <template v-for="(record, index) in visibleGeneratingRecords" :key="record.id">
               <div class="item-Xh64V7" :data-index="index * 2 + 1" style="z-index:1">
                 <GenerateAgentRecord

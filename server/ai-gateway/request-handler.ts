@@ -33,6 +33,17 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
     return
   }
 
+  // 安全：所有网关请求一律要求登录（此前仅对"计费分支"鉴权，导致未授权用户可
+  // 借网关发起 SSRF / 把服务器当匿名中转）。鉴权前置后，下方分支统一复用该用户。
+  const sessionUser = await requireCurrentSessionUser(req, res)
+  if (!sessionUser?.id) {
+    return
+  }
+
+  // 默认禁止"客户端自定义上游地址/密钥"转发(SSRF/凭据中转风险)。正常前端只发
+  // providerId/modelKey，由服务端解析真实上游。确需放开时设 AI_GATEWAY_ALLOW_RAW_UPSTREAM=true。
+  const allowRawUpstream = String(process.env.AI_GATEWAY_ALLOW_RAW_UPSTREAM || '').trim() === 'true'
+
   let debugUpstreamUrl = ''
   let debugUpstreamMethod = 'POST'
 
@@ -53,10 +64,7 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
     })
 
     if (headerProviderId && headerEndpointType) {
-      const currentUser = shouldChargeHeaderRequest ? await requireCurrentSessionUser(req, res) : null
-      if (shouldChargeHeaderRequest && !currentUser?.id) {
-        return
-      }
+      const currentUser = sessionUser
 
       const upstream = await resolveGatewayProviderUpstream({
         providerId: headerProviderId,
@@ -126,6 +134,8 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
         endpoint: upstream.endpoint,
         apiKey: upstream.apiKey || undefined,
         method: headerMethod,
+        // 厂商上游由管理员在后台配置，可信(允许自建本地模型)。
+        allowPrivateHosts: true,
         beforeProxy: async ({ upstreamResponse, res: currentRes }) => {
           if (!upstreamResponse.ok) {
             await refundConsumedPointsIfNeeded(`upstream_status_${upstreamResponse.status}`)
@@ -144,6 +154,13 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
     }
 
     if (headerBaseUrl && headerEndpoint) {
+      if (!allowRawUpstream) {
+        sendJson(res, 403, {
+          message: '已禁用自定义上游地址转发',
+          error: { type: 'gateway_raw_upstream_forbidden', message: '已禁用自定义上游地址转发' },
+        })
+        return
+      }
       debugUpstreamUrl = `${headerBaseUrl.replace(/\/+$/, '')}/${headerEndpoint.replace(/^\/+/, '')}`
       debugUpstreamMethod = headerMethod
       await forwardMultipartRequest({
@@ -153,6 +170,8 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
         endpoint: headerEndpoint,
         apiKey: headerApiKey || undefined,
         method: headerMethod,
+        // 客户端自定义上游：禁止私网目标，防 SSRF。
+        allowPrivateHosts: false,
       })
       return
     }
@@ -167,6 +186,15 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
       })
       : null
 
+    // 无法解析到后台厂商配置(即依赖客户端自带 baseUrl/apiKey)时默认拒绝，防 SSRF/凭据中转。
+    if (!upstream && !allowRawUpstream) {
+      sendJson(res, 400, {
+        message: '缺少有效的上游模型配置',
+        error: { type: 'gateway_invalid_upstream', message: '缺少有效的上游模型配置' },
+      })
+      return
+    }
+
     debugUpstreamUrl = upstream
       ? joinUpstreamUrl(upstream.baseUrl, upstream.endpoint)
       : normalized.upstreamUrl
@@ -179,10 +207,7 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
     })
     const billedJsonEndpointType = normalizeChargeableEndpointType(normalized.endpointType)
 
-    const currentUser = shouldChargeJsonRequest ? await requireCurrentSessionUser(req, res) : null
-    if (shouldChargeJsonRequest && !currentUser?.id) {
-      return
-    }
+    const currentUser = sessionUser
 
     // 图片按张计费：从请求体取 n/count（兼容 body 为对象或 JSON 字符串）。
     const gatewayJsonBody = ((): Record<string, unknown> => {
@@ -265,6 +290,8 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
       method: normalized.method,
       headers: normalized.headers,
       body: normalized.body,
+      // 厂商上游(管理员配置)允许私网；仅当放开 raw 上游时才会走到客户端自带地址，那时禁止私网。
+      allowPrivateHosts: Boolean(upstream),
       beforeProxy: async ({ upstreamResponse, res: currentRes }) => {
         if (!upstreamResponse.ok) {
           await refundConsumedPointsIfNeeded(`upstream_status_${upstreamResponse.status}`)

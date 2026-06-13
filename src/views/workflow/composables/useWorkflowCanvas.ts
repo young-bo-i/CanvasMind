@@ -158,11 +158,35 @@ const cloneCanvasState = (state: WorkflowCanvasStateSnapshot): WorkflowCanvasSta
   return JSON.parse(JSON.stringify(state)) as WorkflowCanvasStateSnapshot
 }
 
+// 节点移动/内容编辑的历史快照防抖定时器：把连续的拖拽/输入合并成一次历史记录。
+let historySaveTimer: ReturnType<typeof setTimeout> | null = null
+const cancelScheduledHistorySave = () => {
+  if (historySaveTimer) {
+    clearTimeout(historySaveTimer)
+    historySaveTimer = null
+  }
+}
+
+/**
+ * 尾防抖地保存历史：用于"节点移动 / 内容编辑"等高频操作，
+ * 修复此前 updateNode 不进历史导致 Ctrl+Z 丢失最常见操作、且与 autosave 持久化分歧的问题。
+ */
+const scheduleHistorySave = (delay = 500) => {
+  if (isRestoring) return
+  cancelScheduledHistorySave()
+  historySaveTimer = setTimeout(() => {
+    historySaveTimer = null
+    saveToHistory()
+  }, delay)
+}
+
 /**
  * 保存当前状态到历史
  */
 const saveToHistory = () => {
   if (isRestoring) return
+  // 立即保存时吸收掉待执行的防抖保存，避免重复入栈。
+  cancelScheduledHistorySave()
 
   const state: WorkflowCanvasStateSnapshot = {
     nodes: cloneCanvasState({ nodes: nodes.value, edges: [] }).nodes,
@@ -264,6 +288,8 @@ export const updateNode = (id: string, patch: WorkflowNodeUpdatePayload) => {
       },
     } : node,
   )
+  // 内容/位置编辑进入历史(防抖)，使 Ctrl+Z 可撤销这些最常见操作，且与 autosave 一致。
+  scheduleHistorySave()
 }
 
 // 删除节点
@@ -335,6 +361,8 @@ export const updateViewport = (viewport: typeof canvasViewport.value) => {
 
 // 撤销
 export const undo = () => {
+  // 取消待执行的防抖保存，避免撤销后它再触发 saveToHistory 截断重做分支。
+  cancelScheduledHistorySave()
   if (historyIndex.value <= 0) return false
   historyIndex.value--
   restoreState(history.value[historyIndex.value])
@@ -343,6 +371,7 @@ export const undo = () => {
 
 // 重做
 export const redo = () => {
+  cancelScheduledHistorySave()
   if (historyIndex.value >= history.value.length - 1) return false
   historyIndex.value++
   restoreState(history.value[historyIndex.value])

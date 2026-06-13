@@ -1,4 +1,5 @@
 import { readRawBuffer, sendJson } from '../ai-gateway/shared'
+import { requireCurrentSessionUser } from '../auth/session'
 import { saveUploadedBuffer } from './service'
 
 // 处理文件上传请求。
@@ -13,6 +14,12 @@ export const handleStorageUploadRequest = async (req: any, res: any) => {
           message: 'Method Not Allowed',
         },
       })
+      return
+    }
+
+    // 安全：上传必须登录(此前匿名可写任意文件，配合同源回显构成存储型 XSS)。
+    const sessionUser = await requireCurrentSessionUser(req, res)
+    if (!sessionUser?.id) {
       return
     }
 

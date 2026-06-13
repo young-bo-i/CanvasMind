@@ -24,6 +24,10 @@ model AppUser {
   phone              String?                @unique(map: "uk_app_users_phone") @db.VarChar(32)
   role               UserRole               @default(USER)
   status             UserStatus             @default(ANONYMOUS)
+  // 权威积分余额：账本(point_account_logs)的去规范化镜像。所有积分增减必须通过
+  // appendPointLog/appendAdminPointLog 以原子 UPDATE 维护此列(行级锁自串行化)，
+  // 既消除"扫描账本算余额"的并发丢更新，又把余额读取降为 O(1)。允许为负(结算补扣)。
+  pointsBalance      Int                    @default(0) @map("points_balance")
   // 归属管理员：该用户由哪个管理员创建。NULL = 平台直属（自助注册/历史数据，仅超管可见）。
   ownerAdminId       String?                @map("owner_admin_id") @db.VarChar(36)
   createdAt          DateTime               @default(now()) @map("created_at")

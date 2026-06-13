@@ -28,7 +28,11 @@ export const phoneCodeStrategy: AuthStrategy = {
       target: phone,
       channel: 'PHONE',
       expiresAt: record.expiresAt,
-      debugCode: context.methodConfig.allowAutoFill ? record.code : undefined,
+      // 安全：仅非生产环境且后台显式开启自动填充时才回传验证码。
+      // 生产环境绝不下发明文验证码，避免"任何人读 sendCode 响应即可登录"的越权。
+      debugCode: context.methodConfig.allowAutoFill && process.env.NODE_ENV !== 'production'
+        ? record.code
+        : undefined,
     }
   },
   async login(context) {

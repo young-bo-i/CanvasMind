@@ -509,6 +509,12 @@ const onEdgesChange = (changes: Array<{ type?: string }>) => {
   }
 }
 
+// 节点拖拽结束：把移动后的位置写入历史(VueFlow 经 v-model 直接改 nodes，绕过 updateNode)，
+// 使 Ctrl+Z 能撤销拖拽，且历史与 autosave 持久化保持一致。
+const handleNodeDragStop = () => {
+  nextTick(() => manualSaveHistory())
+}
+
 // 处理画布点击
 const onPaneClick = () => {
   showNodeMenu.value = false
@@ -773,6 +779,7 @@ watch(currentCanvasSnapshot, () => {
           :node-class-name="resolveNodeClass"
           @connect="onConnect"
           @node-click="handleNodeClick"
+          @node-drag-stop="handleNodeDragStop"
           @pane-click="onPaneClick"
           @viewport-change="handleViewportChange"
           @edges-change="onEdgesChange"

@@ -6,12 +6,23 @@ let commandClient: Redis | null = null
 let publisherClient: Redis | null = null
 let subscriberClient: Redis | null = null
 
-const buildRedisClient = (connectionName: string) => new Redis(REDIS_CONFIG.url, {
-  lazyConnect: true,
-  maxRetriesPerRequest: 1,
-  enableReadyCheck: true,
-  connectionName,
-})
+const buildRedisClient = (connectionName: string) => {
+  const client = new Redis(REDIS_CONFIG.url, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    enableReadyCheck: true,
+    connectionName,
+  })
+
+  // 关键可靠性修复：ioredis 在连接断开/鉴权失败/DNS 错误时会异步 emit 'error'。
+  // Node 中无监听的 'error' 事件会作为未捕获异常抛出，可能拖垮整个 HTTP 进程。
+  // 这里挂一个日志监听吞掉它(命令层已各自 try/catch 处理失败回退)。
+  client.on('error', (error) => {
+    writeScopedLog('error', 'Redis', `连接错误(${connectionName})`, error)
+  })
+
+  return client
+}
 
 const ensureClientConnected = async (client: Redis) => {
   if (client.status === 'ready' || client.status === 'connecting' || client.status === 'connect') {

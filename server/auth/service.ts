@@ -17,6 +17,12 @@ const DEFAULT_SESSION_EXPIRE_DAYS = 30
 // 会话 Cookie 名称。
 export const AUTH_SESSION_COOKIE_NAME = 'canana_session'
 
+// lastActiveAt 写入节流阈值(毫秒)：距上次活跃超过该时长才更新一次，默认 5 分钟。
+const SESSION_LAST_ACTIVE_THROTTLE_MS = Number.parseInt(
+  process.env.SESSION_LAST_ACTIVE_THROTTLE_MS || String(5 * 60 * 1000),
+  10,
+)
+
 const AUTH_METHOD_LIST_CACHE_KEY = redisKeys.cache('auth-method', 'list:all')
 const AUTH_METHOD_ENABLED_LIST_CACHE_KEY = redisKeys.cache('auth-method', 'list:enabled')
 const buildAuthMethodDetailCacheKey = (methodType: AuthMethodType) => redisKeys.cache('auth-method', `detail:${methodType}`)
@@ -49,7 +55,8 @@ const DEFAULT_AUTH_METHOD_CONFIGS: AuthMethodConfigPayload[] = [
     isEnabled: true,
     isVisible: true,
     sortOrder: 10,
-    allowAutoFill: true,
+    // 安全默认关闭自动填充：开启会向客户端回传明文验证码(仅供本地联调)。
+    allowAutoFill: false,
     allowSignUp: true,
     config: {
       targetLabel: '手机号',
@@ -66,7 +73,8 @@ const DEFAULT_AUTH_METHOD_CONFIGS: AuthMethodConfigPayload[] = [
     isEnabled: true,
     isVisible: true,
     sortOrder: 20,
-    allowAutoFill: true,
+    // 安全默认关闭自动填充：开启会向客户端回传明文验证码(仅供本地联调)。
+    allowAutoFill: false,
     allowSignUp: true,
     config: {
       targetLabel: '邮箱',
@@ -731,6 +739,7 @@ export const getUserBySessionToken = async (sessionToken: string) => {
     select: {
       id: true,
       authMethodType: true,
+      lastActiveAt: true,
       user: {
         select: {
           id: true,
@@ -748,14 +757,19 @@ export const getUserBySessionToken = async (sessionToken: string) => {
     return null
   }
 
-  await prisma.appSession.update({
-    where: {
-      id: session.id,
-    },
-    data: {
-      lastActiveAt: new Date(),
-    },
-  })
+  // 节流 lastActiveAt 写：此前每个鉴权请求(含高频 SSE/轮询)都写一次 DB。
+  // 仅当距上次活跃超过阈值才更新，把"每请求一写"降为"每用户每 N 分钟一写"。
+  const now = Date.now()
+  const lastActiveMs = session.lastActiveAt ? new Date(session.lastActiveAt).getTime() : 0
+  if (now - lastActiveMs > SESSION_LAST_ACTIVE_THROTTLE_MS) {
+    // fire-and-forget：活跃时间戳不影响鉴权结果，失败也不阻塞请求。
+    void prisma.appSession.update({
+      where: { id: session.id },
+      data: { lastActiveAt: new Date(now) },
+    }).catch(() => {
+      // 忽略：下次请求会再尝试
+    })
+  }
 
   return toAuthUserProfile(session.user, session.authMethodType)
 }

@@ -21,8 +21,46 @@ export interface ReplayEventEntry {
 
 const REPLAY_CAP = 100
 
+// 终态事件后保留重放缓存的宽限期：覆盖客户端断线重连窗口，过后释放本地内存。
+const REPLAY_TERMINAL_GRACE_MS = Number.parseInt(process.env.TASK_REPLAY_TERMINAL_GRACE_MS || String(60 * 1000), 10)
+
+// 兜底上限：即使某些任务永不进入终态(异常崩溃)，也限制本地保留的任务条数，避免无界增长。
+const MAX_TRACKED_RECORDS = Number.parseInt(process.env.TASK_REPLAY_MAX_RECORDS || '5000', 10)
+
 const localReplayEvents = new Map<string, ReplayEventEntry[]>()
 const localReplayCounters = new Map<string, number>()
+// 已安排终态清理的 recordId，避免重复 setTimeout。
+const scheduledCleanupRecordIds = new Set<string>()
+
+// 暴露给运行时健康监控：当前本地重放缓存追踪的任务数(用于发现内存泄漏)。
+export const getReplayStoreStats = () => ({
+  trackedRecords: localReplayEvents.size,
+  trackedCounters: localReplayCounters.size,
+})
+
+// 兜底淘汰：Map 按插入序，超限时驱逐最早的若干条。
+const evictOldestIfNeeded = () => {
+  while (localReplayEvents.size > MAX_TRACKED_RECORDS) {
+    const oldestKey = localReplayEvents.keys().next().value
+    if (oldestKey === undefined) break
+    localReplayEvents.delete(oldestKey)
+    localReplayCounters.delete(oldestKey)
+  }
+}
+
+// 任务进入终态后，延迟一个重连宽限期再清理本地重放缓存(Redis 侧由 TTL 自动过期)。
+// 在任意实例上调用都安全：用本地 Set 去重，timer 调用 unref 不阻塞进程退出。
+export const scheduleReplayCleanup = (recordId: string) => {
+  if (scheduledCleanupRecordIds.has(recordId)) return
+  scheduledCleanupRecordIds.add(recordId)
+  const timer = setTimeout(() => {
+    scheduledCleanupRecordIds.delete(recordId)
+    localReplayEvents.delete(recordId)
+    localReplayCounters.delete(recordId)
+  }, REPLAY_TERMINAL_GRACE_MS)
+  // 不让该定时器阻止进程正常退出。
+  if (typeof timer.unref === 'function') timer.unref()
+}
 
 // 同步分配单调递增的事件 id
 export const allocateEventId = (recordId: string): number => {
@@ -40,6 +78,8 @@ export const recordReplayEvent = (
   if (!arr) {
     arr = []
     localReplayEvents.set(recordId, arr)
+    // 新任务进入：检查是否超出兜底上限。
+    evictOldestIfNeeded()
   }
   arr.push(entry)
   if (arr.length > REPLAY_CAP) {

@@ -1310,6 +1310,7 @@ onUnmounted(() => {
                   v-model="inputValue"
                   :class="['lv-textarea', 'textarea-rfj34A', 'prompt-textarea', { 'collapsed-l8bAEB': isCollapsed, 'collapse-transition-start': isCollapsed }]"
                   :placeholder="placeholder"
+                  aria-label="生成提示词输入"
                   translate="no"
                   @input="handleInput"
                   @keydown="handleKeydown"></textarea>

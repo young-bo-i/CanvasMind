@@ -221,19 +221,18 @@ const addDuration = (startTime: Date, durationUnit: string, durationValue: numbe
   return nextDate
 }
 
+// 读取用户当前积分余额：直接读权威列 points_balance(O(1))，与营销中心口径一致。
 const readCurrentPointBalance = async (userId: string, tx: typeof prisma | any = prisma) => {
-  const latestLog = await tx.pointAccountLog.findFirst({
-    where: { userId },
-    orderBy: [
-      { createdAt: 'desc' },
-      { id: 'desc' },
-    ],
+  const user = await tx.appUser.findUnique({
+    where: { id: userId },
+    select: { pointsBalance: true },
   })
 
-  return Number(latestLog?.balanceAfter || 0)
+  return Number(user?.pointsBalance ?? 0)
 }
 
 // 追加管理员积分流水，确保用户管理与营销中心共用同一套账本口径。
+// 以原子 UPDATE 维护权威余额列(行锁自串行化)，与营销中心 appendPointLog 一致。
 const appendAdminPointLog = async (tx: typeof prisma | any, input: {
   userId: string
   currentUserId: string
@@ -244,20 +243,23 @@ const appendAdminPointLog = async (tx: typeof prisma | any, input: {
   sourceId?: string | null
   associationNo?: string | null
 }) => {
-  const currentBalance = await readCurrentPointBalance(input.userId, tx)
   const normalizedAmount = Math.max(0, Math.round(Number(input.changeAmount) || 0))
 
   if (normalizedAmount <= 0) {
     throw new Error('调整积分必须大于 0')
   }
 
-  const nextBalance = input.action === 'DECREASE'
-    ? currentBalance - normalizedAmount
-    : currentBalance + normalizedAmount
-
-  if (nextBalance < 0) {
-    throw new Error('调整后积分不能小于 0')
+  if (input.action === 'DECREASE') {
+    // 原子条件扣减：余额不足则影响 0 行 → 拒绝(不允许扣成负数)。
+    const affected = await tx.$executeRaw`UPDATE app_users SET points_balance = points_balance - ${normalizedAmount} WHERE id = ${input.userId} AND points_balance >= ${normalizedAmount}`
+    if (!affected) {
+      throw new Error('调整后积分不能小于 0')
+    }
+  } else {
+    await tx.$executeRaw`UPDATE app_users SET points_balance = points_balance + ${normalizedAmount} WHERE id = ${input.userId}`
   }
+
+  const nextBalance = await readCurrentPointBalance(input.userId, tx)
 
   return await tx.pointAccountLog.create({
     data: {

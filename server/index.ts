@@ -39,6 +39,7 @@ import { isGenerationTasksPath } from './generation-tasks/constants'
 import { handleGenerationTasksRequest } from './generation-tasks/request-handler'
 import { bootstrapTaskResume } from './generation-tasks/service'
 import { getLocalRunningTaskCount, getTaskStreamSubscriberTotal } from './generation-tasks/local-runtime'
+import { getReplayStoreStats } from './generation-tasks/task-event-replay'
 import { PROVIDER_CONFIG_MATCH_PATHS } from './provider-config/constants'
 import { handleProviderConfigRequest } from './provider-config/request-handler'
 import { isStorageConfigsPath } from './storage-config/constants'
@@ -157,8 +158,8 @@ const handleUploadsRequest = async (req: any, res: any, requestPath: string) => 
   // 计算真实文件路径。
   const filePath = path.resolve(uploadsDir, relativePath)
 
-  // 防止目录穿越到上传目录之外。
-  if (!filePath.startsWith(uploadsDir)) {
+  // 防止目录穿越到上传目录之外：必须带分隔符边界，避免 /data/uploads-evil 被误判命中 /data/uploads。
+  if (filePath !== uploadsDir && !filePath.startsWith(uploadsDir + path.sep)) {
     return false
   }
 
@@ -171,6 +172,10 @@ const handleUploadsRequest = async (req: any, res: any, requestPath: string) => 
   const fileBuffer = await fs.readFile(filePath)
   res.statusCode = 200
   res.setHeader('Content-Type', getContentTypeByFilePath(filePath))
+  // 安全：用户上传内容同源回显，禁止 MIME 嗅探；并用 CSP sandbox 阻断直接访问
+  // SVG/HTML 时的脚本执行(存储型 XSS)，但不影响 <img> 内联渲染。
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox; img-src 'self' data:; style-src 'unsafe-inline'")
   res.end(fileBuffer)
   return true
 }
@@ -230,6 +235,27 @@ const isFileExists = async (filePath: string) => {
 
 const gzipAsync = promisify(zlib.gzip)
 
+// 静态资源 gzip 结果缓存：避免对同一文件(尤其 ~753KB 的 element-plus chunk)每次请求都重新压缩。
+// key = 文件路径:mtime:size(文件变更即失效)；带哈希的产物本就 immutable，命中率极高。
+const staticGzipCache = new Map<string, Buffer>()
+const STATIC_GZIP_CACHE_MAX = 128
+const getCachedGzip = async (cacheKey: string, body: Buffer) => {
+  const cached = staticGzipCache.get(cacheKey)
+  if (cached) {
+    // LRU 触达：删除后重插到队尾。
+    staticGzipCache.delete(cacheKey)
+    staticGzipCache.set(cacheKey, cached)
+    return cached
+  }
+  const compressed = await gzipAsync(body)
+  staticGzipCache.set(cacheKey, compressed)
+  if (staticGzipCache.size > STATIC_GZIP_CACHE_MAX) {
+    const oldestKey = staticGzipCache.keys().next().value
+    if (oldestKey !== undefined) staticGzipCache.delete(oldestKey)
+  }
+  return compressed
+}
+
 // 可压缩的文本类资源(JS/CSS/JSON/SVG 等)。
 const isCompressibleType = (contentType: string) =>
   /^(?:text\/|application\/(?:javascript|json|manifest\+json|xml)|image\/svg\+xml)/i.test(contentType)
@@ -248,9 +274,12 @@ const serveStaticFile = async (req: any, res: any, filePath: string, isHtml: boo
   const contentType = isHtml ? 'text/html; charset=utf-8' : getContentTypeByFilePath(filePath)
   res.setHeader('Content-Type', contentType)
   res.setHeader('Cache-Control', resolveStaticCacheControl(filePath, isHtml))
-  res.setHeader('Vary', 'Accept-Encoding')
+  // 同时随 Origin(CORS)与 Accept-Encoding(gzip)变化：不要覆盖掉 applyCorsHeaders 写入的 Origin。
+  res.setHeader('Vary', 'Origin, Accept-Encoding')
 
   let body: Buffer
+  // 非 html 资源用 path:mtime:size 作为 gzip 缓存键；html 注入运行时配置后内容多变，不缓存压缩结果。
+  let gzipCacheKey = ''
   if (isHtml) {
     // html 注入运行时配置后内容与文件不同 → 不下 ETag，始终重验证。
     const raw = await fs.readFile(filePath)
@@ -265,11 +294,12 @@ const serveStaticFile = async (req: any, res: any, filePath: string, isHtml: boo
       return
     }
     body = await fs.readFile(filePath)
+    gzipCacheKey = `${filePath}:${Math.round(stat.mtimeMs)}:${stat.size}`
   }
 
-  // 可压缩 + 客户端支持 + 够大 → gzip(减少传输体积)。
+  // 可压缩 + 客户端支持 + 够大 → gzip(减少传输体积)；非 html 走压缩结果缓存，避免每次重压。
   if (isCompressibleType(contentType) && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || '')) && body.length > 1024) {
-    body = await gzipAsync(body)
+    body = gzipCacheKey ? await getCachedGzip(gzipCacheKey, body) : await gzipAsync(body)
     res.setHeader('Content-Encoding', 'gzip')
   }
   res.statusCode = 200
@@ -295,8 +325,8 @@ const handleStaticRequest = async (req: any, res: any, requestPath: string) => {
   // 拼接静态资源目标文件。
   const candidateFilePath = path.resolve(staticDistDir, `.${normalizedPath}`)
 
-  // 若目标文件不在静态目录内，则直接拒绝。
-  if (!candidateFilePath.startsWith(staticDistDir)) {
+  // 若目标文件不在静态目录内，则直接拒绝(带分隔符边界，防穿越)。
+  if (candidateFilePath !== staticDistDir && !candidateFilePath.startsWith(staticDistDir + path.sep)) {
     return false
   }
 
@@ -677,12 +707,18 @@ server.listen(serverPort, '0.0.0.0', () => {
     void bootstrapTaskResume()
   }, 8000)
 
-  // 运行时健康监控：每 60s 检查本地在途任务数 / SSE 订阅总数，异常增长(疑似泄漏)时告警。
+  // 运行时健康监控：每 60s 检查本地在途任务数 / SSE 订阅总数 / 事件重放缓存条数，
+  // 异常增长(疑似泄漏)时告警。重放缓存此前不在监控内，是内存泄漏的盲区。
   const runtimeMonitor = setInterval(() => {
     const taskCount = getLocalRunningTaskCount()
     const sseCount = getTaskStreamSubscriberTotal()
-    if (taskCount > 100 || sseCount > 200) {
-      writeScopedLog('warn', '服务端', '运行时资源偏高(疑似泄漏)', { runningTasks: taskCount, sseSubscribers: sseCount })
+    const replayStats = getReplayStoreStats()
+    if (taskCount > 100 || sseCount > 200 || replayStats.trackedRecords > 4000) {
+      writeScopedLog('warn', '服务端', '运行时资源偏高(疑似泄漏)', {
+        runningTasks: taskCount,
+        sseSubscribers: sseCount,
+        replayTrackedRecords: replayStats.trackedRecords,
+      })
     }
   }, 60000)
   runtimeMonitor.unref?.()

@@ -18,34 +18,43 @@ export const consumeFixedWindowRateLimit = async (input: {
   identifier: string
   limit?: number
   windowSeconds?: number
+  // 当 Redis 已启用但暂时不可达时，是否"拒绝"(fail-closed)。
+  // 登录/验证码等安全敏感场景应设 true：宁可短暂拒绝，也不要在 Redis 抖动时放开爆破/盗刷限流。
+  // 默认 false：Redis 未启用(单实例)时一律放行，不影响可用性。
+  failClosedOnUnavailable?: boolean
 }): Promise<RedisRateLimitResult> => {
   const limit = input.limit || REDIS_CONFIG.taskSubmitRateLimit
   const windowSeconds = input.windowSeconds || REDIS_CONFIG.rateLimitWindowSeconds
   const key = redisKeys.rateLimit(input.scope, input.identifier)
 
+  const allowResult: RedisRateLimitResult = {
+    allowed: true,
+    key,
+    limit,
+    currentCount: 1,
+    remaining: Math.max(limit - 1, 0),
+    retryAfterSeconds: 0,
+    windowSeconds,
+  }
+
+  // Redis 未启用 = 有意的单实例部署，限流降级放行。
   if (!isRedisEnabled()) {
-    return {
-      allowed: true,
-      key,
-      limit,
-      currentCount: 1,
-      remaining: Math.max(limit - 1, 0),
-      retryAfterSeconds: 0,
-      windowSeconds,
-    }
+    return allowResult
   }
 
   const client = await getRedisClient()
   if (!client) {
-    return {
-      allowed: true,
-      key,
-      limit,
-      currentCount: 1,
-      remaining: Math.max(limit - 1, 0),
-      retryAfterSeconds: 0,
-      windowSeconds,
+    // Redis 启用但不可达：安全敏感场景 fail-closed(拒绝)，其余沿用放行。
+    if (input.failClosedOnUnavailable) {
+      return {
+        ...allowResult,
+        allowed: false,
+        currentCount: limit + 1,
+        remaining: 0,
+        retryAfterSeconds: windowSeconds,
+      }
     }
+    return allowResult
   }
 
   const result = await client.eval(

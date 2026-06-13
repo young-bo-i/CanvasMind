@@ -1,7 +1,7 @@
 <template>
   <div class="discover-masonry-viewport">
-    <!-- 空状态提示 -->
-    <div v-if="!feedItems.length" class="discover-empty">
+    <!-- 空状态提示（无作品或搜索无结果） -->
+    <div v-if="!displayedFeedItems.length" class="discover-empty">
       <p class="discover-empty__text">{{ emptyText }}</p>
     </div>
     <div
@@ -102,7 +102,7 @@
 
       <!-- Feed：位置由图片 natural 尺寸换算高度 + 最短列堆叠 -->
       <div
-        v-for="(item, index) in feedItems"
+        v-for="({ item, originalIndex }, index) in displayedFeedItems"
         :key="item.id || item.src"
         class="masonry-layout-item-J63wqA masonry-layout-item"
         :data-index="index + 1"
@@ -127,7 +127,7 @@
                   muted
                   playsinline
                   preload="metadata"
-                  @loadedmetadata="onFeedVideoLoad($event, index)"
+                  @loadedmetadata="onFeedVideoLoad($event, originalIndex)"
                 ></video>
                 <img
                   v-else
@@ -139,8 +139,8 @@
                   ccfmp-element="true"
                   :src="item.src"
                   :alt="item.alt"
-                  @load="onFeedImgLoad($event, index)"
-                  @error="onFeedImgError(index)"
+                  @load="onFeedImgLoad($event, originalIndex)"
+                  @error="onFeedImgError(originalIndex)"
                 >
                 <!-- 视频角标 -->
                 <span v-if="item.isVideo" class="discover-feed-video-badge" aria-hidden="true">
@@ -218,8 +218,10 @@ import discoverContent from '@/data/homeDiscoverContent.json'
 const emit = defineEmits(['open-work-detail'])
 
 // filterType：all=全部 / image=仅图片 / video=仅视频（由 TabsSection 的当前 tab 决定）
+// searchKeyword：首页搜索框关键词，按标题/提示词在已加载作品中本地过滤
 const props = defineProps({
   filterType: { type: String, default: 'all' },
+  searchKeyword: { type: String, default: '' },
 })
 
 const authStore = useAuthStore()
@@ -331,8 +333,24 @@ function formatFavoriteCount(count) {
 
 const feedItems = ref([])
 
-// 空状态文案（按当前筛选类型）
+// 按搜索关键词在已加载作品中本地过滤（匹配标题/alt 或提示词，忽略大小写）；
+// 保留 originalIndex 以便复用按 feedItems 下标缓存的自然尺寸。
+const displayedFeedItems = computed(() => {
+  const keyword = String(props.searchKeyword || '').trim().toLowerCase()
+  const withIndex = feedItems.value.map((item, originalIndex) => ({ item, originalIndex }))
+  if (!keyword) return withIndex
+  return withIndex.filter(({ item }) => {
+    const title = String(item.alt || '').toLowerCase()
+    const prompt = String(item.promptText || '').toLowerCase()
+    return title.includes(keyword) || prompt.includes(keyword)
+  })
+})
+
+// 空状态文案（按当前筛选类型，搜索无结果时单独提示）
 const emptyText = computed(() => {
+  if (feedItems.value.length && String(props.searchKeyword || '').trim()) {
+    return '没有找到匹配的作品，换个关键词试试～'
+  }
   if (props.filterType === 'image') return '还没有图片作品，去生成你的第一张图片吧～'
   if (props.filterType === 'video') return '还没有视频作品，去生成你的第一个视频吧～'
   return '还没有作品，去创作你的第一个作品吧～'
@@ -345,8 +363,11 @@ const feedNaturalSizes = ref(
 )
 
 // 瀑布流布局优先使用真实尺寸，失败或未加载时再回退到数据自带的比例提示。
+// 自然尺寸缓存按 feedItems 原始下标存取，过滤后用 originalIndex 取回。
 const feedDisplaySizes = computed(() =>
-  feedItems.value.map((item, index) => feedNaturalSizes.value[index] || item.layoutSize || null),
+  displayedFeedItems.value.map(({ item, originalIndex }) => (
+    feedNaturalSizes.value[originalIndex] || item.layoutSize || null
+  )),
 )
 
 watch(
@@ -565,8 +586,9 @@ const goToSlide = (index) => {
 }
 
 function openWorkDetailFromFeed(item, index) {
+  // 画廊与 index 都基于当前展示（过滤后）列表，保证弹层上下切换停留在搜索结果内。
   emitOpenWorkDetail({
-    gallery: feedItems.value.map((it) => ({
+    gallery: displayedFeedItems.value.map(({ item: it }) => ({
       id: it.id,
       imageSrc: it.src,
       isVideo: Boolean(it.isVideo),

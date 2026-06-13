@@ -2,7 +2,7 @@ import type { AgentWorkspaceEvent } from '../../src/shared/agent-workspace'
 import type { GenerationTaskStreamEvent, GenerationTaskFailureCode } from './shared'
 import { appendSharedTaskRecentEvent, setSharedTaskSnapshot } from './runtime-store'
 import { emitDistributedTaskStreamEvent } from './event-bus'
-import { allocateEventId, recordReplayEvent } from './task-event-replay'
+import { allocateEventId, recordReplayEvent, scheduleReplayCleanup } from './task-event-replay'
 
 type TaskEventLogger = (stage: string, error: unknown, detail: Record<string, unknown>) => void
 
@@ -31,15 +31,24 @@ export const emitTaskStreamEvent = (
     })
   }
 
-  void appendSharedTaskRecentEvent(recordId, event).catch((error) => {
-    context.logGenerationTaskError('task_recent_event_cache_failed', error, {
-      recordId,
-      eventType: event.type,
-      stage: event.stage || null,
+  // content_delta / thinking_delta 是逐 token 的高频事件，不代表阶段变化。
+  // 跳过它们的"最近事件摘要"GET+SET 读改写，避免一条长 LLM 回复产生数百次多命令 Redis 往返。
+  if (event.type !== 'content_delta' && event.type !== 'thinking_delta') {
+    void appendSharedTaskRecentEvent(recordId, event).catch((error) => {
+      context.logGenerationTaskError('task_recent_event_cache_failed', error, {
+        recordId,
+        eventType: event.type,
+        stage: event.stage || null,
+      })
     })
-  })
+  }
 
   emitDistributedTaskStreamEvent(recordId, event)
+
+  // 终态事件：安排延迟清理本地重放缓存，修复"每个任务永久驻留 ~100 条事件"的内存泄漏。
+  if (event.done === true) {
+    scheduleReplayCleanup(recordId)
+  }
 }
 
 export const emitTaskProgressEvent = (
