@@ -51,6 +51,8 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
         hasRequestBody: Boolean(payload?.requestBody),
       }
       const data = await startGenerationTask(payload, currentUser.id)
+      // 生成任务提交通常会预扣积分：提示前端刷新会员积分余额(徽标实时更新)。
+      res.setHeader('x-marketing-points-updated', '1')
       sendJson(res, 200, { data })
       return
     }
@@ -74,6 +76,8 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
 
     if (req.method === 'POST' && requestUrl === `${GENERATION_TASKS_BASE_PATH}/${encodeURIComponent(taskId)}/stop`) {
       const data = await stopGenerationTask(taskId, currentUser.id)
+      // 停止可能触发退款：提示前端刷新积分余额。
+      res.setHeader('x-marketing-points-updated', '1')
       sendJson(res, 200, { data })
       return
     }
@@ -81,6 +85,8 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
     // 视频超时/失败后手动「重新查询」：复用续询机制再查一次上游。
     if (req.method === 'POST' && requestUrl === `${GENERATION_TASKS_BASE_PATH}/${encodeURIComponent(taskId)}/requery`) {
       const data = await requeryVideoGenerationTask(taskId, currentUser.id)
+      // 续询可能触发退款/补扣：提示前端刷新积分余额。
+      res.setHeader('x-marketing-points-updated', '1')
       sendJson(res, 200, { data })
       return
     }

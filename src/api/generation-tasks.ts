@@ -5,6 +5,15 @@ import { consumeSseStream, type SseMessage } from '@/utils/sse'
 import type { GenerationTaskStreamEventBase } from '@/shared/generation-task-stream'
 import type { ResearchTaskConfig } from '@/shared/research/research-types'
 import { resolveRequestModelKey, resolveRequestProviderId } from '@/config/models'
+import { MARKETING_POINTS_UPDATED_EVENT } from '@/stores/marketing-center'
+
+// 触发会员积分余额刷新：生成任务会改变积分(预扣/结算/退款)，让首页徽标实时更新。
+const notifyMarketingPointsUpdated = (response?: Response) => {
+  if (typeof window === 'undefined') return
+  // 带响应时仅在服务端标记 x-marketing-points-updated 时刷新；无响应(SSE 终态)直接刷新。
+  if (response && response.headers.get('x-marketing-points-updated') !== '1') return
+  window.dispatchEvent(new CustomEvent(MARKETING_POINTS_UPDATED_EVENT))
+}
 
 // 重新导出失败码，便于业务代码 import { GenerationTaskFailureCode } from '@/api/generation-tasks'
 export type { GenerationTaskFailureCode } from '@/shared/generation-task-stream'
@@ -83,6 +92,7 @@ export const createGenerationTask = async (payload: GenerationTaskStartPayload, 
     body: JSON.stringify(payload),
   })
 
+  notifyMarketingPointsUpdated(response)
   return readApiData<PersistedGenerationRecord>(response, {
     showErrorMessage: true,
   })
@@ -110,6 +120,7 @@ export const stopGenerationTask = async (taskId: string, options: RequestOptions
     },
   })
 
+  notifyMarketingPointsUpdated(response)
   return readApiData<PersistedGenerationRecord>(response, {
     showErrorMessage: true,
   })
@@ -126,6 +137,7 @@ export const requeryVideoGenerationTask = async (taskId: string, options: Reques
     },
   })
 
+  notifyMarketingPointsUpdated(response)
   return readApiData<PersistedGenerationRecord>(response, {
     showErrorMessage: true,
   })
@@ -218,6 +230,8 @@ export const subscribeGenerationTaskEvents = async (
           options.onEvent(parsed as GenerationTaskStreamEvent)
           if (TERMINAL_EVENT_TYPES.has(normalizedEventType)) {
             terminated = true
+            // 任务终态可能发生结算补扣(对话按量)或失败退款：刷新会员积分徽标。
+            notifyMarketingPointsUpdated()
           }
         } catch {
           // 忽略解析失败的事件消息。
