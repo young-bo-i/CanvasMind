@@ -2323,7 +2323,8 @@ onMounted(async () => {
   color: #ff5a5f;
 }
 
-@media (max-width: 1360px) and (min-width: 961px) {
+/* 断点对齐到 1366px 笔记本档，与会话列表保持一致；当前用户列表已改用 .admin-user-card 卡片网格，下列 .admin-user-table / .admin-user-row 选择器为历史遗留样式，未在模板中渲染。 */
+@media (max-width: 1366px) and (min-width: 961px) {
   .admin-user-table__head,
   .admin-user-row {
     grid-template-columns: minmax(300px, 1fr) 144px minmax(210px, 0.8fr) minmax(180px, 0.7fr);

@@ -389,8 +389,9 @@
 
 .research-search-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 30px;
+  /* 自适应列数:按可用宽度排布,窄屏自动减少列,不再写死 4 列。 */
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
   scroll-margin-top: 20px;
   transition: box-shadow 0.24s ease, background-color 0.24s ease;
 }
@@ -1262,7 +1263,8 @@
   }
 
   .research-search-grid {
-    flex-direction: column;
+    /* 这是 grid 容器,flex-direction 无效;窄屏改为单列。 */
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .research-search-card {

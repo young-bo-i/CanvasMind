@@ -76,7 +76,8 @@ const handlePromptSend = (message, type) => {
 
 <template>
   <div class="image-editor-container">
-    <div class="workbench" :class="{ 'right-panel-open': rightPanelOpen }" :style="{ '--right-panel-width': '440px' }">
+    <!-- --right-panel-width 改由 canvas.css 定义并按视口收敛(440/380/320),不再内联写死,否则会覆盖媒体查询。 -->
+    <div class="workbench" :class="{ 'right-panel-open': rightPanelOpen }">
       <div class="workbench-main-content">
         <div class="workbench-content">
           <!-- 顶部栏 -->

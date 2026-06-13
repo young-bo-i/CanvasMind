@@ -34,7 +34,8 @@ function resolveResponsiveColumnCount(trackWidth: number): number {
   if (trackWidth < 520) columns = 2
   else if (trackWidth < 900) columns = 3
   else if (trackWidth < 1280) columns = 4
-  else columns = 5
+  else if (trackWidth < 1760) columns = 5
+  else columns = 6 // 超宽屏启用第 6 列(此前 clamp 到 6 但分支永不产出 6,是死代码)
   return Math.max(2, Math.min(6, columns))
 }
 
@@ -42,7 +43,7 @@ function resolveResponsiveColumnCount(trackWidth: number): number {
  * 根据轨道宽度算列宽、列起点与顶部大卡占位（大卡占左两列，比例接近 660×248）。
  * 列数随屏宽自适应（移动端 2 列、桌面最多 5 列），不再固定 5 列。
  */
-export function computeMasonryMetrics(trackWidth: number, columnGap = 2): MasonryMetrics {
+export function computeMasonryMetrics(trackWidth: number, columnGap = 6): MasonryMetrics {
   const tw = Math.max(320, Math.floor(trackWidth || DEFAULT_TRACK))
   const columnCount = resolveResponsiveColumnCount(tw)
   const colWidth = Math.max(1, Math.floor((tw - (columnCount - 1) * columnGap) / columnCount))

@@ -159,7 +159,8 @@ onUnmounted(() => {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
-  min-width: 520px;
+  min-width: min(520px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   background: var(--bg-float, #1a1a1a);
   border: 1px solid var(--stroke-tertiary, rgba(255, 255, 255, 0.08));
   border-radius: 16px;

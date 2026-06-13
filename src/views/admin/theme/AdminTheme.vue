@@ -754,8 +754,9 @@ onMounted(() => {
 .admin-theme-page {
   display: grid;
   gap: 16px;
-  height: calc(100vh - 148px);
-  min-height: 860px;
+  height: calc(100dvh - 148px);
+  /* 移除固定 860px 下限：在 ≤800px 高度的笔记本上会被裁切，祖先容器 .admin-main 已有 overflow-y:auto 负责滚动。 */
+  min-height: auto;
   overflow: hidden;
 }
 

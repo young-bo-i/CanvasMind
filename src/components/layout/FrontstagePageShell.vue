@@ -70,6 +70,7 @@ const layoutModeClass = computed(() => (isTopMenuLayout.value ? 'top' : 'side'))
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .frontstage-page-shell[data-layout-mode='top'] :deep(.content-wrapper-cF1zaN),

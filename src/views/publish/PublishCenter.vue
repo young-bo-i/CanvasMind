@@ -1107,12 +1107,22 @@ onMounted(async () => {
 /* 两栏布局 */
 .content-layout {
   display: grid;
-  grid-template-columns: minmax(400px, 480px) minmax(500px, 1fr);
+  grid-template-columns: minmax(320px, 420px) minmax(380px, 1fr);
   gap: 24px;
   align-items: start;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1280px) {
+  .publish-center {
+    padding: 16px;
+  }
+
+  .publish-content {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 1024px) {
   .content-layout {
     grid-template-columns: 1fr;
   }
@@ -1886,7 +1896,7 @@ onMounted(async () => {
 .modal-content {
   width: 90%;
   max-width: 600px;
-  max-height: 80vh;
+  max-height: 80dvh;
   background: var(--canvas-float-block-default);
   backdrop-filter: blur(var(--canvas-float-backdrop-blur));
   -webkit-backdrop-filter: blur(var(--canvas-float-backdrop-blur));

@@ -22,7 +22,17 @@
     --right-panel-width: 440px;
 }
 
+/* 右侧属性面板宽度随视口收敛:笔记本/窄屏不再被固定 440px 挤压画布。 */
+@media (max-width: 1366px) {
+    .workbench { --right-panel-width: 380px; }
+}
+@media (max-width: 1024px) {
+    .workbench { --right-panel-width: 320px; }
+}
+
 .workbench-main-content {
+    /* 作为底部生成器浮层的定位上下文(其宽度已随面板开合在 100% 与 calc(100% - 面板) 间切换)。 */
+    position: relative;
     transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     width: calc(100% - var(--right-panel-width));
     will-change: width;
@@ -459,19 +469,20 @@
     --content-generator-max-width: var(--content-generator-min-width);
 }
 
-/* ContentGenerator 在画布页面的定位 */
-/*.canvas-content-generator {*/
-/*    position: absolute;*/
-/*    bottom: 12px;*/
-/*    left: 50%;*/
-/*    transform: translateX(-50%);*/
-/*    z-index: 1000000;*/
-/*    pointer-events: auto;*/
-/*    box-sizing: border-box;*/
-/*    width: 100%;*/
-/*    max-width: clamp(440px, 100% - 376px, 840px);*/
-/*    min-width: 440px;*/
-/*}*/
+/* ContentGenerator 在画布页面的定位:相对已随面板开合收缩的 .workbench-main-content 居中浮动。
+ * 用 max-width clamp 在剩余画布内自适应,去掉原 440px 硬下限(窄屏会溢出),改 min-width:0 可收缩。 */
+.canvas-content-generator {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000000;
+    pointer-events: auto;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: clamp(320px, calc(100% - 48px), 840px);
+    min-width: 0;
+}
 
 /* 右侧面板关闭时主内容区宽度调整 */
 .workbench:not(.right-panel-open) .workbench-main-content {

@@ -1576,7 +1576,8 @@ onUnmounted(() => {
 .dimension-layout-FUl4Nj .default-layout-eH8Zi1 {
   margin: 0 auto;
   max-width: 924px;
-  min-width: 622px;
+  /* 改用 min(622px,100%) 让创作器在窄画布/分屏可收缩,不再以固定 622px 硬下限溢出。 */
+  min-width: min(622px, 100%);
   /*position: sticky;*/
   width: 100%;
 }

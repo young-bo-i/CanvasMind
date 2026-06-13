@@ -302,7 +302,8 @@ onUnmounted(() => {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
-  min-width: 480px;
+  min-width: min(480px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   background: var(--bg-float, #1a1a1a);
   border: 1px solid var(--stroke-tertiary, rgba(255, 255, 255, 0.08));
   border-radius: 16px;
@@ -332,6 +333,7 @@ onUnmounted(() => {
 /* 比例网格 */
 .ratio-grid {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   background: var(--bg-block-primary-default, rgba(255, 255, 255, 0.04));
   border-radius: 12px;

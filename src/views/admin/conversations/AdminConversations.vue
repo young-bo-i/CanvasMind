@@ -1386,7 +1386,7 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 1280px) and (min-width: 961px) {
+@media (max-width: 1366px) and (min-width: 961px) {
   .admin-conversation-table__head,
   .admin-conversation-row {
     grid-template-columns: minmax(280px, 1fr) 116px minmax(180px, 0.65fr) 172px;

@@ -138,14 +138,15 @@
     margin-top: 0;
 } 
 
-.entryContainer-fe9 .image-s9z .row-zep .image-qvw  { 
+.entryContainer-fe9 .image-s9z .row-zep .image-qvw  {
     display: grid;
-    grid-template-columns: repeat(10, 1fr);
+    /* 自适应列数:按可用宽度排布,缩略图保持合理尺寸,不再写死 10 列(1366 笔记本会压到 ~125px)。 */
+    grid-template-columns: repeat(auto-fill, minmax(clamp(96px, 12vw, 148px), 1fr));
     gap: 3px;
-    height: 100%; 
+    height: 100%;
     /*margin: 0 auto; */
     width: min(1568px, 100%);
-} 
+}
 
 .entryContainer-fe9 .image-s9z .row-zep .image-qvw > .image-bqm { 
     box-sizing: border-box; 
@@ -316,21 +317,16 @@ img {
 } 
 
 /* Canvas Tab */
-.canvasEntryContainer-dp8 { 
-    height: 100%; 
-    --canvas-entry-template-columns: repeat(6,1fr); 
-    display: flex; 
-    flex-direction: column; 
+.canvasEntryContainer-dp8 {
+    height: 100%;
+    /* 自适应列数:按可用宽度排布,超宽屏自动更多列、笔记本自动减少,不再写死 6 列。 */
+    --canvas-entry-template-columns: repeat(auto-fill, minmax(clamp(150px, 16vw, 240px), 1fr));
+    display: flex;
+    flex-direction: column;
     margin: auto;
     min-height: 0;
     width: 100%;
-} 
-
-@media (min-width: 1921px) and (max-width: 2560px){ 
-  .canvasEntryContainer-dp8 { 
-    --canvas-entry-template-columns: repeat(6,1fr);
-  } 
-}     
+}
 
 .canvasEntryContainer-dp8 .canvasWrapper-ysg  { 
     box-sizing: border-box; 
@@ -435,9 +431,10 @@ img {
 } 
 
 /* Story Tab */
-.storyEntryContainer-9vj { 
-    --canvas-entry-template-columns: repeat(4,1fr); 
-    display: flex; 
+.storyEntryContainer-9vj {
+    /* 自适应列数:故事卡较宽,按可用宽度排布而非写死 4 列。 */
+    --canvas-entry-template-columns: repeat(auto-fill, minmax(clamp(220px, 22vw, 320px), 1fr));
+    display: flex;
     flex-direction: column; 
     height: 100%; 
     margin: auto;

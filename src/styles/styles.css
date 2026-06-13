@@ -2,6 +2,29 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
+/* ============================================================
+ * 响应式断点 / 尺寸 token 单一事实来源
+ * 取代此前散落全 src 的 24+ 个互不统一的硬编码断点。
+ * - @theme 内的 --breakpoint-* 既驱动 Tailwind 的 nb:/3xl: 工具类，又生成同名 CSS 变量。
+ * - 标准档:sm 640 / md 768 / lg 1024 / xl 1280(Tailwind 默认),额外补 nb 1366(主力笔记本带) / 3xl 1920(超宽屏)。
+ * - 媒体查询内不能用 var(),手写 @media 统一对齐到这几个标准档(尤以 1366 笔记本、800/720 矮屏)。
+ * ============================================================ */
+@theme {
+  --breakpoint-nb: 1366px;
+  --breakpoint-3xl: 1920px;
+}
+
+:root {
+  /* 全站版心上限,网格/头部统一引用,避免超宽屏稀疏。 */
+  --content-max: 1680px;
+  /* 流式网格卡最小宽,配合 repeat(auto-fill, minmax(var(--grid-card-min),1fr)) 替代固定列数。 */
+  --grid-card-min: 160px;
+  /* 流式排版 token,替换固定 px 字号(密度随视口缩放)。 */
+  --fs-title: clamp(20px, 1.2vw + 12px, 28px);
+  --fs-body: clamp(13px, 0.3vw + 12px, 15px);
+  --space-section: clamp(16px, 2vw, 40px);
+}
+
 @font-face {
     font-display: swap;
     font-family: Montserrat;
@@ -1718,14 +1741,14 @@ body,html {
         }
 
         #csr-root {
-            height: 100vh;
+            height: 100dvh;
             overflow-x: hidden;
             overflow-y: auto;
             width: 100vw
         }
 
         .global-dreamina-container {
-            height: 100vh;
+            height: 100dvh;
             min-height: 665px;
             min-width: 810px;
             overflow: hidden;
@@ -3329,7 +3352,7 @@ body,html {
         .scroll-content-DaYLnh {
             margin: 0 auto;
             max-width: 2028px;
-            min-height: 100vh;
+            min-height: 100dvh;
         }
 
         .scroll-content-DaYLnh .lv-tabs-header-extra {
@@ -3352,7 +3375,7 @@ body,html {
         }
 
         .section-tab-maWQnS {
-            min-height: 100vh
+            min-height: 100dvh
         }
 
         .section-tab-maWQnS .lv-tabs-header-title-text {
@@ -6866,7 +6889,8 @@ body,html {
         .default-layout-bOIxyJ,.task-indicator-container-flqXza {
             margin: 0 auto;
             max-width: 924px;
-            min-width: 622px;
+            /* 可收缩下限,避免窄屏溢出。 */
+            min-width: min(622px, 100%);
             position: sticky;
             width: 100%
         }

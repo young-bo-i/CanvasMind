@@ -42,7 +42,7 @@ body.publish-artwork-modal-scroll-lock {
 .publish-modal-wrapper .lv-modal {
   background-color: var(--background-panel, #1c1c21);
   border: 0.5px solid var(--line-2, rgba(255, 255, 255, 0.12));
-  width: 800px;
+  width: min(800px, calc(100vw - 32px));
   border-radius: 16px;
   overflow: hidden;
 }
@@ -52,10 +52,10 @@ body.publish-artwork-modal-scroll-lock {
   border-radius: 16px;
   display: flex;
   flex-direction: column;
-  max-height: 684px;
+  max-height: min(calc(100vh - 32px), 684px);
   min-height: 516px;
   overflow: hidden;
-  width: 800px;
+  width: min(800px, calc(100vw - 32px));
 }
 
 .publish-modal-wrapper .content-container-sNJbeH {
@@ -80,10 +80,10 @@ body.publish-artwork-modal-scroll-lock {
   border-radius: 16px;
   display: flex;
   flex-direction: column;
-  max-height: 684px;
+  max-height: min(calc(100vh - 32px), 684px);
   min-height: 516px;
   overflow: hidden;
-  width: 800px;
+  width: min(800px, calc(100vw - 32px));
 }
 
 .publish-header-uieubt {
@@ -197,7 +197,7 @@ body.publish-artwork-modal-scroll-lock {
   flex: 1 1;
   flex-direction: column;
   gap: 16px;
-  max-height: 500px;
+  max-height: min(500px, calc(100vh - 184px));
   overflow-x: hidden;
   overflow-y: auto;
   padding-right: 16px;

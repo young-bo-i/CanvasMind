@@ -29,7 +29,7 @@
 .entry-erESAd {
     display: flex;
     flex-direction: row;
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     position: relative;
     width: 100%
@@ -53,13 +53,6 @@
     width: 100%
 }
 
-@media screen and (max-height: 799px) {
-    
-}
-
-@media screen and (max-height: 719px) {
-    
-}
 
 .platform-ui-service-side-drawer-container {
     overflow-x: hidden
@@ -209,14 +202,14 @@
 }
 
 #csr-root {
-    height: 100vh;
+    height: 100dvh;
     overflow-x: hidden;
     overflow-y: auto;
     width: 100vw
 }
 
 .global-dreamina-container {
-    height: 100vh;
+    height: 100dvh;
     min-height: 665px;
     min-width: 810px;
     overflow: hidden;
@@ -1389,7 +1382,7 @@
 }
 
 .entry-lav5_s {
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     position: relative;
     width: 100%
