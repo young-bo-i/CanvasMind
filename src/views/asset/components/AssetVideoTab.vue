@@ -97,6 +97,7 @@
                                 controls
                                 playsinline
                                 preload="metadata"
+                                @loadedmetadata="renderVideoFirstFrame"
                               ></video>
                             </div>
                           </div>
@@ -135,4 +136,18 @@ const emit = defineEmits<{
   'enter-batch-mode': []
   'edit-in-capcut': []
 }>()
+
+// 无封面图时:metadata 预加载只拿到时长不会绘制画面(显示纯黑)。
+// 跳到 ~0.1s 触发浏览器解码并绘制首帧,作为视频缩略图。
+const renderVideoFirstFrame = (event: Event) => {
+  const el = event.target as HTMLVideoElement | null
+  if (!el || el.poster) return
+  if (el.currentTime > 0) return
+  const seekTo = Math.min(0.1, (Number.isFinite(el.duration) ? el.duration : 1) / 2)
+  try {
+    el.currentTime = seekTo
+  } catch {
+    // 忽略:个别浏览器/格式不支持精确 seek 时维持原样。
+  }
+}
 </script>
