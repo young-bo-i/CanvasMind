@@ -495,30 +495,51 @@
             </div>
           </template>
 
-          <!-- 图片(按次) / 视频(按秒 或 按次,二选一)：单一单价 -->
+          <!-- 图片(按张单价) / 视频(按秒|按次 × 分辨率) -->
           <div v-else class="admin-form__field">
-            <!-- 视频:先选计费模式(按秒 / 按次),二选一 -->
+            <!-- 视频:计费模式 + 按分辨率分别启用与定价 -->
             <template v-if="modelForm.category === 'VIDEO'">
               <label class="admin-form__label">视频计费模式</label>
-              <select v-model="modelForm.videoBillingMode" class="admin-input" style="margin-bottom:8px">
+              <select v-model="modelForm.videoBillingMode" class="admin-input" style="margin-bottom:10px">
                 <option value="per_second">按秒计费(单价 × 时长)</option>
                 <option value="per_count">按次计费(每次固定积分)</option>
               </select>
+              <label class="admin-form__label">支持的分辨率与单价</label>
+              <div
+                  v-for="res in VIDEO_RESOLUTION_KEYS"
+                  :key="res"
+                  style="display:flex;align-items:center;gap:10px;margin-bottom:6px"
+              >
+                <label style="display:inline-flex;align-items:center;gap:6px;min-width:96px;cursor:pointer">
+                  <input type="checkbox" v-model="modelForm.videoResolutions[res].enabled"> {{ res }}
+                </label>
+                <input
+                    v-model.number="modelForm.videoResolutions[res].price"
+                    class="admin-input"
+                    type="number" min="0" step="0.01"
+                    :disabled="!modelForm.videoResolutions[res].enabled"
+                    placeholder="单价"
+                    style="flex:1;min-width:0">
+                <span style="white-space:nowrap;color:var(--text-secondary,#909399);font-size:12px">
+                  {{ modelForm.videoBillingMode === 'per_count' ? '积分 / 次' : '积分 / 秒' }}
+                </span>
+              </div>
+              <div class="admin-form__hint">
+                勾选该模型支持的分辨率并分别设置单价(支持小数)；未勾选的分辨率用户端不可选。
+                {{ modelForm.videoBillingMode === 'per_count' ? '扣费 = 所选分辨率单价(每次固定,与时长无关)。' : '扣费 = 所选分辨率单价 × 时长(秒)。' }}
+              </div>
             </template>
-            <label class="admin-form__label" for="model-billing-power">计费规则</label>
-            <div class="admin-composite-input">
-              <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="请输入模型计费">
-              <span class="admin-composite-input__suffix">{{ billingUnitSuffix }}</span>
-            </div>
-            <div v-if="modelForm.category === 'VIDEO' && modelForm.videoBillingMode === 'per_second'" class="admin-form__hint">
-              视频按秒计费：此处填「每秒消耗积分」，实际扣费 = 单价 × 时长(秒)。例如填 10，生成 5 秒视频扣 50 积分。
-            </div>
-            <div v-else-if="modelForm.category === 'VIDEO'" class="admin-form__hint">
-              视频按次计费：此处填「每次消耗积分」，与时长无关。例如填 50，无论几秒每次都扣 50 积分。
-            </div>
-            <div v-else-if="modelForm.category === 'IMAGE'" class="admin-form__hint">
-              图片按张计费：此处填「每张消耗积分」，一次生成 N 张扣 N 份（N 受下方「单次最大出图张数」限制）。
-            </div>
+            <!-- 图片:单一「每张」单价 -->
+            <template v-else>
+              <label class="admin-form__label" for="model-billing-power">计费规则</label>
+              <div class="admin-composite-input">
+                <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="请输入模型计费">
+                <span class="admin-composite-input__suffix">{{ billingUnitSuffix }}</span>
+              </div>
+              <div class="admin-form__hint">
+                图片按张计费：此处填「每张消耗积分」，一次生成 N 张扣 N 份（N 受下方「单次最大出图张数」限制）。
+              </div>
+            </template>
           </div>
 
           <div class="admin-form__field">
@@ -642,6 +663,9 @@ import {
   type AdminProviderModelItem,
   type AdminProviderModelPayload,
 } from '@/api/admin-models'
+
+// 视频可配置的分辨率档位(与后端 normalizeVideoResolution 规范键一致)。
+const VIDEO_RESOLUTION_KEYS = ['480P', '720P', '1080P'] as const
 
 const providerTypeOptions = [
   { label: 'LLM', value: 'CHAT' },
@@ -769,6 +793,12 @@ const modelForm = reactive({
   billingPower: 0,
   // 视频计费模式:按秒(per_second) / 按次(per_count)。二选一,缺省按秒。
   videoBillingMode: 'per_second' as 'per_second' | 'per_count',
+  // 视频:各分辨率是否支持 + 单价(勾选 enabled 的分辨率才写入 billingRule.videoResolutionPrices)。
+  videoResolutions: {
+    '480P': { enabled: false, price: 0 },
+    '720P': { enabled: true, price: 0 },
+    '1080P': { enabled: false, price: 0 },
+  } as Record<string, { enabled: boolean; price: number }>,
   billingTokens: 1000,
   // 对话(CHAT)按 token 分档单价（积分 / 1k token）。IMAGE/VIDEO 不用。
   inputPrice1k: 0,
@@ -927,6 +957,11 @@ const resetModelForm = () => {
   modelForm.defaultParamsJsonText = ''
   modelForm.billingPower = 0
   modelForm.videoBillingMode = 'per_second'
+  modelForm.videoResolutions = {
+    '480P': { enabled: false, price: 0 },
+    '720P': { enabled: true, price: 0 },
+    '1080P': { enabled: false, price: 0 },
+  }
   modelForm.billingTokens = 1000
   modelForm.inputPrice1k = 0
   modelForm.outputPrice1k = 0
@@ -955,6 +990,14 @@ const applyModelForm = (model: AdminProviderModelItem) => {
   modelForm.defaultParamsJsonText = stringifyJson(defaultParamsJson)
   modelForm.billingPower = Number(billingRule.power || 0) || 0
   modelForm.videoBillingMode = billingRule.videoBillingMode === 'per_count' ? 'per_count' : 'per_second'
+  // 回填视频分辨率配置:出现的键即"支持"并带其单价;未出现则不支持。
+  {
+    const resPrices = (billingRule.videoResolutionPrices || {}) as Record<string, any>
+    for (const res of VIDEO_RESOLUTION_KEYS) {
+      const enabled = Object.prototype.hasOwnProperty.call(resPrices, res)
+      modelForm.videoResolutions[res] = { enabled, price: enabled ? (Number(resPrices[res]) || 0) : 0 }
+    }
+  }
   modelForm.billingTokens = Number(billingRule.tokens || 1000) || 1000
   modelForm.inputPrice1k = Number(billingRule.inputPricePer1k || 0) || 0
   modelForm.outputPrice1k = Number(billingRule.outputPricePer1k || 0) || 0
@@ -1291,6 +1334,12 @@ const mergeModelDefaultParams = () => {
       tokens: Number(modelForm.billingTokens) || 1000,
       // 视频计费模式:按秒 / 按次,二选一(仅 VIDEO 生效;其它类别忽略)。
       videoBillingMode: modelForm.videoBillingMode === 'per_count' ? 'per_count' : 'per_second',
+      // 视频各分辨率单价:只写入"已勾选支持"的分辨率(其键即代表该模型支持的分辨率)。
+      videoResolutionPrices: Object.fromEntries(
+        VIDEO_RESOLUTION_KEYS
+          .filter((res) => modelForm.videoResolutions[res]?.enabled)
+          .map((res) => [res, Number(modelForm.videoResolutions[res].price) || 0]),
+      ),
       // 对话按 token 分档单价；非 CHAT 时这三档保持 0、不参与计费。
       inputPricePer1k: Number(modelForm.inputPrice1k) || 0,
       outputPricePer1k: Number(modelForm.outputPrice1k) || 0,

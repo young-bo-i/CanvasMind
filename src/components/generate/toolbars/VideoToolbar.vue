@@ -29,8 +29,13 @@ const modelVersions = computed(() =>
     value: m.key,
     label: m.label,
     vip: /vip/i.test(String(m.label || '')),
+    // 携带计费配置,供"按分辨率"派生支持的分辨率与单价。
+    defaultParams: m.defaultParams || {},
   })),
 )
+
+// 视频分辨率档位顺序(与后端规范键一致)。
+const VIDEO_RESOLUTION_ORDER = ['480P', '720P', '1080P']
 
 // 功能（即梦新版三选一）。badge 用于「全能参考」的 New 标。
 const featureOptions = [
@@ -49,11 +54,7 @@ const ratioOptions = [
   { value: '9:16', icoW: 9, icoH: 16 },
 ]
 
-// 分辨率（1080P 为商业/VIP）。
-const resolutionOptions = [
-  { value: '720P', vip: false },
-  { value: '1080P', vip: true },
-]
+// 分辨率选项改为"随所选模型同步":见下方 supportedResolutions / resolutionOptions computed。
 
 // 时长 4s~15s。
 const durationOptions = Array.from({ length: 12 }, (_, i) => ({ value: `${i + 4}s`, label: `${i + 4}s` }))
@@ -71,7 +72,6 @@ const storedVideoToolbarState = readStoredVideoToolbarState()
 const validVideoModelValues = modelVersions.value.map(item => item.value)
 const validVideoFeatureValues = featureOptions.map(item => item.value)
 const validVideoRatioValues = ratioOptions.map(item => item.value)
-const validVideoResolutionValues = resolutionOptions.map(item => item.value)
 const validVideoDurationValues = durationOptions.map(item => item.value)
 
 const currentModelVersion = ref(
@@ -83,9 +83,8 @@ const currentFeature = ref(
 const currentSize = ref(
   validVideoRatioValues.includes(storedVideoToolbarState?.size) ? storedVideoToolbarState.size : '16:9',
 )
-const currentResolution = ref(
-  validVideoResolutionValues.includes(storedVideoToolbarState?.resolution) ? storedVideoToolbarState.resolution : '720P',
-)
+// 初值取本地存储或 720P;实际是否在所选模型的支持列表里,由下方 supportedResolutions 的 watch 校正。
+const currentResolution = ref(String(storedVideoToolbarState?.resolution || '720P'))
 const currentDuration = ref(
   validVideoDurationValues.includes(storedVideoToolbarState?.duration) ? storedVideoToolbarState.duration : '5s',
 )
@@ -156,6 +155,26 @@ const selectDuration = (duration: string) => {
 const currentModel = computed(() => modelVersions.value.find((m: any) => m.value === currentModelVersion.value) || null)
 const getCurrentModelLabel = () => currentModel.value?.label || currentModelVersion.value || ''
 const isCurrentModelVip = computed(() => Boolean(currentModel.value?.vip))
+
+// 当前模型支持的分辨率(来自后台按分辨率定价配置 billingRule.videoResolutionPrices 的键)。
+// 未配置时回退默认 [720P,1080P],兼容旧模型。
+const supportedResolutions = computed<string[]>(() => {
+  const prices = (currentModel.value?.defaultParams as any)?.billingRule?.videoResolutionPrices
+  const keys = prices && typeof prices === 'object' && !Array.isArray(prices)
+    ? Object.keys(prices).map(k => String(k).trim().toUpperCase())
+    : []
+  return keys.length ? VIDEO_RESOLUTION_ORDER.filter(r => keys.includes(r)) : ['720P', '1080P']
+})
+
+// 分辨率选项随模型同步;1080P 标记 VIP 徽标。
+const resolutionOptions = computed(() => supportedResolutions.value.map(value => ({ value, vip: value === '1080P' })))
+
+// 当前选中分辨率若不在所选模型的支持列表,自动切到第一个支持项。
+watch(supportedResolutions, (list) => {
+  if (list.length && !list.includes(currentResolution.value)) {
+    currentResolution.value = list[0]
+  }
+}, { immediate: true })
 const getCurrentFeatureLabel = () => featureOptions.find(f => f.value === currentFeature.value)?.label || '全能参考'
 
 watch(

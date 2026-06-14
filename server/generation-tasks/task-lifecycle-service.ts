@@ -80,6 +80,8 @@ interface TaskLifecycleContext {
     durationSeconds?: number
     // 图片按张计费：本次出图张数，power 视为「每张积分」。
     imageCount?: number
+    // 视频分辨率(480P/720P/1080P)：按配置取对应单价。
+    resolution?: string
     // 会员折扣倍率（0,1]。
     membershipMultiplier?: number
   }) => Promise<BillingDetail>
@@ -496,6 +498,7 @@ export const startGenerationTask = async (
         modelKey,
         endpointType: 'video',
         durationSeconds,
+        resolution: payload.resolution,
         membershipMultiplier,
       })
       const associationNo = context.buildGatewayAssociationNo()

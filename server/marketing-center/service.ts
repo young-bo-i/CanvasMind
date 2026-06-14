@@ -259,6 +259,16 @@ export const normalizeVideoBillingMode = (value: unknown): VideoBillingMode => (
   String(value || '').trim() === 'per_count' ? 'per_count' : 'per_second'
 )
 
+// 视频分辨率档位:不同分辨率不同单价;模型可只支持其中几档(未配置 = 不支持)。
+export const VIDEO_RESOLUTION_KEYS = ['480P', '720P', '1080P'] as const
+
+// 归一化分辨率为规范键('1080'/'1080p'/'1080P'→'1080P')。
+export const normalizeVideoResolution = (value: unknown): string => {
+  const raw = String(value || '').trim().toUpperCase().replace(/\s+/g, '')
+  if (!raw) return ''
+  return /^\d+$/.test(raw) ? `${raw}P` : raw
+}
+
 // 对话按 token 分档单价（积分 / 1k token）+ 按次保底 power。
 export interface ModelBillingRule {
   power: number
@@ -267,11 +277,14 @@ export interface ModelBillingRule {
   cachedPricePer1k: number
   // 仅 VIDEO 使用:按秒 / 按次。缺省 per_second(向后兼容既有配置)。
   videoBillingMode: VideoBillingMode
+  // 仅 VIDEO 使用:各分辨率单价(规范键 480P/720P/1080P → 积分单价)。
+  // 仅出现的键代表"该模型支持的分辨率";为空则回退到 power(向后兼容)。
+  videoResolutionPrices: Record<string, number>
 }
 
 // 从模型 defaultParamsJson.billingRule 解析出归一化计费规则；缺失字段一律按 0。
 export const readModelBillingRule = (value: unknown): ModelBillingRule => {
-  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second' }
+  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second', videoResolutionPrices: {} }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return empty
   }
@@ -281,12 +294,22 @@ export const readModelBillingRule = (value: unknown): ModelBillingRule => {
   }
   const rule = billingRule as Record<string, unknown>
   const num = (v: unknown) => Math.max(0, Number(v || 0) || 0)
+  const parseResolutionPrices = (raw: unknown): Record<string, number> => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out: Record<string, number> = {}
+    for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+      const normalizedKey = normalizeVideoResolution(key)
+      if (normalizedKey) out[normalizedKey] = num(val)
+    }
+    return out
+  }
   return {
     power: num(rule.power),
     inputPricePer1k: num(rule.inputPricePer1k),
     outputPricePer1k: num(rule.outputPricePer1k),
     cachedPricePer1k: num(rule.cachedPricePer1k),
     videoBillingMode: normalizeVideoBillingMode(rule.videoBillingMode),
+    videoResolutionPrices: parseResolutionPrices(rule.videoResolutionPrices),
   }
 }
 
@@ -406,6 +429,8 @@ export const resolveGenerationPointCost = async (input: {
   durationSeconds?: number
   // 图片按张计费：本次出图张数，power 视为「每张积分」并乘以张数（服务端按 maxImagesPerRequest clamp）。
   imageCount?: number
+  // 视频分辨率(480P/720P/1080P)：不同分辨率单价不同,按配置取价。
+  resolution?: string
   // 会员折扣倍率（0,1]：例如 8 折传 0.8。缺省 1（无折扣）。
   membershipMultiplier?: number
 }) => {
@@ -444,9 +469,23 @@ export const resolveGenerationPointCost = async (input: {
     }
   }
 
-  // 基础点数 + 计费规则(含视频按秒/按次模式)。
+  // 基础点数 + 计费规则(含视频按秒/按次模式 + 视频分辨率单价)。
   const billingRule = readModelBillingRule(model.defaultParamsJson)
-  const basePointCost = billingRule.power
+  // 视频:按本次分辨率取单价(模型可只支持部分分辨率)。
+  // - 已配置某分辨率 → 用其单价;
+  // - 配置了分辨率表但请求的分辨率不在表里(异常) → 取已配置中的最高价,避免少扣;
+  // - 完全没配分辨率表 → 回退到旧的单一 power(向后兼容)。
+  let basePointCost = billingRule.power
+  if (category === 'VIDEO') {
+    const resPrices = billingRule.videoResolutionPrices
+    const resKeys = Object.keys(resPrices)
+    if (resKeys.length) {
+      const resKey = normalizeVideoResolution(input.resolution)
+      basePointCost = resKey && resKey in resPrices
+        ? resPrices[resKey]
+        : (billingRule.power || Math.max(...resKeys.map((k) => resPrices[k])))
+    }
+  }
 
   // 应用能力开关倍率（联网/深度思考通常更贵），未配置或不支持则倍率为 1。
   const capabilitySpec = (() => {

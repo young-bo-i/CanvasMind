@@ -536,16 +536,31 @@ const readCurrentModelBillingRule = (): Record<string, any> => {
 // 获取价格文本
 const readCurrentModelPointCost = () => Math.max(0, Number(readCurrentModelBillingRule().power || 0))
 
-const priceText = computed(() => {
-  const pointCost = readCurrentModelPointCost()
+// 视频:按当前所选分辨率取单价(模型按分辨率定价);未配分辨率表则回退 power。
+const readCurrentVideoUnitPrice = (rule: Record<string, any>) => {
+  const prices = rule.videoResolutionPrices
+  const resolution = String(videoToolbarRef.value?.currentResolution || '').trim().toUpperCase()
+  if (prices && typeof prices === 'object' && !Array.isArray(prices)) {
+    const keys = Object.keys(prices)
+    if (keys.length) {
+      if (resolution && resolution in prices) return Math.max(0, Number(prices[resolution]) || 0)
+      // 兜底:取已配置中的任意一个(理论上当前分辨率一定在支持列表里)。
+      return Math.max(0, Number(prices[keys[0]]) || 0)
+    }
+  }
+  return Math.max(0, Number(rule.power || 0))
+}
 
+const priceText = computed(() => {
   switch (currentType.value) {
     case 'image':
-      return `${pointCost || 0} / 张`
+      return `${readCurrentModelPointCost() || 0} / 张`
     case 'video': {
-      // 视频两种计费模式:按秒显示「X / 秒」,按次显示「X / 次」。
-      const mode = String(readCurrentModelBillingRule().videoBillingMode || 'per_second')
-      return mode === 'per_count' ? `${pointCost || 0} / 次` : `${pointCost || 0} / 秒`
+      // 视频:单价随分辨率;按秒显示「X / 秒」,按次显示「X / 次」。
+      const rule = readCurrentModelBillingRule()
+      const unit = readCurrentVideoUnitPrice(rule)
+      const mode = String(rule.videoBillingMode || 'per_second')
+      return mode === 'per_count' ? `${unit || 0} / 次` : `${unit || 0} / 秒`
     }
     default:
       return ''
