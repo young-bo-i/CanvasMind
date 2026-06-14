@@ -27,8 +27,11 @@ const props = withDefaults(defineProps<Props>(), {
 
 // 模型版本配置（内置 + 自定义）
 const modelVersions = computed(() =>
-  getAllImageModels().map((m: any) => ({ value: m.key, label: m.label }))
+  getAllImageModels().map((m: any) => ({ value: m.key, label: m.label, defaultParams: m.defaultParams || {} }))
 )
+
+// 图片分辨率档位顺序(与后端 normalizeImageResolution 规范键一致)。
+const IMAGE_RESOLUTION_ORDER = ['0.5K', '1K', '2K', '4K']
 
 // 尺寸配置
 const sizeOptions = [
@@ -142,9 +145,44 @@ const currentModelLabel = computed(() => {
   return m?.label || currentModelVersion.value
 })
 
-// 获取当前尺寸配置
+// 当前模型(含计费配置)。
+const currentModel = computed(() => modelVersions.value.find(v => v.value === currentModelVersion.value) || null)
+
+// 按分辨率计价的模型(nano):支持的分辨率来自 billingRule.imageResolutionPrices 的键。
+const supportedImageResolutions = computed<string[]>(() => {
+  const billingRule = (currentModel.value?.defaultParams as any)?.billingRule
+  if (!billingRule || billingRule.imageBillingMode !== 'per_resolution') return []
+  const prices = billingRule.imageResolutionPrices
+  const keys = prices && typeof prices === 'object' && !Array.isArray(prices)
+    ? Object.keys(prices).map(k => String(k).trim().toUpperCase())
+    : []
+  return IMAGE_RESOLUTION_ORDER.filter(r => keys.includes(r))
+})
+
+// 是否为"按分辨率计价"模型(决定是否展示分辨率选择器)。
+const isPerResolutionModel = computed(() => supportedImageResolutions.value.length > 0)
+
+// 当前选中分辨率(仅 per_resolution 模型有意义)。
+const currentResolution = ref(String(storedToolbarState?.resolution || '2K'))
+
+// 模型变化:若当前分辨率不在支持列表,切到第一个支持项。
+watch(supportedImageResolutions, (list) => {
+  if (list.length && !list.includes(currentResolution.value)) {
+    currentResolution.value = list[0]
+  }
+}, { immediate: true })
+
+const selectResolution = (resolution: string) => {
+  currentResolution.value = resolution
+}
+
+// 获取当前尺寸配置:per_resolution 模型把 quality 替换为所选清晰分辨率键(供计费),否则用默认档位标签。
 const currentSizeConfig = () => {
-  return sizeOptions.find(s => s.value === currentSize.value) || sizeOptions[0]
+  const base = sizeOptions.find(s => s.value === currentSize.value) || sizeOptions[0]
+  if (isPerResolutionModel.value) {
+    return { ...base, quality: currentResolution.value }
+  }
+  return base
 }
 
 watch(
@@ -171,10 +209,10 @@ onMounted(() => {
 })
 
 watch(
-  [currentModelVersion, currentSize],
-  ([model, size]) => {
+  [currentModelVersion, currentSize, currentResolution],
+  ([model, size, resolution]) => {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem(IMAGE_TOOLBAR_STORAGE_KEY, JSON.stringify({ model, size }))
+    window.localStorage.setItem(IMAGE_TOOLBAR_STORAGE_KEY, JSON.stringify({ model, size, resolution }))
   },
   { immediate: true },
 )
@@ -185,6 +223,8 @@ defineExpose({
   currentSize,
   currentSizeConfig,
   currentCount,
+  currentResolution,
+  isPerResolutionModel,
 })
 </script>
 
@@ -303,6 +343,19 @@ defineExpose({
           </div>
         </li>
       </ul>
+      <!-- 按分辨率计价模型(nano):展示该模型支持的分辨率,选择后参与计费。 -->
+      <div v-if="isPerResolutionModel" style="padding:8px 12px;border-top:1px solid var(--stroke-primary,rgba(255,255,255,.1))">
+        <div style="font-size:12px;color:var(--text-secondary,#909399);margin-bottom:6px">分辨率</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button
+              v-for="res in supportedImageResolutions"
+              :key="res"
+              type="button"
+              :style="{ padding: '4px 12px', borderRadius: '8px', cursor: 'pointer', border: '1px solid var(--stroke-primary,rgba(255,255,255,.16))', background: currentResolution === res ? 'var(--bg-fill-active,rgba(120,110,255,.22))' : 'transparent', color: 'inherit' }"
+              @click.stop="selectResolution(res)"
+          >{{ res }}</button>
+        </div>
+      </div>
     </SelectPopup>
 
     <!-- 生成数量步进器 -->

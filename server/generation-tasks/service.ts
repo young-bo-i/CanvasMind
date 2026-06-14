@@ -231,6 +231,8 @@ const executeImageGenerationTask = async (task: RunningGenerationTask, payload: 
     updateGenerationRecord,
     getGenerationRecordById,
     emitTaskStreamEvent: (recordId, event) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
+    // 按 token 计价(gpt-image-2)的按量结算;非 token 制模型会自动 no-op。
+    settleChatPointsByUsage,
     logGenerationTask,
   })
 }

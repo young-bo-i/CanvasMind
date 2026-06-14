@@ -398,6 +398,23 @@ export const extractImageUrlsFromStreamResponse = async (response: Response, sig
   return imageUrls
 }
 
+// 从图片接口响应解析 token usage(用于 gpt-image-2 等按 token 计价的结算)。
+// 兼容 OpenAI 图像接口(input_tokens/output_tokens/input_tokens_details.cached_tokens)与 chat 风格(prompt_tokens/completion_tokens)。
+const extractImageUsageFromPayload = (payload: unknown): { promptTokens: number; completionTokens: number; cachedTokens: number } | null => {
+  const usage = payload && typeof payload === 'object' ? (payload as Record<string, any>).usage : null
+  if (!usage || typeof usage !== 'object') return null
+  const num = (v: unknown) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  }
+  const inputDetails = (usage.input_tokens_details || usage.prompt_tokens_details || {}) as Record<string, unknown>
+  const promptTokens = num(usage.input_tokens ?? usage.prompt_tokens)
+  const completionTokens = num(usage.output_tokens ?? usage.completion_tokens)
+  const cachedTokens = num(inputDetails.cached_tokens)
+  if (!promptTokens && !completionTokens && !cachedTokens) return null
+  return { promptTokens, completionTokens, cachedTokens }
+}
+
 export const requestImageGeneration = async (input: RequestImageGenerationInput) => {
   const upstream = await resolveGatewayProviderUpstream({
     providerId: input.providerId,
@@ -446,9 +463,16 @@ export const requestImageGeneration = async (input: RequestImageGenerationInput)
     ))
   }
 
-  const imageUrls = isChatCompletionsEndpoint(upstream.endpoint)
-    ? await extractImageUrlsFromStreamResponse(response, input.signal)
-    : extractImageUrlsFromJsonResponse(await response.json())
+  // 非流式 JSON 接口可同时拿到图片与 token usage(gpt-image-2 等按 token 计价用);chat-completions 流式暂无 usage。
+  let usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null = null
+  let imageUrls: string[]
+  if (isChatCompletionsEndpoint(upstream.endpoint)) {
+    imageUrls = await extractImageUrlsFromStreamResponse(response, input.signal)
+  } else {
+    const json = await response.json()
+    imageUrls = extractImageUrlsFromJsonResponse(json)
+    usage = extractImageUsageFromPayload(json)
+  }
 
   if (!imageUrls.length) {
     throw new Error('未能获取到生成的图片')
@@ -457,6 +481,7 @@ export const requestImageGeneration = async (input: RequestImageGenerationInput)
   return {
     upstreamUrl,
     imageUrls,
+    usage,
   }
 }
 
@@ -511,7 +536,8 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
     ))
   }
 
-  const imageUrls = extractImageUrlsFromJsonResponse(await response.json())
+  const editJson = await response.json()
+  const imageUrls = extractImageUrlsFromJsonResponse(editJson)
   if (!imageUrls.length) {
     throw new Error('未能获取到编辑后的图片')
   }
@@ -519,6 +545,7 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
   return {
     upstreamUrl,
     imageUrls,
+    usage: extractImageUsageFromPayload(editJson),
   }
 }
 

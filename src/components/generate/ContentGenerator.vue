@@ -553,8 +553,23 @@ const readCurrentVideoUnitPrice = (rule: Record<string, any>) => {
 
 const priceText = computed(() => {
   switch (currentType.value) {
-    case 'image':
+    case 'image': {
+      // 图片三模式:按张固定 / 按分辨率(随所选分辨率) / 按 token(按真实用量结算,无法预估)。
+      const rule = readCurrentModelBillingRule()
+      const mode = String(rule.imageBillingMode || 'per_image')
+      if (mode === 'per_token') return '按用量结算'
+      if (mode === 'per_resolution') {
+        const prices = rule.imageResolutionPrices
+        const res = String(imageToolbarRef.value?.currentResolution || '').trim().toUpperCase()
+        let unit = 0
+        if (prices && typeof prices === 'object' && !Array.isArray(prices)) {
+          const keys = Object.keys(prices)
+          unit = res && res in prices ? (Number(prices[res]) || 0) : (keys.length ? (Number(prices[keys[0]]) || 0) : 0)
+        }
+        return `${unit || 0} / 张`
+      }
       return `${readCurrentModelPointCost() || 0} / 张`
+    }
     case 'video': {
       // 视频:单价随分辨率;按秒显示「X / 秒」,按次显示「X / 次」。
       const rule = readCurrentModelBillingRule()

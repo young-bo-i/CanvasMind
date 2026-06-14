@@ -269,6 +269,26 @@ export const normalizeVideoResolution = (value: unknown): string => {
   return /^\d+$/.test(raw) ? `${raw}P` : raw
 }
 
+// 图片计费模式三选一:
+// - per_image:每张固定积分(power × 张数),普通图片模型;
+// - per_resolution:按分辨率每张定价(nano-banana 系列),imageResolutionPrices[分辨率] × 张数;
+// - per_token:按真实 token 结算(gpt-image-2),预扣 power 保底,生成后按 usage 用分档单价多退少补。
+export type ImageBillingMode = 'per_image' | 'per_resolution' | 'per_token'
+export const normalizeImageBillingMode = (value: unknown): ImageBillingMode => {
+  const v = String(value || '').trim()
+  return v === 'per_resolution' || v === 'per_token' ? v : 'per_image'
+}
+
+// 图片分辨率档位(nano 支持到 0.5K/4K)。归一化:'1k'/'1K'→'1K','512'/'0.5k'→'0.5K'。
+export const IMAGE_RESOLUTION_KEYS = ['0.5K', '1K', '2K', '4K'] as const
+export const normalizeImageResolution = (value: unknown): string => {
+  let raw = String(value || '').trim().toUpperCase().replace(/\s+/g, '')
+  if (!raw) return ''
+  if (raw === '512' || raw === '512P' || raw === '0.5KP') raw = '0.5K'
+  if (/^\d+$/.test(raw)) raw = `${raw}K` // 容错:纯数字按 K
+  return raw
+}
+
 // 对话按 token 分档单价（积分 / 1k token）+ 按次保底 power。
 export interface ModelBillingRule {
   power: number
@@ -280,11 +300,14 @@ export interface ModelBillingRule {
   // 仅 VIDEO 使用:各分辨率单价(规范键 480P/720P/1080P → 积分单价)。
   // 仅出现的键代表"该模型支持的分辨率";为空则回退到 power(向后兼容)。
   videoResolutionPrices: Record<string, number>
+  // 仅 IMAGE 使用:计费模式 + 各分辨率每张单价(规范键 0.5K/1K/2K/4K)。
+  imageBillingMode: ImageBillingMode
+  imageResolutionPrices: Record<string, number>
 }
 
 // 从模型 defaultParamsJson.billingRule 解析出归一化计费规则；缺失字段一律按 0。
 export const readModelBillingRule = (value: unknown): ModelBillingRule => {
-  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second', videoResolutionPrices: {} }
+  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second', videoResolutionPrices: {}, imageBillingMode: 'per_image', imageResolutionPrices: {} }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return empty
   }
@@ -294,11 +317,11 @@ export const readModelBillingRule = (value: unknown): ModelBillingRule => {
   }
   const rule = billingRule as Record<string, unknown>
   const num = (v: unknown) => Math.max(0, Number(v || 0) || 0)
-  const parseResolutionPrices = (raw: unknown): Record<string, number> => {
+  const parseResolutionPrices = (raw: unknown, normalizeKey: (k: unknown) => string): Record<string, number> => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
     const out: Record<string, number> = {}
     for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
-      const normalizedKey = normalizeVideoResolution(key)
+      const normalizedKey = normalizeKey(key)
       if (normalizedKey) out[normalizedKey] = num(val)
     }
     return out
@@ -309,7 +332,9 @@ export const readModelBillingRule = (value: unknown): ModelBillingRule => {
     outputPricePer1k: num(rule.outputPricePer1k),
     cachedPricePer1k: num(rule.cachedPricePer1k),
     videoBillingMode: normalizeVideoBillingMode(rule.videoBillingMode),
-    videoResolutionPrices: parseResolutionPrices(rule.videoResolutionPrices),
+    videoResolutionPrices: parseResolutionPrices(rule.videoResolutionPrices, normalizeVideoResolution),
+    imageBillingMode: normalizeImageBillingMode(rule.imageBillingMode),
+    imageResolutionPrices: parseResolutionPrices(rule.imageResolutionPrices, normalizeImageResolution),
   }
 }
 
@@ -481,6 +506,20 @@ export const resolveGenerationPointCost = async (input: {
     const resKeys = Object.keys(resPrices)
     if (resKeys.length) {
       const resKey = normalizeVideoResolution(input.resolution)
+      basePointCost = resKey && resKey in resPrices
+        ? resPrices[resKey]
+        : (billingRule.power || Math.max(...resKeys.map((k) => resPrices[k])))
+    }
+  }
+  // 图片:三种计费模式。
+  // - per_resolution(nano):按本次分辨率每张单价(同视频取价逻辑)。
+  // - per_token(gpt-image-2):此处只返回"保底预扣"= power(×张数),真实费用由执行器按 usage 结算。
+  // - per_image(默认):每张固定 power。
+  if (category === 'IMAGE' && billingRule.imageBillingMode === 'per_resolution') {
+    const resPrices = billingRule.imageResolutionPrices
+    const resKeys = Object.keys(resPrices)
+    if (resKeys.length) {
+      const resKey = normalizeImageResolution(input.resolution)
       basePointCost = resKey && resKey in resPrices
         ? resPrices[resKey]
         : (billingRule.power || Math.max(...resKeys.map((k) => resPrices[k])))
@@ -692,6 +731,8 @@ export const settleChatPointsByUsage = async (input: {
   preChargedPoints: number
   usage: { promptTokens?: number; completionTokens?: number; cachedTokens?: number } | null
   billingMultiplier?: number
+  // 结算所属类别:对话(chat) 或 图片 token 制(image,如 gpt-image-2)。缺省 chat,向后兼容。
+  endpointType?: 'chat' | 'image'
 }) => {
   if (!input.usage) {
     return null
@@ -703,8 +744,11 @@ export const settleChatPointsByUsage = async (input: {
     return null
   }
 
+  const endpointType: 'chat' | 'image' = input.endpointType === 'image' ? 'image' : 'chat'
+  const modelCategory = endpointType === 'image' ? 'IMAGE' : 'CHAT'
+
   const model = await prisma.aiModel.findFirst({
-    where: { providerId, modelKey, category: 'CHAT', isEnabled: true },
+    where: { providerId, modelKey, category: modelCategory as any, isEnabled: true },
     select: { defaultParamsJson: true },
   })
   const billingRule = readModelBillingRule(model?.defaultParamsJson)
@@ -741,13 +785,13 @@ export const settleChatPointsByUsage = async (input: {
       pointCost: delta,
       sourceId: input.sourceId,
       associationNo: input.associationNo,
-      endpointType: 'chat',
+      endpointType,
       providerId,
       modelKey,
       modelName: input.modelName,
       allowNegativeBalance: true,
-      remark: '对话结算补扣',
-      // 幂等：同一对话的结算补扣至多一次，避免重复结束/重投导致重复扣费。
+      remark: endpointType === 'image' ? '图片生成结算补扣' : '对话结算补扣',
+      // 幂等：同一任务的结算补扣至多一次，避免重复结束/重投导致重复扣费。
       dedupeKey: `gen-settle-consume:${input.associationNo}`,
       metaJson,
     })
@@ -757,12 +801,12 @@ export const settleChatPointsByUsage = async (input: {
       pointCost: -delta,
       sourceId: input.sourceId,
       associationNo: input.associationNo,
-      endpointType: 'chat',
+      endpointType,
       providerId,
       modelKey,
       modelName: input.modelName,
-      remark: '对话结算退差',
-      // 幂等：同一对话的结算退差至多一次，避免重复结束/重投导致重复退差。
+      remark: endpointType === 'image' ? '图片生成结算退差' : '对话结算退差',
+      // 幂等：同一任务的结算退差至多一次，避免重复结束/重投导致重复退差。
       dedupeKey: `gen-settle-refund:${input.associationNo}`,
       metaJson,
     })

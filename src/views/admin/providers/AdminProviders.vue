@@ -529,16 +529,71 @@
                 {{ modelForm.videoBillingMode === 'per_count' ? '扣费 = 所选分辨率单价(每次固定,与时长无关)。' : '扣费 = 所选分辨率单价 × 时长(秒)。' }}
               </div>
             </template>
-            <!-- 图片:单一「每张」单价 -->
+            <!-- 图片:三种计费模式(按张固定 / 按分辨率 / 按 token) -->
             <template v-else>
-              <label class="admin-form__label" for="model-billing-power">计费规则</label>
-              <div class="admin-composite-input">
-                <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="请输入模型计费">
-                <span class="admin-composite-input__suffix">{{ billingUnitSuffix }}</span>
-              </div>
-              <div class="admin-form__hint">
-                图片按张计费：此处填「每张消耗积分」，一次生成 N 张扣 N 份（N 受下方「单次最大出图张数」限制）。
-              </div>
+              <label class="admin-form__label">图片计费模式</label>
+              <select v-model="modelForm.imageBillingMode" class="admin-input" style="margin-bottom:10px">
+                <option value="per_image">按张固定(每张固定积分)</option>
+                <option value="per_resolution">按分辨率(nano:每张按分辨率定价)</option>
+                <option value="per_token">按 token(gpt-image-2:按真实用量结算)</option>
+              </select>
+
+              <!-- per_image:单一每张单价 -->
+              <template v-if="modelForm.imageBillingMode === 'per_image'">
+                <label class="admin-form__label" for="model-billing-power">计费规则</label>
+                <div class="admin-composite-input">
+                  <input id="model-billing-power" v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="每张消耗积分">
+                  <span class="admin-composite-input__suffix">积分 / 张</span>
+                </div>
+                <div class="admin-form__hint">每张固定积分;一次生成 N 张扣 N 份(N 受下方「单次最大出图张数」限制)。</div>
+              </template>
+
+              <!-- per_resolution:分辨率表 -->
+              <template v-else-if="modelForm.imageBillingMode === 'per_resolution'">
+                <label class="admin-form__label">支持的分辨率与每张单价</label>
+                <div
+                    v-for="res in IMAGE_RESOLUTION_KEYS"
+                    :key="res"
+                    style="display:flex;align-items:center;gap:10px;margin-bottom:6px"
+                >
+                  <label style="display:inline-flex;align-items:center;gap:6px;min-width:96px;cursor:pointer">
+                    <input type="checkbox" v-model="modelForm.imageResolutions[res].enabled"> {{ res }}
+                  </label>
+                  <input
+                      v-model.number="modelForm.imageResolutions[res].price"
+                      class="admin-input"
+                      type="number" min="0" step="0.01"
+                      :disabled="!modelForm.imageResolutions[res].enabled"
+                      placeholder="每张单价"
+                      style="flex:1;min-width:0">
+                  <span style="white-space:nowrap;color:var(--text-secondary,#909399);font-size:12px">积分 / 张</span>
+                </div>
+                <div class="admin-form__hint">勾选该模型支持的分辨率并设置每张单价(支持小数)；未勾选的分辨率用户端不可选。扣费 = 所选分辨率单价 × 张数。</div>
+              </template>
+
+              <!-- per_token:按 token 分档 + 保底 -->
+              <template v-else>
+                <label class="admin-form__label">计费规则(按 token 分档)</label>
+                <div class="admin-billing-grid">
+                  <div class="admin-composite-input">
+                    <input v-model.number="modelForm.inputPrice1k" class="admin-input" type="number" min="0" step="0.01" placeholder="输入单价">
+                    <span class="admin-composite-input__suffix">输入 · 积分 / 1k</span>
+                  </div>
+                  <div class="admin-composite-input">
+                    <input v-model.number="modelForm.outputPrice1k" class="admin-input" type="number" min="0" step="0.01" placeholder="输出单价">
+                    <span class="admin-composite-input__suffix">输出 · 积分 / 1k</span>
+                  </div>
+                  <div class="admin-composite-input">
+                    <input v-model.number="modelForm.cachedPrice1k" class="admin-input" type="number" min="0" step="0.01" placeholder="缓存命中单价">
+                    <span class="admin-composite-input__suffix">缓存 · 积分 / 1k</span>
+                  </div>
+                  <div class="admin-composite-input">
+                    <input v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="每次保底预扣">
+                    <span class="admin-composite-input__suffix">保底预扣 · 积分</span>
+                  </div>
+                </div>
+                <div class="admin-form__hint">如 gpt-image-2:发起时先预扣「保底」积分,生成后按上游返回的输入/输出/缓存命中 token × 单价多退少补(需上游返回 usage)。</div>
+              </template>
             </template>
           </div>
 
@@ -666,6 +721,8 @@ import {
 
 // 视频可配置的分辨率档位(与后端 normalizeVideoResolution 规范键一致)。
 const VIDEO_RESOLUTION_KEYS = ['480P', '720P', '1080P'] as const
+// 图片可配置的分辨率档位(nano:0.5K/1K/2K/4K,与后端 normalizeImageResolution 规范键一致)。
+const IMAGE_RESOLUTION_KEYS = ['0.5K', '1K', '2K', '4K'] as const
 
 const providerTypeOptions = [
   { label: 'LLM', value: 'CHAT' },
@@ -799,6 +856,15 @@ const modelForm = reactive({
     '720P': { enabled: true, price: 0 },
     '1080P': { enabled: false, price: 0 },
   } as Record<string, { enabled: boolean; price: number }>,
+  // 图片计费模式:按张固定 / 按分辨率(nano) / 按 token(gpt-image-2)。缺省 per_image。
+  imageBillingMode: 'per_image' as 'per_image' | 'per_resolution' | 'per_token',
+  // 图片各分辨率是否支持 + 每张单价(per_resolution 用)。
+  imageResolutions: {
+    '0.5K': { enabled: false, price: 0 },
+    '1K': { enabled: true, price: 0 },
+    '2K': { enabled: false, price: 0 },
+    '4K': { enabled: false, price: 0 },
+  } as Record<string, { enabled: boolean; price: number }>,
   billingTokens: 1000,
   // 对话(CHAT)按 token 分档单价（积分 / 1k token）。IMAGE/VIDEO 不用。
   inputPrice1k: 0,
@@ -810,13 +876,6 @@ const modelForm = reactive({
   // 单次最大出图张数（仅 IMAGE 类别有意义）。最终落入 capabilityJson.maxImagesPerRequest。
   // 不同上游限制不同：gpt-image-2 = 4，dall-e-3 = 1，dall-e-2 = 10。
   maxImagesPerRequest: 1,
-})
-
-// 计费规则单位后缀：按模型类型区分。视频按秒/按次、图片按张、对话按 token。
-const billingUnitSuffix = computed(() => {
-  if (modelForm.category === 'VIDEO') return modelForm.videoBillingMode === 'per_count' ? '积分 / 次' : '积分 / 秒'
-  if (modelForm.category === 'IMAGE') return '积分 / 张'
-  return `积分 / ${modelForm.billingTokens || 1000} Tokens`
 })
 
 const discoverBatchSettings = reactive({
@@ -962,6 +1021,13 @@ const resetModelForm = () => {
     '720P': { enabled: true, price: 0 },
     '1080P': { enabled: false, price: 0 },
   }
+  modelForm.imageBillingMode = 'per_image'
+  modelForm.imageResolutions = {
+    '0.5K': { enabled: false, price: 0 },
+    '1K': { enabled: true, price: 0 },
+    '2K': { enabled: false, price: 0 },
+    '4K': { enabled: false, price: 0 },
+  }
   modelForm.billingTokens = 1000
   modelForm.inputPrice1k = 0
   modelForm.outputPrice1k = 0
@@ -996,6 +1062,17 @@ const applyModelForm = (model: AdminProviderModelItem) => {
     for (const res of VIDEO_RESOLUTION_KEYS) {
       const enabled = Object.prototype.hasOwnProperty.call(resPrices, res)
       modelForm.videoResolutions[res] = { enabled, price: enabled ? (Number(resPrices[res]) || 0) : 0 }
+    }
+  }
+  // 回填图片计费模式 + 分辨率配置。
+  modelForm.imageBillingMode = billingRule.imageBillingMode === 'per_resolution' || billingRule.imageBillingMode === 'per_token'
+    ? billingRule.imageBillingMode
+    : 'per_image'
+  {
+    const resPrices = (billingRule.imageResolutionPrices || {}) as Record<string, any>
+    for (const res of IMAGE_RESOLUTION_KEYS) {
+      const enabled = Object.prototype.hasOwnProperty.call(resPrices, res)
+      modelForm.imageResolutions[res] = { enabled, price: enabled ? (Number(resPrices[res]) || 0) : 0 }
     }
   }
   modelForm.billingTokens = Number(billingRule.tokens || 1000) || 1000
@@ -1339,6 +1416,13 @@ const mergeModelDefaultParams = () => {
         VIDEO_RESOLUTION_KEYS
           .filter((res) => modelForm.videoResolutions[res]?.enabled)
           .map((res) => [res, Number(modelForm.videoResolutions[res].price) || 0]),
+      ),
+      // 图片计费模式 + 各分辨率每张单价(per_resolution 用;其键即支持的分辨率)。
+      imageBillingMode: modelForm.imageBillingMode,
+      imageResolutionPrices: Object.fromEntries(
+        IMAGE_RESOLUTION_KEYS
+          .filter((res) => modelForm.imageResolutions[res]?.enabled)
+          .map((res) => [res, Number(modelForm.imageResolutions[res].price) || 0]),
       ),
       // 对话按 token 分档单价；非 CHAT 时这三档保持 0、不参与计费。
       inputPricePer1k: Number(modelForm.inputPrice1k) || 0,

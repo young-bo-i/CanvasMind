@@ -5,7 +5,15 @@ type ImageExecutionTask = {
   recordId: string
   userId: string
   abortController: AbortController
+  // 计费快照(用于 gpt-image-2 等按 token 计价时的按量结算)。
+  associationNo?: string
+  billedPointCost?: number
+  billedProviderId?: string
+  billedModelKey?: string
+  billedModelName?: string
 }
+
+type ImageUsage = { promptTokens?: number; completionTokens?: number; cachedTokens?: number }
 
 type ImageTaskRetryState = {
   attempt: number
@@ -35,7 +43,7 @@ export interface ImageTaskExecutorContext {
     modelKey: string
     requestBody: Record<string, unknown>
     onRetry?: (retryState: ImageTaskRetryState) => Promise<void> | void
-  }) => Promise<{ upstreamUrl: string; imageUrls: string[] }>
+  }) => Promise<{ upstreamUrl: string; imageUrls: string[]; usage?: ImageUsage | null }>
   requestImageEdit: (input: {
     signal: AbortSignal
     providerId: string
@@ -45,7 +53,20 @@ export interface ImageTaskExecutorContext {
     count?: number
     referenceImages: string[]
     onRetry?: (retryState: ImageTaskRetryState) => Promise<void> | void
-  }) => Promise<{ upstreamUrl: string; imageUrls: string[] }>
+  }) => Promise<{ upstreamUrl: string; imageUrls: string[]; usage?: ImageUsage | null }>
+  // 按 token 计价(gpt-image-2)的按量结算:用真实 usage 对保底预扣多退少补。
+  // 非 token 制模型(per-1k 单价均为 0)会自动 no-op,可安全无条件调用。
+  settleChatPointsByUsage: (input: {
+    userId: string
+    associationNo: string
+    sourceId: string
+    providerId: string
+    modelKey: string
+    modelName?: string
+    preChargedPoints: number
+    usage: ImageUsage | null
+    endpointType?: 'chat' | 'image'
+  }) => Promise<unknown>
   buildInitialRecordPayload: (payload: GenerationTaskStartPayload) => GenerationRecordPayload
   updateGenerationRecord: (recordId: string, payload: GenerationRecordPayload, currentUserId: string) => Promise<void>
   getGenerationRecordById: (recordId: string, currentUserId: string) => Promise<Record<string, unknown>>
@@ -124,7 +145,7 @@ export const executeImageTask = async (
     })
   }
 
-  const { upstreamUrl, imageUrls } = requestMode === 'image-edit'
+  const { upstreamUrl, imageUrls, usage: imageUsage } = requestMode === 'image-edit'
     ? await context.requestImageEdit({
       signal: task.abortController.signal,
       providerId,
@@ -176,6 +197,30 @@ export const executeImageTask = async (
     stage: 'completed',
     message: '图片生成完成，结果已写入记录',
   })
+
+  // 按 token 计价(gpt-image-2):用上游返回的真实 usage 对保底预扣多退少补。
+  // 非 token 制模型的 per-1k 单价为 0,settle 自动 no-op,无需在此判断模式。
+  if (imageUsage && task.associationNo) {
+    try {
+      await context.settleChatPointsByUsage({
+        userId: task.userId,
+        associationNo: task.associationNo,
+        sourceId: task.associationNo,
+        providerId,
+        modelKey,
+        modelName: task.billedModelName,
+        preChargedPoints: Number(task.billedPointCost || 0),
+        usage: imageUsage,
+        endpointType: 'image',
+      })
+    } catch (settleError) {
+      context.logGenerationTask('image_task:settle_failed', {
+        recordId: task.recordId,
+        userId: task.userId,
+        errorMessage: settleError instanceof Error ? settleError.message : String(settleError || ''),
+      })
+    }
+  }
 
   context.logGenerationTask('image_task:request_success', {
     recordId: task.recordId,
