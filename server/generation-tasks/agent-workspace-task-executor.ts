@@ -123,7 +123,7 @@ export interface AgentWorkspaceTaskExecutorContext {
   resolveWorkspaceImageModel: (binding?: {
     providerId: string
     modelKey: string
-  }) => Promise<AgentWorkspaceImageModel>
+  }, requestUserId?: string) => Promise<AgentWorkspaceImageModel>
   requestImageEdit: (input: {
     signal: AbortSignal
     providerId: string
@@ -464,7 +464,7 @@ export const executeAgentWorkspaceTaskFlow = async (
       expectedImageCount: plan.imageTasks.length,
     })
 
-    const imageModel = await context.resolveWorkspaceImageModel(skillMeta.imageModelBinding)
+    const imageModel = await context.resolveWorkspaceImageModel(skillMeta.imageModelBinding, task.userId)
     const defaultRequestBody = imageModel.defaultParamsJson && typeof imageModel.defaultParamsJson === 'object'
       ? { ...imageModel.defaultParamsJson }
       : {}

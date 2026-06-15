@@ -45,12 +45,21 @@ const pixelLongEdge = (raw: string): number => {
 // 合规像素：四舍五入到 16 的倍数，且不小于 256（gpt-image 要求宽高均可被 16 整除）。
 const roundTo16 = (value: number): number => Math.max(256, Math.round(value / 16) * 16)
 
+// 预置尺寸表：标准「分辨率档 × 比例」直接对应一组固定像素尺寸（边长均为 16 的倍数），
+// 命中即原样下发给上游，不做任何"按模型 sizes 贴近/夹取"的计算。
+// 4K·16:9 = 3840x2160（已实测 CometAPI gpt-image-2 接受并出图）。
+const IMAGE_PIXEL_SIZE_TABLE: Record<string, Record<string, string>> = {
+  '0.5K': { '1:1': '512x512', '4:3': '512x384', '3:4': '384x512', '16:9': '512x288', '9:16': '288x512' },
+  '1K': { '1:1': '1024x1024', '4:3': '1024x768', '3:4': '768x1024', '16:9': '1024x576', '9:16': '576x1024' },
+  '2K': { '1:1': '2048x2048', '4:3': '2048x1536', '3:4': '1536x2048', '16:9': '2048x1152', '9:16': '1152x2048' },
+  '4K': { '1:1': '4096x4096', '4:3': '4096x3072', '3:4': '3072x4096', '16:9': '3840x2160', '9:16': '2160x3840' },
+}
+
 /**
  * 把「宽高比 + 分辨率档位」解析成上游可接受的合规像素尺寸。
- * - 模型配置了 sizes：尊重其允许的精确尺寸——先按「宽高比最接近」，再按「长边最接近所选档位」挑选，
- *   因此对只支持固定尺寸的模型不会下发非法尺寸（避免上游 422）。
- * - 模型未配 sizes 且给了分辨率档位：按 比例 + 档位长边 直接算像素（如 4K + 16:9 → 4096x2304）。
- * - 既无 sizes 又无档位：沿用模型默认 size + 内置兜底像素尺寸，挑比例最接近的（向后兼容）。
+ * - 标准 比例×分辨率档(见 IMAGE_PIXEL_SIZE_TABLE)：直接查表原样下发，不计算、不按模型 sizes 夹取
+ *   （CometAPI 等聚合上游可接受任意 16 整除尺寸，gpt-image-2 已实测支持到 4K 3840x2160）。
+ * - 非标准比例/无档位时才回退：模型 sizes 就近 → 档位长边计算 → 内置兜底。
  * 绝不把 "1:1" 这类比例标签直接当 size 下发——否则会变成 "1x1"，被 gpt-image 以
  * “Width and height must both be divisible by 16” 拒绝。
  */
@@ -61,7 +70,15 @@ export const resolveImagePixelSize = (input: {
   defaultSize?: unknown
 }): string => {
   const target = parseSizeAspect(input.ratio)?.aspect ?? 1
-  const tierEdge = RESOLUTION_TARGET_LONG_EDGE[normalizeResolutionTier(input.resolution)] || 0
+  const tier = normalizeResolutionTier(input.resolution)
+
+  // 预置表优先：命中标准 档位×比例 即直接返回固定尺寸传给上游。
+  const tabledSize = tier ? IMAGE_PIXEL_SIZE_TABLE[tier]?.[String(input.ratio || '').trim()] : ''
+  if (tabledSize) {
+    return tabledSize
+  }
+
+  const tierEdge = RESOLUTION_TARGET_LONG_EDGE[tier] || 0
 
   const rawConfigured = (Array.isArray(input.modelSizes) ? input.modelSizes : [])
     .map(item => String(item || '').trim())

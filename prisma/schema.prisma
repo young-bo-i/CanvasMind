@@ -56,6 +56,8 @@ model AppUser {
   // 归属自关联：ownerAdmin = 创建我的管理员；ownedUsers = 我创建的用户。
   ownerAdmin         AppUser?               @relation("AdminOwnedUsers", fields: [ownerAdminId], references: [id], onDelete: SetNull)
   ownedUsers         AppUser[]              @relation("AdminOwnedUsers")
+  // 我（管理员）配置的 AI 厂商；删除管理员时级联删除其厂商（连同密钥），不残留为全局。
+  ownedProviders     AiProvider[]           @relation("AdminOwnedProviders")
 
   @@index([ownerAdminId], map: "idx_app_users_owner_admin_id")
   @@map("app_users")
@@ -232,7 +234,8 @@ model AiProviderCustomModel {
 /// 对齐 BuildingAI 的 provider / model 双实体思路，后续后台与运行时都基于这里派生。
 model AiProvider {
   id                 String    @id @default(cuid()) @db.VarChar(36)
-  code               String    @unique(map: "uk_ai_providers_code") @db.VarChar(50)
+  // code 唯一性按归属隔离：同一管理员(或全局桶)内唯一；不同管理员可复用相同 code。见 @@unique 下。
+  code               String    @db.VarChar(50)
   name               String    @db.VarChar(100)
   description        String?   @db.VarChar(255)
   iconUrl            String?   @map("icon_url") @db.Text
@@ -249,12 +252,20 @@ model AiProvider {
   isBuiltIn          Boolean   @default(false) @map("is_built_in")
   sortOrder          Int       @default(0) @map("sort_order")
   extraJson          Json?     @map("extra_json")
+  // 归属管理员：该厂商由哪个管理员配置。NULL = 超管/平台全局（所有平台直属用户共用，含既有数据）。
+  // 非空 = 该普通管理员私有；其名下用户的生成请求只走该管理员的厂商，实现租户级隔离。
+  ownerAdminId       String?   @map("owner_admin_id") @db.VarChar(36)
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
   models             AiModel[]
   skills             AiSkill[]
+  ownerAdmin         AppUser?  @relation("AdminOwnedProviders", fields: [ownerAdminId], references: [id], onDelete: Cascade)
 
+  // 厂商标识按归属隔离唯一：同一管理员(或 NULL 全局桶)内 code 唯一；不同管理员可复用相同 code。
+  // 注：MySQL 复合唯一里 NULL 视作彼此不同，全局桶(ownerAdminId=NULL)的 code 唯一性由应用层 + 受控的 seed 保证。
+  @@unique([ownerAdminId, code], map: "uk_ai_providers_owner_code")
   @@index([isEnabled, sortOrder], map: "idx_ai_providers_enabled_sort")
+  @@index([ownerAdminId], map: "idx_ai_providers_owner_admin_id")
   @@map("ai_providers")
 }
 

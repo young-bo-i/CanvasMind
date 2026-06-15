@@ -5,7 +5,7 @@ import { prisma } from '../db/prisma'
 import { acquireRedisLock, releaseRedisLock } from '../redis/lock'
 import { REDIS_CONFIG, isRedisEnabled } from '../redis/config'
 import { redisKeys } from '../redis/keys'
-import { resolveGatewayProviderUpstream, resolveVideoProviderUpstream } from '../provider-config/service'
+import { assertProviderInScope, resolveGatewayProviderUpstream, resolveVideoProviderUpstream } from '../provider-config/service'
 import { resolveImageModelMaxImagesPerRequest } from '../provider-config/model-service'
 import {
   attachGenerationPointRecordId,
@@ -570,6 +570,7 @@ const runTaskInBackground = (task: RunningGenerationTask, payload: GenerationTas
 // 统一构造生命周期服务依赖，避免 start/get/stop 三个入口重复拼装同一批上下文。
 const buildTaskLifecycleContext = () => ({
   resolveGenerationTaskStrategy,
+  assertProviderInScope,
   buildTaskSubmissionIdempotencyKey,
   claimIdempotencyKey,
   completeIdempotencyKey,

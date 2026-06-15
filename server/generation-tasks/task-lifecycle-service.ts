@@ -45,6 +45,8 @@ interface TaskLifecycleContext {
   resolveGenerationTaskStrategy: (payload: GenerationTaskStartPayload) => {
     key: GenerationTaskStrategyKey
   }
+  // 租户隔离：校验请求者只能用其所属管理员作用域内的厂商。
+  assertProviderInScope: (providerId: string, userId: string) => Promise<void>
   buildTaskSubmissionIdempotencyKey: (input: {
     userId: string
     strategyKey: string
@@ -242,6 +244,14 @@ export const startGenerationTask = async (
 ) => {
   const strategy = context.resolveGenerationTaskStrategy(payload)
   const { providerId, modelKey } = resolveTaskBillingTarget(payload, strategy.key)
+  // 租户隔离：该 providerId 必须属于请求者所属管理员的厂商作用域，否则 403，杜绝越权用别人的厂商。
+  await context.assertProviderInScope(providerId, currentUserId)
+  // 研究任务的「搜索供应商」同样来自客户端 requestBody(researchSearchProviderId)，需一并校验归属，
+  // 否则可越权用到别的管理员/全局的搜索厂商密钥。
+  const researchSearchProviderId = String((payload.requestBody || {}).researchSearchProviderId || '').trim()
+  if (researchSearchProviderId) {
+    await context.assertProviderInScope(researchSearchProviderId, currentUserId)
+  }
   const skillKey = resolveTaskSkillKey(payload, strategy.key)
   // 解析前端塞入的能力开关（联网搜索/深度思考），用于计费倍率联动。
   // 仅 agent-chat 链路读取；image / agent-workspace 暂时不接 capability 计费。

@@ -102,15 +102,21 @@ const buildProviderModelItem = (item: {
   updatedAt: item.updatedAt.toISOString(),
 })
 
-const assertProviderExists = async (providerId: string) => {
+// 后台查看者：超管不限；普通管理员只能操作自己创建的厂商（及其模型）。
+type AdminViewer = { id: string; role: string }
+const ownerWhere = (viewer?: AdminViewer): { ownerAdminId?: string } =>
+  viewer && viewer.role !== 'SUPER_ADMIN' ? { ownerAdminId: viewer.id } : {}
+
+const assertProviderExists = async (providerId: string, viewer?: AdminViewer) => {
   const normalizedProviderId = String(providerId || '').trim()
   if (!normalizedProviderId) {
     throw new Error('缺少厂商 ID')
   }
 
   await ensureProviderSeedData()
-  const provider = await prisma.aiProvider.findUnique({
-    where: { id: normalizedProviderId },
+  // 归属隔离：普通管理员只能命中自己的厂商；非自己的按"不存在"处理。
+  const provider = await prisma.aiProvider.findFirst({
+    where: { id: normalizedProviderId, ...ownerWhere(viewer) },
     select: { id: true },
   })
   if (!provider) {
@@ -120,8 +126,8 @@ const assertProviderExists = async (providerId: string) => {
   return normalizedProviderId
 }
 
-const getProviderRuntimeConnection = async (providerId: string) => {
-  const provider = await getAdminProviderDetail(providerId)
+const getProviderRuntimeConnection = async (providerId: string, viewer?: AdminViewer) => {
+  const provider = await getAdminProviderDetail(providerId, viewer)
   const baseUrl = String(provider.baseUrl || '').trim().replace(/\/+$/, '')
   const apiKey = String(provider.apiKey || '').trim()
   if (!baseUrl) {
@@ -226,13 +232,13 @@ const findFirstEnabledModelKey = async (providerId: string, category: ModelCateg
 const buildProviderDiscoverCacheKey = (providerId: string) => redisKeys.cache('provider-model-discover', providerId)
 
 // 读取上游 /v1/models 结果，供后台批量选择导入。
-export const discoverProviderModels = async (providerId: string) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
+export const discoverProviderModels = async (providerId: string, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
   return getOrSetJsonCache({
     key: buildProviderDiscoverCacheKey(normalizedProviderId),
     ttlSeconds: 5 * 60,
     factory: async () => {
-      const { baseUrl, apiKey, provider } = await getProviderRuntimeConnection(normalizedProviderId)
+      const { baseUrl, apiKey, provider } = await getProviderRuntimeConnection(normalizedProviderId, viewer)
       const requestUrl = resolveProviderModelsUrl(baseUrl)
 
       const response = await fetch(requestUrl, {
@@ -286,9 +292,9 @@ export const invalidateProviderDiscoverModelsCache = async (providerId?: string)
   await invalidateRedisCaches([buildProviderDiscoverCacheKey(normalizedProviderId)])
 }
 
-export const testProviderConnectivity = async (providerId: string) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
-  const { baseUrl, apiKey, provider } = await getProviderRuntimeConnection(normalizedProviderId)
+export const testProviderConnectivity = async (providerId: string, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
+  const { baseUrl, apiKey, provider } = await getProviderRuntimeConnection(normalizedProviderId, viewer)
   const supportedTypes = Array.isArray(provider.supportedTypes) ? provider.supportedTypes : []
   const tests: Array<ReturnType<typeof runTimedProviderTest>> = []
 
@@ -399,8 +405,8 @@ export const testProviderConnectivity = async (providerId: string) => {
   }
 }
 
-export const listProviderModels = async (providerId: string) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
+export const listProviderModels = async (providerId: string, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
   const models = await prisma.aiModel.findMany({
     where: {
       providerId: normalizedProviderId,
@@ -412,7 +418,7 @@ export const listProviderModels = async (providerId: string) => {
   })
 
   return {
-    provider: await getAdminProviderDetail(normalizedProviderId),
+    provider: await getAdminProviderDetail(normalizedProviderId, viewer),
     models: models.map(buildProviderModelItem),
   }
 }
@@ -440,8 +446,8 @@ const assertDuplicateModel = async (input: {
   }
 }
 
-export const createProviderModel = async (providerId: string, payload: ProviderModelPayload) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
+export const createProviderModel = async (providerId: string, payload: ProviderModelPayload, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
   const normalizedPayload = normalizeModelPayload(payload)
   await assertDuplicateModel({
     providerId: normalizedProviderId,
@@ -467,8 +473,8 @@ export const createProviderModel = async (providerId: string, payload: ProviderM
 }
 
 // 批量导入或更新模型，便于从上游 /v1/models 选择后一次性落库。
-export const batchUpsertProviderModels = async (providerId: string, payload: ProviderModelBatchUpsertPayload) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
+export const batchUpsertProviderModels = async (providerId: string, payload: ProviderModelBatchUpsertPayload, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
   const items = Array.isArray(payload.items) ? payload.items : []
   if (!items.length) {
     throw new Error('缺少待导入的模型列表')
@@ -523,13 +529,13 @@ export const batchUpsertProviderModels = async (providerId: string, payload: Pro
   })
 
   return {
-    provider: await getAdminProviderDetail(normalizedProviderId),
+    provider: await getAdminProviderDetail(normalizedProviderId, viewer),
     models: results,
   }
 }
 
-export const updateProviderModel = async (providerId: string, id: string, payload: ProviderModelPayload) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
+export const updateProviderModel = async (providerId: string, id: string, payload: ProviderModelPayload, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
   const normalizedId = String(id || '').trim()
   if (!normalizedId) {
     throw new Error('缺少模型 ID')
@@ -567,8 +573,8 @@ export const updateProviderModel = async (providerId: string, id: string, payloa
   return buildProviderModelItem(updated)
 }
 
-export const deleteProviderModel = async (providerId: string, id: string) => {
-  const normalizedProviderId = await assertProviderExists(providerId)
+export const deleteProviderModel = async (providerId: string, id: string, viewer?: AdminViewer) => {
+  const normalizedProviderId = await assertProviderExists(providerId, viewer)
   const normalizedId = String(id || '').trim()
   if (!normalizedId) {
     throw new Error('缺少模型 ID')

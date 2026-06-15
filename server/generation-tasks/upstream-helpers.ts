@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { safeFetch } from '../shared/safe-fetch'
-import { getPublicModelCatalog, resolveGatewayProviderUpstream } from '../provider-config/service'
+import { getPublicModelCatalog, resolveGatewayProviderUpstream, resolveProviderOwnerScope } from '../provider-config/service'
 import { getUploadsDir } from '../storage/service'
 import { buildAgentChatMessages } from '../../src/shared/agent-skills-core'
 import { normalizeGenerationErrorMessage } from '../../src/shared/generation-error'
@@ -552,8 +552,10 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
 export const resolveWorkspaceImageModel = async (binding?: {
   providerId: string
   modelKey: string
-}) => {
-  const catalog = await getPublicModelCatalog()
+}, requestUserId?: string) => {
+  // 按请求者所属管理员的厂商作用域取目录：既保证能找到本租户的私有模型，也顺带拦截越权绑定。
+  const scope = await resolveProviderOwnerScope(requestUserId)
+  const catalog = await getPublicModelCatalog(scope)
   if (binding?.providerId && binding?.modelKey) {
     const matchedImageModel = catalog.models.image.find(item => {
       return item.providerId === binding.providerId && item.modelKey === binding.modelKey

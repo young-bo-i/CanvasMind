@@ -32,6 +32,9 @@ export interface AdminProviderItem {
   extraJson?: ProviderVideoExtraConfig | null
   isEnabled: boolean
   sortOrder: number
+  // 归属：null/'' = 全局(超管/平台)；否则为某管理员私有。ownerAdminName 供超管列表标注归属。
+  ownerAdminId?: string | null
+  ownerAdminName?: string
   modelCount: number
   enabledModelCount: number
   modelTypes: string[]

@@ -3,9 +3,10 @@
  * 统一从后台公开模型目录读取，不再使用前端静态模型清单。
  */
 
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { buildApiUrl } from '@/api/http'
 import { readApiData } from '@/api/response'
+import { useAuthStore } from '@/stores/auth'
 
 export interface SizeOption {
   label: string
@@ -279,6 +280,15 @@ export const loadPublicModelCatalog = async (force = false) => {
 
   return modelCatalogPromise
 }
+
+// 模型目录现按"用户所属管理员"的厂商作用域返回（每个普管的用户只看到该管理员的模型）。
+// 登录 / 登出 / 切换账号时强制重载，避免沿用上一个作用域的旧目录。
+watch(
+  () => useAuthStore().currentUser.value?.id || '',
+  () => {
+    void loadPublicModelCatalog(true)
+  },
+)
 
 export const getPublicModelCatalog = () => modelCatalogRef.value
 

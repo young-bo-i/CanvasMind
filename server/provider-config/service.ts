@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma'
 import { decryptProviderApiKey, encryptProviderApiKey, maskApiKey } from './crypto'
-import { getOrSetJsonCache, invalidateRedisCaches, redisKeys } from '../redis'
+import { getOrSetJsonCache, invalidateRedisCaches, invalidateRedisCachePatterns, redisKeys } from '../redis'
 import {
   type AiEndpointType,
   isAiEndpointType,
@@ -59,7 +59,55 @@ export interface PublicModelCatalogResult {
 }
 
 const buildModelSelectionKey = (providerId: string, category: string, modelKey: string) => `${providerId}::${category}::${modelKey}`
-const PUBLIC_MODEL_CATALOG_CACHE_KEY = redisKeys.cache('provider-config', 'public-model-catalog')
+// 目录按「厂商归属作用域」分别缓存：scope=null → 'global'(超管/平台直属可见的全局厂商)；scope=adminId → 该管理员私有。
+const buildPublicModelCatalogCacheKey = (scope: string | null) =>
+  redisKeys.cache('provider-config', `public-model-catalog:${scope || 'global'}`)
+const PUBLIC_MODEL_CATALOG_CACHE_PATTERN = redisKeys.cache('provider-config', 'public-model-catalog:*')
+
+// ===== 厂商按管理员归属隔离 =====
+// 后台查看者（管理可见范围）：超管看全部；普通管理员只看自己创建的厂商。
+type AdminViewer = { id: string; role: string }
+const buildProviderOwnerWhere = (viewer?: AdminViewer): { ownerAdminId?: string } => {
+  if (viewer && viewer.role !== 'SUPER_ADMIN') {
+    return { ownerAdminId: viewer.id }
+  }
+  return {}
+}
+
+// 运行时路由作用域：决定某个请求该用哪一套厂商（返回的 ownerAdminId 取值）。
+//  - 超管 / 平台直属用户(USER 且无归属，或归属于超管) → null（全局厂商 ownerAdminId IS NULL）
+//  - 普通管理员本人 → 自己的 id（用自己的厂商）
+//  - 普通用户 → 其 ownerAdminId（创建他的管理员）
+export const resolveProviderOwnerScope = async (userId: string | null | undefined): Promise<string | null> => {
+  const id = String(userId || '').trim()
+  if (!id) return null
+  const user = await prisma.appUser.findUnique({
+    where: { id },
+    select: { id: true, role: true, ownerAdminId: true },
+  })
+  if (!user) return null
+  if (user.role === 'SUPER_ADMIN') return null
+  if (user.role === 'ADMIN') return user.id
+  const adminId = String(user.ownerAdminId || '').trim()
+  if (!adminId) return null
+  const admin = await prisma.appUser.findUnique({ where: { id: adminId }, select: { role: true } })
+  if (!admin || admin.role === 'SUPER_ADMIN') return null
+  return adminId
+}
+
+// 校验请求者只能使用其归属作用域内的厂商，杜绝传入别的管理员 providerId 越权调用。
+export const assertProviderInScope = async (providerId: string, userId: string | null | undefined) => {
+  const id = String(providerId || '').trim()
+  if (!id) return
+  const provider = await prisma.aiProvider.findUnique({ where: { id }, select: { ownerAdminId: true } })
+  if (!provider) {
+    throw new Error('厂商不存在')
+  }
+  const scope = await resolveProviderOwnerScope(userId)
+  if ((provider.ownerAdminId || null) !== scope) {
+    throw new Error('无权使用该厂商')
+  }
+}
 
 export interface AdminProviderPayload {
   code?: string
@@ -91,8 +139,11 @@ const getLegacyDefaultConfigRecord = () => prisma.aiProviderConfig.findFirst({
   ],
 })
 
-const getFirstProviderRecord = (onlyEnabled = false) => prisma.aiProvider.findFirst({
-  where: onlyEnabled ? { isEnabled: true } : undefined,
+const getFirstProviderRecord = (onlyEnabled = false, scope: string | null = null) => prisma.aiProvider.findFirst({
+  where: {
+    ownerAdminId: scope,
+    ...(onlyEnabled ? { isEnabled: true } : {}),
+  },
   orderBy: [
     { sortOrder: 'asc' },
     { createdAt: 'asc' },
@@ -184,6 +235,8 @@ const buildProviderListItem = (provider: {
   extraJson?: unknown
   isEnabled: boolean
   sortOrder: number
+  ownerAdminId?: string | null
+  ownerAdmin?: { id: string; name: string | null; email: string | null } | null
   createdAt: Date
   updatedAt: Date
   models: Array<{
@@ -219,6 +272,9 @@ const buildProviderListItem = (provider: {
       : {},
     isEnabled: provider.isEnabled,
     sortOrder: provider.sortOrder,
+    // 归属：null = 全局(超管/平台)；否则为某管理员私有。ownerAdminName 供超管列表展示归属。
+    ownerAdminId: provider.ownerAdminId || null,
+    ownerAdminName: provider.ownerAdmin?.name || provider.ownerAdmin?.email || '',
     modelCount,
     enabledModelCount,
     modelTypes,
@@ -305,29 +361,34 @@ export const ensureProviderSeedData = async () => {
   await materializeLegacyProvider()
 }
 
-export const getRuntimeProviderRecord = async () => {
+export const getRuntimeProviderRecord = async (scope: string | null = null) => {
   await ensureProviderSeedData()
-  const enabledProvider = await getFirstProviderRecord(true)
+  const enabledProvider = await getFirstProviderRecord(true, scope)
   if (enabledProvider) {
     return enabledProvider
   }
 
-  return getFirstProviderRecord(false)
+  return getFirstProviderRecord(false, scope)
 }
 
-export const listAdminProviders = async () => {
+const PROVIDER_LIST_INCLUDE = {
+  ownerAdmin: { select: { id: true, name: true, email: true } },
+  models: {
+    select: {
+      id: true,
+      category: true,
+      isEnabled: true,
+    },
+  },
+} as const
+
+// 归属隔离：超管看全部；普通管理员只看自己创建的厂商。
+export const listAdminProviders = async (viewer?: AdminViewer) => {
   await ensureProviderSeedData()
 
   const providers = await prisma.aiProvider.findMany({
-    include: {
-      models: {
-        select: {
-          id: true,
-          category: true,
-          isEnabled: true,
-        },
-      },
-    },
+    where: buildProviderOwnerWhere(viewer),
+    include: PROVIDER_LIST_INCLUDE,
     orderBy: [
       { sortOrder: 'asc' },
       { createdAt: 'asc' },
@@ -337,24 +398,17 @@ export const listAdminProviders = async () => {
   return providers.map(buildProviderListItem)
 }
 
-export const getAdminProviderDetail = async (id: string) => {
+export const getAdminProviderDetail = async (id: string, viewer?: AdminViewer) => {
   await ensureProviderSeedData()
   const providerId = String(id || '').trim()
   if (!providerId) {
     throw new Error('缺少厂商 ID')
   }
 
-  const provider = await prisma.aiProvider.findUnique({
-    where: { id: providerId },
-    include: {
-      models: {
-        select: {
-          id: true,
-          category: true,
-          isEnabled: true,
-        },
-      },
-    },
+  // 普通管理员只能看自己的厂商；超管不限。非自己的厂商按"不存在"处理，不泄漏存在性。
+  const provider = await prisma.aiProvider.findFirst({
+    where: { id: providerId, ...buildProviderOwnerWhere(viewer) },
+    include: PROVIDER_LIST_INCLUDE,
   })
 
   if (!provider) {
@@ -367,10 +421,12 @@ export const getAdminProviderDetail = async (id: string) => {
   }
 }
 
-const assertProviderCodeDuplicated = async (code: string, excludeId = '') => {
+// 厂商标识唯一性按「归属」隔离：同一管理员(或全局桶)内不可重复；不同管理员可使用相同 code。
+const assertProviderCodeDuplicated = async (code: string, ownerAdminId: string | null, excludeId = '') => {
   const duplicated = await prisma.aiProvider.findFirst({
     where: {
       code,
+      ownerAdminId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { id: true },
@@ -381,9 +437,12 @@ const assertProviderCodeDuplicated = async (code: string, excludeId = '') => {
   }
 }
 
-export const createAdminProvider = async (payload: AdminProviderPayload) => {
+export const createAdminProvider = async (payload: AdminProviderPayload, viewer?: AdminViewer) => {
   const normalizedPayload = normalizeProviderPayload(payload, { isCreate: true })
-  await assertProviderCodeDuplicated(normalizedPayload.code)
+
+  // 归属：普通管理员创建的厂商归自己（私有）；超管创建的归 null（全局）。code 唯一性按归属桶判定。
+  const ownerAdminId = viewer && viewer.role !== 'SUPER_ADMIN' ? viewer.id : null
+  await assertProviderCodeDuplicated(normalizedPayload.code, ownerAdminId)
 
   const createdProvider = await prisma.aiProvider.create({
     data: {
@@ -404,36 +463,31 @@ export const createAdminProvider = async (payload: AdminProviderPayload) => {
       isEnabled: normalizedPayload.isEnabled,
       sortOrder: normalizedPayload.sortOrder,
       isBuiltIn: false,
+      ownerAdminId,
     },
-    include: {
-      models: {
-        select: {
-          id: true,
-          category: true,
-          isEnabled: true,
-        },
-      },
-    },
+    include: PROVIDER_LIST_INCLUDE,
   })
 
   return buildProviderListItem(createdProvider)
 }
 
-export const updateAdminProvider = async (id: string, payload: AdminProviderPayload) => {
+export const updateAdminProvider = async (id: string, payload: AdminProviderPayload, viewer?: AdminViewer) => {
   const providerId = String(id || '').trim()
   if (!providerId) {
     throw new Error('缺少厂商 ID')
   }
 
-  const existingProvider = await prisma.aiProvider.findUnique({
-    where: { id: providerId },
+  // 归属校验：普通管理员只能改自己的厂商；超管不限。
+  const existingProvider = await prisma.aiProvider.findFirst({
+    where: { id: providerId, ...buildProviderOwnerWhere(viewer) },
   })
   if (!existingProvider) {
     throw new Error('厂商不存在')
   }
 
   const normalizedPayload = normalizeProviderPayload(payload, { isCreate: false })
-  await assertProviderCodeDuplicated(normalizedPayload.code, providerId)
+  // code 唯一性仍按该厂商所属归属桶判定（更新不改归属）。
+  await assertProviderCodeDuplicated(normalizedPayload.code, existingProvider.ownerAdminId ?? null, providerId)
 
   const updatedProvider = await prisma.aiProvider.update({
     where: { id: providerId },
@@ -455,28 +509,21 @@ export const updateAdminProvider = async (id: string, payload: AdminProviderPayl
       isEnabled: normalizedPayload.isEnabled,
       sortOrder: normalizedPayload.sortOrder,
     },
-    include: {
-      models: {
-        select: {
-          id: true,
-          category: true,
-          isEnabled: true,
-        },
-      },
-    },
+    include: PROVIDER_LIST_INCLUDE,
   })
 
   return buildProviderListItem(updatedProvider)
 }
 
-export const deleteAdminProvider = async (id: string) => {
+export const deleteAdminProvider = async (id: string, viewer?: AdminViewer) => {
   const providerId = String(id || '').trim()
   if (!providerId) {
     throw new Error('缺少厂商 ID')
   }
 
-  const existingProvider = await prisma.aiProvider.findUnique({
-    where: { id: providerId },
+  // 归属校验：普通管理员只能删自己的厂商；超管不限。
+  const existingProvider = await prisma.aiProvider.findFirst({
+    where: { id: providerId, ...buildProviderOwnerWhere(viewer) },
     select: {
       id: true,
       _count: {
@@ -502,18 +549,20 @@ export const deleteAdminProvider = async (id: string) => {
 
 
 export const invalidatePublicModelCatalogCache = async () => {
-  await invalidateRedisCaches([PUBLIC_MODEL_CATALOG_CACHE_KEY])
+  // 目录已按归属作用域分键缓存，统一按模式清空所有作用域。
+  await invalidateRedisCachePatterns([PUBLIC_MODEL_CATALOG_CACHE_PATTERN])
 }
 
-export const getPublicModelCatalog = async (): Promise<PublicModelCatalogResult> => {
+// scope=null → 全局厂商(超管/平台直属可见)；scope=adminId → 该管理员私有厂商。
+export const getPublicModelCatalog = async (scope: string | null = null): Promise<PublicModelCatalogResult> => {
   return getOrSetJsonCache({
-    key: PUBLIC_MODEL_CATALOG_CACHE_KEY,
+    key: buildPublicModelCatalogCacheKey(scope),
     ttlSeconds: 60,
     factory: async () => {
       await ensureProviderSeedData()
 
       const providers = await prisma.aiProvider.findMany({
-        where: { isEnabled: true },
+        where: { isEnabled: true, ownerAdminId: scope },
         include: {
           models: {
             where: { isEnabled: true },
@@ -714,8 +763,8 @@ export const resolveVideoProviderUpstream = async (input: {
   }
 }
 
-export const getDefaultProviderOverview = async () => {
-  const provider = await getRuntimeProviderRecord()
+export const getDefaultProviderOverview = async (scope: string | null = null) => {
+  const provider = await getRuntimeProviderRecord(scope)
   if (!provider) {
     return null
   }

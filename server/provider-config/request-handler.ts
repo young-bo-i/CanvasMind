@@ -1,6 +1,6 @@
 import { sendJson, readJsonBody } from '../ai-gateway/shared'
 import { isPrismaConfigured } from '../db/prisma'
-import { requireAdminSessionUser } from '../auth/session'
+import { readCurrentSessionUser, requireAdminSessionUser } from '../auth/session'
 import { REDIS_CONFIG, consumeFixedWindowRateLimit, getRedisRuntimeSettings } from '../redis'
 import { recordAdminAuditLog } from '../shared/admin-audit'
 import { invalidateAdminCaches } from '../shared/admin-cache'
@@ -10,6 +10,7 @@ import {
   getAdminProviderDetail,
   getPublicModelCatalog,
   listAdminProviders,
+  resolveProviderOwnerScope,
   updateAdminProvider,
 } from './service'
 import {
@@ -108,7 +109,10 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
     const providerTestMatch = matchProviderTestPath(requestPath)
 
     if (req.method === 'GET' && requestPath === PROVIDER_CONFIG_CATALOG_PATH) {
-      const data = await getPublicModelCatalog()
+      // 目录按请求者所属管理员的厂商作用域返回：登录用户→其作用域(普管=其管理员私有厂商)；未登录→全局。
+      const currentUser = await readCurrentSessionUser(req)
+      const scope = await resolveProviderOwnerScope(currentUser?.id)
+      const data = await getPublicModelCatalog(scope)
       sendJson(res, 200, { data })
       return
     }
@@ -119,7 +123,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         return
       }
 
-      const data = await listAdminProviders()
+      const data = await listAdminProviders({ id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data })
       return
     }
@@ -130,7 +134,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         return
       }
 
-      const data = await getAdminProviderDetail(providerDetailMatch.providerId)
+      const data = await getAdminProviderDetail(providerDetailMatch.providerId, { id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data })
       return
     }
@@ -142,7 +146,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
       }
 
       const payload = await readJsonBody(req)
-      const data = await createAdminProvider(payload as any)
+      const data = await createAdminProvider(payload as any, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true })
       await recordAdminAuditLog({
         req,
@@ -164,8 +168,8 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
       }
 
       const payload = await readJsonBody(req)
-      const before = await getAdminProviderDetail(providerDetailMatch.providerId)
-      const data = await updateAdminProvider(providerDetailMatch.providerId, payload as any)
+      const before = await getAdminProviderDetail(providerDetailMatch.providerId, { id: currentUser.id, role: currentUser.role })
+      const data = await updateAdminProvider(providerDetailMatch.providerId, payload as any, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true, providerDiscover: providerDetailMatch.providerId })
       await recordAdminAuditLog({
         req,
@@ -189,8 +193,8 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         return
       }
 
-      const before = await getAdminProviderDetail(providerDetailMatch.providerId)
-      const data = await deleteAdminProvider(providerDetailMatch.providerId)
+      const before = await getAdminProviderDetail(providerDetailMatch.providerId, { id: currentUser.id, role: currentUser.role })
+      const data = await deleteAdminProvider(providerDetailMatch.providerId, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true, providerDiscover: providerDetailMatch.providerId })
       await recordAdminAuditLog({
         req,
@@ -211,7 +215,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         return
       }
 
-      const data = await listProviderModels(providerModelsMatch.providerId)
+      const data = await listProviderModels(providerModelsMatch.providerId, { id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data })
       return
     }
@@ -237,7 +241,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         )
       }
 
-      const data = await discoverProviderModels(providerModelDiscoverMatch.providerId)
+      const data = await discoverProviderModels(providerModelDiscoverMatch.providerId, { id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data, message: '模型列表已获取' })
       return
     }
@@ -248,7 +252,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         return
       }
 
-      const data = await testProviderConnectivity(providerTestMatch.providerId)
+      const data = await testProviderConnectivity(providerTestMatch.providerId, { id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data, message: data.ok ? '厂商连通性测试通过' : '厂商连通性测试存在失败项' })
       return
     }
@@ -260,7 +264,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
       }
 
       const payload = await readJsonBody(req)
-      const data = await createProviderModel(providerModelsMatch.providerId, payload as any)
+      const data = await createProviderModel(providerModelsMatch.providerId, payload as any, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true, providerDiscover: providerModelsMatch.providerId })
       await recordAdminAuditLog({
         req,
@@ -285,7 +289,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
       }
 
       const payload = await readJsonBody(req)
-      const data = await batchUpsertProviderModels(providerModelBatchUpsertMatch.providerId, payload as any)
+      const data = await batchUpsertProviderModels(providerModelBatchUpsertMatch.providerId, payload as any, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true, providerDiscover: providerModelBatchUpsertMatch.providerId })
       await recordAdminAuditLog({
         req,
@@ -310,7 +314,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
       }
 
       const payload = await readJsonBody(req)
-      const data = await updateProviderModel(providerModelDetailMatch.providerId, providerModelDetailMatch.modelId, payload as any)
+      const data = await updateProviderModel(providerModelDetailMatch.providerId, providerModelDetailMatch.modelId, payload as any, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true, providerDiscover: providerModelDetailMatch.providerId })
       await recordAdminAuditLog({
         req,
@@ -334,7 +338,7 @@ export const handleProviderConfigRequest = async (req: any, res: any) => {
         return
       }
 
-      const data = await deleteProviderModel(providerModelDetailMatch.providerId, providerModelDetailMatch.modelId)
+      const data = await deleteProviderModel(providerModelDetailMatch.providerId, providerModelDetailMatch.modelId, { id: currentUser.id, role: currentUser.role })
       await invalidateAdminCaches({ dashboard: true, modelCatalog: true, providerDiscover: providerModelDetailMatch.providerId })
       await recordAdminAuditLog({
         req,

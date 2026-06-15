@@ -57,7 +57,12 @@
               <span v-else>{{ getProviderInitial(provider.name) }}</span>
             </div>
             <div class="admin-provider-tile__meta">
-              <div class="admin-provider-tile__title">{{ provider.name }}</div>
+              <div class="admin-provider-tile__title">
+                {{ provider.name }}
+                <span v-if="isSuperAdmin" class="admin-chip" style="margin-left:6px;font-size:12px">
+                  {{ provider.ownerAdminId ? `管理员：${provider.ownerAdminName || provider.ownerAdminId}` : '全局' }}
+                </span>
+              </div>
               <button class="admin-provider-tile__link" type="button" @click="openModelManager(provider)">
                 管理模型({{ provider.modelCount }})
               </button>
@@ -714,6 +719,11 @@ import {
   type AdminProviderModelItem,
   type AdminProviderModelPayload,
 } from '@/api/admin-models'
+import { useAuthStore } from '@/stores/auth'
+
+// 超管可见所有厂商（含各管理员私有），用于在列表标注归属；普通管理员只会拿到自己的厂商。
+const authStore = useAuthStore()
+const isSuperAdmin = authStore.isSuperAdmin
 
 // 视频可配置的分辨率档位(与后端 normalizeVideoResolution 规范键一致)。
 const VIDEO_RESOLUTION_KEYS = ['480P', '720P', '1080P'] as const

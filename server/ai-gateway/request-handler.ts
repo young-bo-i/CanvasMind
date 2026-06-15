@@ -5,7 +5,7 @@ import {
   sendJson,
 } from './shared'
 import { forwardGatewayPayload, forwardMultipartRequest } from './forward'
-import { resolveGatewayProviderUpstream } from '../provider-config/service'
+import { assertProviderInScope, resolveGatewayProviderUpstream } from '../provider-config/service'
 import { requireCurrentSessionUser } from '../auth/session'
 import { consumeGenerationPoints, refundGenerationPoints, resolveGenerationPointCost } from '../marketing-center/service'
 import { normalizeChargeableEndpointType, type AiEndpointType } from '../../src/shared/provider-endpoint-strategy'
@@ -65,6 +65,9 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
 
     if (headerProviderId && headerEndpointType) {
       const currentUser = sessionUser
+
+      // 租户隔离：只能用本人所属管理员作用域内的厂商。
+      await assertProviderInScope(headerProviderId, currentUser?.id)
 
       const upstream = await resolveGatewayProviderUpstream({
         providerId: headerProviderId,
@@ -178,6 +181,10 @@ export const handleAiGatewayRequest = async (req: any, res: any) => {
 
     const payload = await readJsonBody(req)
     const normalized = normalizeGatewayPayload(payload)
+    // 租户隔离：只能用本人所属管理员作用域内的厂商。
+    if (normalized.providerId) {
+      await assertProviderInScope(normalized.providerId, sessionUser?.id)
+    }
     const upstream = normalized.providerId && normalized.endpointType
       ? await resolveGatewayProviderUpstream({
         providerId: normalized.providerId,

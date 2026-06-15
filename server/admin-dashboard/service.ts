@@ -2,7 +2,7 @@ import { invalidateRedisCachePatterns, invalidateRedisCaches } from '../redis/ca
 import { getOrSetJsonCache } from '../redis/json-cache'
 import { redisKeys } from '../redis/keys'
 import { prisma } from '../db/prisma'
-import { getDefaultProviderOverview } from '../provider-config/service'
+import { getDefaultProviderOverview, resolveProviderOwnerScope } from '../provider-config/service'
 
 const ADMIN_DASHBOARD_OVERVIEW_SCOPE = 'admin-dashboard-overview'
 const ADMIN_DASHBOARD_OVERVIEW_CACHE_PATTERN = redisKeys.cache(ADMIN_DASHBOARD_OVERVIEW_SCOPE, '*')
@@ -132,7 +132,7 @@ export const getAdminDashboardOverview = async (currentUserId: string) => {
             scene: 'global',
           },
         }),
-        getDefaultProviderOverview(),
+        getDefaultProviderOverview(await resolveProviderOwnerScope(normalizedUserId)),
       ])
 
       const [generationTrend, assetTrend] = await Promise.all([
