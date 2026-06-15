@@ -4,6 +4,18 @@ import type { AdminGenerationSessionsQuery } from './shared'
 
 const MAX_GENERATION_SESSION_TITLE_LENGTH = 120
 
+// 后台查看者身份，用于归属隔离。
+export type AdminSessionViewer = { id: string; role: string }
+
+// 归属隔离作用域：超管(SUPER_ADMIN)看全部；普通管理员仅限自己名下用户(ownerAdminId=自己)的会话。
+// 平台直属用户(ownerAdminId=NULL，含自助注册/历史数据)对普通管理员不可见。
+const buildSessionOwnerScope = (viewer?: AdminSessionViewer) => {
+  if (viewer && viewer.role !== 'SUPER_ADMIN') {
+    return { user: { ownerAdminId: viewer.id || '__none__' } }
+  }
+  return {}
+}
+
 const buildRecordInclude = () => ({
   session: true,
   outputs: {
@@ -239,8 +251,13 @@ const buildSessionWhereInput = (query: AdminGenerationSessionsQuery) => {
 }
 
 // 分页查询后台会话列表，支持用户维度与状态筛选。
-export const listAdminGenerationSessions = async (query: AdminGenerationSessionsQuery) => {
-  const where = buildSessionWhereInput(query)
+export const listAdminGenerationSessions = async (
+  query: AdminGenerationSessionsQuery,
+  viewer?: AdminSessionViewer,
+) => {
+  const baseWhere = buildSessionWhereInput(query)
+  const ownerScope = buildSessionOwnerScope(viewer)
+  const where = Object.keys(ownerScope).length ? { AND: [baseWhere, ownerScope] } : baseWhere
   const totalCount = await prisma.generationSession.count({ where })
   const pagination = resolvePagination(query, totalCount, {
     defaultPageSize: 12,
@@ -368,14 +385,14 @@ export const listAdminGenerationSessions = async (query: AdminGenerationSessions
 }
 
 // 查询后台会话详情，包含用户信息与会话统计。
-export const getAdminGenerationSessionDetail = async (id: string) => {
+export const getAdminGenerationSessionDetail = async (id: string, viewer?: AdminSessionViewer) => {
   const sessionId = String(id || '').trim()
   if (!sessionId) {
     throw new Error('缺少会话 ID')
   }
 
-  const session = await prisma.generationSession.findUnique({
-    where: { id: sessionId },
+  const session = await prisma.generationSession.findFirst({
+    where: { id: sessionId, ...buildSessionOwnerScope(viewer) },
     select: {
       id: true,
       title: true,
@@ -460,14 +477,19 @@ export const getAdminGenerationSessionDetail = async (id: string) => {
 }
 
 // 查询指定会话下的生成记录，供后台详情抽屉分页查看。
-export const listAdminGenerationSessionRecords = async (id: string, page: number, pageSize: number) => {
+export const listAdminGenerationSessionRecords = async (
+  id: string,
+  page: number,
+  pageSize: number,
+  viewer?: AdminSessionViewer,
+) => {
   const sessionId = String(id || '').trim()
   if (!sessionId) {
     throw new Error('缺少会话 ID')
   }
 
-  const existingSession = await prisma.generationSession.findUnique({
-    where: { id: sessionId },
+  const existingSession = await prisma.generationSession.findFirst({
+    where: { id: sessionId, ...buildSessionOwnerScope(viewer) },
     select: { id: true },
   })
 
@@ -497,14 +519,18 @@ export const listAdminGenerationSessionRecords = async (id: string, page: number
 }
 
 // 后台重命名会话。
-export const updateAdminGenerationSession = async (id: string, payload: { title?: string }) => {
+export const updateAdminGenerationSession = async (
+  id: string,
+  payload: { title?: string },
+  viewer?: AdminSessionViewer,
+) => {
   const sessionId = String(id || '').trim()
   if (!sessionId) {
     throw new Error('缺少会话 ID')
   }
 
-  const existingSession = await prisma.generationSession.findUnique({
-    where: { id: sessionId },
+  const existingSession = await prisma.generationSession.findFirst({
+    where: { id: sessionId, ...buildSessionOwnerScope(viewer) },
     select: {
       id: true,
       isDefault: true,
@@ -522,18 +548,18 @@ export const updateAdminGenerationSession = async (id: string, payload: { title?
     },
   })
 
-  return getAdminGenerationSessionDetail(sessionId)
+  return getAdminGenerationSessionDetail(sessionId, viewer)
 }
 
 // 后台删除会话；默认会话为了安全仍不允许直接删。
-export const deleteAdminGenerationSession = async (id: string) => {
+export const deleteAdminGenerationSession = async (id: string, viewer?: AdminSessionViewer) => {
   const sessionId = String(id || '').trim()
   if (!sessionId) {
     throw new Error('缺少会话 ID')
   }
 
-  const existingSession = await prisma.generationSession.findUnique({
-    where: { id: sessionId },
+  const existingSession = await prisma.generationSession.findFirst({
+    where: { id: sessionId, ...buildSessionOwnerScope(viewer) },
     select: {
       id: true,
       isDefault: true,

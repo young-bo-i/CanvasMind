@@ -1,16 +1,13 @@
 import crypto from 'node:crypto'
 import prisma from '../db/prisma'
 import { refundGenerationPoints } from '../marketing-center/service'
+import { listAdminUsers } from '../admin-users/service'
 import type {
   MarketingCardBatchPayload,
   MarketingPointCompensationExecutePayload,
   MarketingPointLogQueryPayload,
   MarketingPointCompensationQueryPayload,
-  MarketingMembershipBillingRulePayload,
   MarketingMembershipLevelPayload,
-  MarketingMembershipPlanPayload,
-  MarketingRechargePackagePayload,
-  MarketingRewardRulePayload,
 } from './shared'
 
 const toInt = (value: unknown, fallback = 0) => {
@@ -84,115 +81,6 @@ const serializeMarketingRecord = <T>(value: T): T => {
   return value
 }
 
-
-const normalizeMembershipDurationType = (durationType: unknown, durationUnit: unknown, durationValue: unknown) => {
-  const normalizedType = toStringValue(durationType).toUpperCase()
-  if (['MONTH', 'QUARTER', 'HALF_YEAR', 'YEAR', 'FOREVER', 'CUSTOM'].includes(normalizedType)) {
-    return normalizedType as any
-  }
-
-  const normalizedUnit = toStringValue(durationUnit, 'MONTH').toUpperCase()
-  const numericValue = Math.max(1, toInt(durationValue, 1))
-  if (normalizedUnit === 'YEAR') {
-    return 'YEAR' as any
-  }
-  if (normalizedUnit === 'MONTH' && numericValue === 12) {
-    return 'YEAR' as any
-  }
-  if (normalizedUnit === 'MONTH' && numericValue === 6) {
-    return 'HALF_YEAR' as any
-  }
-  if (normalizedUnit === 'MONTH' && numericValue === 3) {
-    return 'QUARTER' as any
-  }
-  if (normalizedUnit === 'MONTH' && numericValue === 1) {
-    return 'MONTH' as any
-  }
-  return 'CUSTOM' as any
-}
-
-const normalizeRewardTriggerType = (triggerType: unknown) => {
-  const normalizedType = toStringValue(triggerType, 'LOGIN_DAILY').toUpperCase()
-  if (normalizedType === 'LOGIN') return 'LOGIN_DAILY' as any
-  if (normalizedType === 'REGISTER') return 'REGISTER_ONCE' as any
-  if (normalizedType === 'CHECKIN') return 'CHECKIN_DAILY' as any
-  return (normalizedType || 'LOGIN_DAILY') as any
-}
-
-interface NormalizedMembershipBillingRule {
-  levelId: string
-  salesPrice: number
-  originalPrice: number | null
-  label: string | null
-  status: boolean
-}
-
-// 按 BuildingAI 的 billing 结构保存会员计划计费规则。
-const normalizeMembershipBillingRules = (payload: MarketingMembershipPlanPayload) => {
-  const rawRules = Array.isArray(payload.billingRules) ? payload.billingRules : []
-  const normalizedRules = rawRules.map((item) => ({
-    levelId: toStringValue((item as MarketingMembershipBillingRulePayload)?.levelId),
-    salesPrice: toDecimal((item as MarketingMembershipBillingRulePayload)?.salesPrice, 0),
-    originalPrice: (item as MarketingMembershipBillingRulePayload)?.originalPrice === null || (item as MarketingMembershipBillingRulePayload)?.originalPrice === undefined || String((item as MarketingMembershipBillingRulePayload)?.originalPrice || '').trim() === '' ? null : toDecimal((item as MarketingMembershipBillingRulePayload)?.originalPrice, 0),
-    label: toNullableString((item as MarketingMembershipBillingRulePayload)?.label),
-    status: toBoolean((item as MarketingMembershipBillingRulePayload)?.status, true),
-  })).filter((item) => item.levelId)
-
-  const uniqueRules = new Map<string, NormalizedMembershipBillingRule>()
-  for (const item of normalizedRules) {
-    // 同一个等级只保留最后一次编辑结果，避免重复等级导致前后台展示不一致。
-    uniqueRules.set(item.levelId, item)
-  }
-
-  return Array.from(uniqueRules.values())
-}
-
-// 从计划 JSON 中提取权益和计费配置。
-const parseMembershipPlanBenefits = (value: unknown) => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>
-    return {
-      benefits: Array.isArray(record.benefits) ? record.benefits : [],
-      billing: Array.isArray(record.billing) ? record.billing : [],
-    }
-  }
-
-  return {
-    benefits: Array.isArray(value) ? value : [],
-    billing: [],
-  }
-}
-
-const pickDefaultMembershipBillingRule = (billingRules: NormalizedMembershipBillingRule[]) => {
-  return billingRules.find((item) => item.status) || billingRules[0] || null
-}
-
-// 对返回记录补齐 billingRules 和默认展示价格，便于后台与前台统一消费。
-const decorateMembershipPlanRecord = (record: any, levelMap: Map<string, any>) => {
-  const planConfig = parseMembershipPlanBenefits(record.benefitsJson)
-  const billingRules = (Array.isArray(planConfig.billing) ? planConfig.billing : []).map((item) => ({
-    levelId: toStringValue((item as Record<string, unknown>)?.levelId),
-    salesPrice: toDecimal((item as Record<string, unknown>)?.salesPrice, 0),
-    originalPrice: (item as Record<string, unknown>)?.originalPrice === null || (item as Record<string, unknown>)?.originalPrice === undefined || String((item as Record<string, unknown>)?.originalPrice || '').trim() === '' ? null : toDecimal((item as Record<string, unknown>)?.originalPrice, 0),
-    label: toNullableString((item as Record<string, unknown>)?.label),
-    status: toBoolean((item as Record<string, unknown>)?.status, true),
-  })).filter((item) => item.levelId).map((item) => ({
-    ...item,
-    level: levelMap.get(item.levelId) || null,
-  }))
-  const defaultRule = pickDefaultMembershipBillingRule(billingRules)
-
-  return {
-    ...record,
-    levelId: defaultRule?.levelId || '',
-    salesPrice: defaultRule?.salesPrice ?? 0,
-    originalPrice: defaultRule?.originalPrice ?? null,
-    label: defaultRule?.label ?? record.label,
-    level: defaultRule?.level || null,
-    benefitsJson: planConfig.benefits,
-    billingRules,
-  }
-}
 
 const createCardCode = () => {
   // 生成 12 位大写字母数字混合卡密，尽量贴近 BuildingAI 的使用习惯。
@@ -595,10 +483,15 @@ export const listAdminPointLogs = async (
 }
 
 // 查询生成任务积分补偿候选列表，只返回失败/停止且尚未退款的可补偿任务。
-export const listGenerationPointCompensationCandidates = async (query: MarketingPointCompensationQueryPayload = {}) => {
+export const listGenerationPointCompensationCandidates = async (
+  query: MarketingPointCompensationQueryPayload = {},
+  viewer?: { id: string; role: string },
+) => {
   const days = Math.min(90, Math.max(1, toInt(query.days, 7)))
   const limit = Math.min(200, Math.max(1, toInt(query.limit, 50)))
   const startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+  // 归属隔离：普通管理员只看自己名下用户的可补偿流水；超管全量。
+  const ownerScope = viewer && viewer.role !== 'SUPER_ADMIN' ? { user: { ownerAdminId: viewer.id } } : {}
 
   const consumeLogs = await prisma.pointAccountLog.findMany({
     where: {
@@ -607,6 +500,7 @@ export const listGenerationPointCompensationCandidates = async (query: Marketing
       createdAt: {
         gte: startTime,
       },
+      ...ownerScope,
     },
     orderBy: [
       { createdAt: 'desc' },
@@ -691,6 +585,7 @@ export const listGenerationPointCompensationCandidates = async (query: Marketing
 export const executeGenerationPointCompensation = async (
   payload: MarketingPointCompensationExecutePayload,
   currentUserId: string,
+  viewer?: { id: string; role: string },
 ) => {
   const associationNos = Array.from(new Set(
     (Array.isArray(payload.associationNos) ? payload.associationNos : [])
@@ -704,6 +599,8 @@ export const executeGenerationPointCompensation = async (
 
   const note = toNullableString(payload.note)
   const forceManual = toBoolean(payload.forceManual, false)
+  // 归属隔离：普通管理员只能补偿自己名下用户的流水；非名下流水会落选 consumeLogMap，按“未找到对应消费流水”跳过。
+  const ownerScope = viewer && viewer.role !== 'SUPER_ADMIN' ? { user: { ownerAdminId: viewer.id } } : {}
   const consumeLogs = await prisma.pointAccountLog.findMany({
     where: {
       sourceType: 'GENERATION_CONSUME',
@@ -711,6 +608,7 @@ export const executeGenerationPointCompensation = async (
       associationNo: {
         in: associationNos,
       },
+      ...ownerScope,
     },
     orderBy: [
       { createdAt: 'desc' },
@@ -847,9 +745,6 @@ export const getAdminMarketingOverview = async (viewer?: { id: string; role: str
   const userScope = ownerScope ? { user: ownerScope } : {}
   const [
     membershipLevelCount,
-    membershipPlanCount,
-    rechargePackageCount,
-    rewardRuleCount,
     cardBatchCount,
     cardCodeCount,
     usedCardCodeCount,
@@ -860,9 +755,6 @@ export const getAdminMarketingOverview = async (viewer?: { id: string; role: str
     activeMemberCount,
   ] = await Promise.all([
     prisma.membershipLevel.count(),
-    prisma.membershipPlan.count(),
-    prisma.rechargePackage.count(),
-    prisma.rewardRule.count(),
     prisma.cardBatch.count(),
     prisma.cardCode.count(),
     prisma.cardCode.count({ where: { status: 'USED' } }),
@@ -885,13 +777,6 @@ export const getAdminMarketingOverview = async (viewer?: { id: string; role: str
   return {
     membership: {
       levelCount: membershipLevelCount,
-      planCount: membershipPlanCount,
-    },
-    recharge: {
-      packageCount: rechargePackageCount,
-    },
-    rewards: {
-      ruleCount: rewardRuleCount,
     },
     cdk: {
       batchCount: cardBatchCount,
@@ -949,146 +834,21 @@ export const deleteMembershipLevel = async (id: string) => {
   return prisma.membershipLevel.delete({ where: { id } })
 }
 
-// 查询会员计划列表。
-export const listMembershipPlans = async () => {
-  const [records, levels] = await Promise.all([
-    prisma.membershipPlan.findMany({
-      include: { level: true },
-      orderBy: [
-        { sortOrder: 'asc' },
-        { createdAt: 'desc' },
-      ],
-    }),
-    prisma.membershipLevel.findMany(),
-  ])
-
-  const levelMap = new Map(levels.map((item) => [item.id, item]))
-  return serializeMarketingRecord(records.map((item) => decorateMembershipPlanRecord(item, levelMap)))
-}
-
-// 保存会员计划。
-export const saveMembershipPlan = async (payload: MarketingMembershipPlanPayload, id?: string) => {
-  const billingRules = normalizeMembershipBillingRules(payload)
-  const defaultRule = pickDefaultMembershipBillingRule(billingRules)
-  const existingBenefits = parseMembershipPlanBenefits(payload.benefitsJson).benefits
-
-  const data = {
-    levelId: defaultRule?.levelId || '',
-    name: toStringValue(payload.name),
-    label: defaultRule?.label || toNullableString(payload.label),
-    description: toNullableString(payload.description),
-    durationType: normalizeMembershipDurationType(payload.durationType, payload.durationUnit, payload.durationValue),
-    durationValue: toInt(payload.durationValue, 1),
-    durationUnit: toStringValue(payload.durationUnit, 'MONTH').toUpperCase() || 'MONTH',
-    salesPrice: defaultRule?.salesPrice ?? 0,
-    originalPrice: defaultRule?.originalPrice ?? null,
-    bonusPoints: toInt(payload.bonusPoints, 0),
-    benefitsJson: toJsonValue({
-      benefits: existingBenefits,
-      billing: billingRules,
-    }),
-    isEnabled: toBoolean(payload.isEnabled, true),
-    sortOrder: toInt(payload.sortOrder, 0),
-  }
-
-  if (!data.name || !billingRules.length || !data.levelId) {
-    throw new Error('会员计划缺少必要字段')
-  }
-
-  const savedRecord = id
-    ? await prisma.membershipPlan.update({ where: { id }, data, include: { level: true } })
-    : await prisma.membershipPlan.create({ data, include: { level: true } })
-
-  const levels = await prisma.membershipLevel.findMany({
-    where: { id: { in: Array.from(new Set(billingRules.map((item) => item.levelId))) } },
+// 用户积分/会员一览：复用 admin-users 的列表查询（已含当前积分余额 currentPointBalance、
+// 活跃会员订阅 activeSubscription，并内置 ownerAdminId 归属隔离与缓存）。超管看全部、普通管理员仅看自己创建的用户。
+export const listMarketingUserPoints = async (
+  query: { keyword?: string; page?: number; pageSize?: number } = {},
+  viewer?: { id: string; role: string },
+) => {
+  return listAdminUsers({
+    keyword: toStringValue(query.keyword),
+    role: 'ALL',
+    status: 'ALL',
+    page: toInt(query.page, 1),
+    pageSize: toInt(query.pageSize, 10),
+    viewerId: viewer?.id,
+    viewerRole: viewer?.role as 'SUPER_ADMIN' | 'ADMIN' | 'USER' | undefined,
   })
-  const levelMap = new Map(levels.map((item) => [item.id, item]))
-  return serializeMarketingRecord(decorateMembershipPlanRecord(savedRecord, levelMap))
-}
-
-export const deleteMembershipPlan = async (id: string) => {
-  return prisma.membershipPlan.delete({ where: { id } })
-}
-
-// 查询充值套餐列表。
-export const listRechargePackages = async () => {
-  return serializeMarketingRecord(await prisma.rechargePackage.findMany({
-    orderBy: [
-      { sortOrder: 'asc' },
-      { createdAt: 'desc' },
-    ],
-  }))
-}
-
-// 保存充值套餐。
-export const saveRechargePackage = async (payload: MarketingRechargePackagePayload, id?: string) => {
-  const data = {
-    name: toStringValue(payload.name),
-    label: toNullableString(payload.label),
-    description: toNullableString(payload.description),
-    points: toInt(payload.points, 0),
-    bonusPoints: toInt(payload.bonusPoints, 0),
-    price: toDecimal(payload.price, 0),
-    originalPrice: payload.originalPrice === null ? null : toDecimal(payload.originalPrice, 0),
-    badgeText: toNullableString(payload.badgeText),
-    isEnabled: toBoolean(payload.isEnabled, true),
-    sortOrder: toInt(payload.sortOrder, 0),
-    metaJson: toJsonValue(payload.metaJson),
-  }
-
-  if (!data.name) {
-    throw new Error('充值套餐名称不能为空')
-  }
-
-  if (id) {
-    return serializeMarketingRecord(await prisma.rechargePackage.update({ where: { id }, data }))
-  }
-
-  return serializeMarketingRecord(await prisma.rechargePackage.create({ data }))
-}
-
-export const deleteRechargePackage = async (id: string) => {
-  return prisma.rechargePackage.delete({ where: { id } })
-}
-
-// 查询奖励规则列表。
-export const listRewardRules = async () => {
-  return serializeMarketingRecord(await prisma.rewardRule.findMany({
-    orderBy: [
-      { sortOrder: 'asc' },
-      { createdAt: 'asc' },
-    ],
-  }))
-}
-
-// 保存奖励规则。
-export const saveRewardRule = async (payload: MarketingRewardRulePayload, id?: string) => {
-  const data = {
-    code: toStringValue(payload.code),
-    triggerType: normalizeRewardTriggerType(payload.triggerType),
-    name: toStringValue(payload.name),
-    description: toNullableString(payload.description),
-    rewardPoints: toInt(payload.rewardPoints, 0),
-    cycleType: (toStringValue(payload.cycleType, 'ONCE') || 'ONCE') as any,
-    limitPerCycle: toInt(payload.limitPerCycle, 1),
-    isEnabled: toBoolean(payload.isEnabled, true),
-    conditionJson: toJsonValue(payload.conditionJson),
-    sortOrder: toInt(payload.sortOrder, 0),
-  }
-
-  if (!data.code || !data.name) {
-    throw new Error('奖励规则缺少必要字段')
-  }
-
-  if (id) {
-    return serializeMarketingRecord(await prisma.rewardRule.update({ where: { id }, data }))
-  }
-
-  return serializeMarketingRecord(await prisma.rewardRule.create({ data }))
-}
-
-export const deleteRewardRule = async (id: string) => {
-  return prisma.rewardRule.delete({ where: { id } })
 }
 
 // 查询卡密批次列表，同时带上部分卡密汇总。

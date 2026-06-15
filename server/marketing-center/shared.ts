@@ -4,14 +4,6 @@ export interface MarketingCenterCardRedeemPayload {
   code?: string
 }
 
-export interface MarketingCenterMembershipOrderPayload {
-  planId?: string
-}
-
-export interface MarketingCenterRechargeOrderPayload {
-  rechargePackageId?: string
-}
-
 // 统一读取营销中心请求体。
 export const readMarketingCenterBody = async <T = Record<string, unknown>>(req: any) => {
   const payload = await readJsonBody(req)

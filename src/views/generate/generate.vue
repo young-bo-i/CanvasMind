@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import ContentGenerator from '../../components/generate/ContentGenerator.vue'
@@ -48,7 +48,7 @@ import type {
 } from '@/shared/research/research-types'
 import { normalizeGenerationErrorMessage } from '@/shared/generation-error'
 import { appendImageReferencesToRequestBody, resolveImagePixelSize } from '@/shared/image-generation-request'
-import { AUTH_LOGIN_SUCCESS_EVENT, useAuthStore } from '@/stores/auth'
+import { useAuthStore } from '@/stores/auth'
 import { useLoginModalStore } from '@/stores/login-modal'
 import { useSystemSettingsStore } from '@/stores/system-settings'
 import GenerateAgentRecord from './components/GenerateAgentRecord.vue'
@@ -2647,6 +2647,40 @@ const loadPersistedGeneratingRecords = async () => {
   }
 }
 
+// 账号切换 / 登出：彻底清空当前账号在内存中的会话、记录与进行中的订阅，
+// 避免在不刷新页面的 SPA 内切号时，上一个账号的数据被下一个账号看到（越权串数据）。
+const resetGenerationStateForAccountChange = () => {
+  taskStreamControllers.forEach(controller => controller.abort())
+  taskStreamControllers.clear()
+  recordPersistTimers.forEach(timer => clearTimeout(timer))
+  recordPersistTimers.clear()
+  researchSearchRevealTimers.forEach(timer => clearTimeout(timer))
+  researchSearchRevealTimers.clear()
+  researchSearchRevealQueues.clear()
+  researchUiRevealTimers.forEach(timer => clearTimeout(timer))
+  researchUiRevealTimers.clear()
+  researchUiRevealQueues.clear()
+  generatingRecords.value = []
+  generationSessions.value = []
+  applyCurrentSessionId('')
+}
+
+// 监听登录用户变化（登录 / 登出 / 切换账号）：先重置旧账号的内存态，再按需重新拉取，
+// 这是杜绝会话列表与生成记录跨账号越权的关键（登出本身不触发整页刷新）。
+watch(
+  () => authStore.currentUser.value?.id || '',
+  (nextUserId, prevUserId) => {
+    if (nextUserId === prevUserId) {
+      return
+    }
+    resetGenerationStateForAccountChange()
+    if (nextUserId) {
+      void loadPersistedGenerationSessions()
+      void loadPersistedGeneratingRecords()
+    }
+  },
+)
+
 
 const ensureCurrentGenerationSession = async () => {
   if (!authStore.isLoggedIn.value) {
@@ -2998,6 +3032,7 @@ const startImageGenerationTask = async (record: GeneratingRecord) => {
     // 不能直接把 "1:1" 当 size 下发（会变 "1x1" 被 gpt-image 以“边长须被 16 整除”拒绝）。
     const size = resolveImagePixelSize({
       ratio: record.ratio,
+      resolution: record.resolution,
       modelSizes: modelConfig?.sizes,
       defaultSize: modelConfig?.defaultParams?.size,
     })
@@ -3179,9 +3214,6 @@ const handleSessionListScrollState = (state: GenerateSessionScrollState) => {
   }
 }
 
-// 登录成功后的页面数据刷新监听器。
-let authLoginSuccessListener: (() => void) | null = null
-
 // 点击空白区域折叠
 const handlePageClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement
@@ -3251,12 +3283,6 @@ onMounted(() => {
   }
 
   document.addEventListener('click', handlePageClick)
-
-  authLoginSuccessListener = () => {
-    void loadPersistedGenerationSessions()
-    void loadPersistedGeneratingRecords()
-  }
-  window.addEventListener(AUTH_LOGIN_SUCCESS_EVENT, authLoginSuccessListener)
 })
 
 onUnmounted(() => {
@@ -3269,11 +3295,6 @@ onUnmounted(() => {
   researchUiRevealTimers.clear()
   researchUiRevealQueues.clear()
   document.removeEventListener('click', handlePageClick)
-
-  if (authLoginSuccessListener) {
-    window.removeEventListener(AUTH_LOGIN_SUCCESS_EVENT, authLoginSuccessListener)
-    authLoginSuccessListener = null
-  }
 
   taskStreamControllers.forEach(controller => controller.abort())
   taskStreamControllers.clear()

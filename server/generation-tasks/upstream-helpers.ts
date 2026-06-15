@@ -43,9 +43,9 @@ const BURST_RATE_RETRY_DELAYS = [1200, 2600, 5200]
 // 网络层错误（TypeError: fetch failed / socket reset / TLS abort 等）的重试节奏。
 // 与 BURST_RATE 分开计数：429 是上游显式拒绝，网络错是底层失败，二者重试策略不耦合。
 const NETWORK_ERROR_RETRY_DELAYS = [1500, 4000]
-// 单次上游请求的硬超时基线（毫秒）。单张文生图/图生图正常 5-30s，基线 90s 给慢模型留余量。
-// 一次请求 n>1 时由 resolveUpstreamFetchTimeoutMs 按张数线性放宽，避免 N 张被一刀 90s 截断。
-const UPSTREAM_FETCH_TIMEOUT_BASE_MS = 90_000
+// 单次上游请求的硬超时基线（毫秒）。按产品要求图片生成统一放宽到 10 分钟，给慢模型 / 排队留足余量。
+// 一次请求 n>1 时由 resolveUpstreamFetchTimeoutMs 仍可按张数放宽，但已与基线同为上限 10 分钟。
+const UPSTREAM_FETCH_TIMEOUT_BASE_MS = 600_000
 const UPSTREAM_FETCH_TIMEOUT_PER_IMAGE_MS = 60_000
 const UPSTREAM_FETCH_TIMEOUT_MAX_MS = 600_000
 

@@ -54,11 +54,7 @@ import {
   claimIdempotencyKey,
   clearPendingIdempotencyKey,
   completeIdempotencyKey,
-  getRedisRuntimeSettings,
   releaseTaskConcurrencySlots,
-  tryAcquireProviderTaskSlot,
-  tryAcquireSkillTaskSlot,
-  tryAcquireUserTaskSlot,
   type RedisConcurrencySlot,
 } from '../redis'
 import { GenerationTaskRequestError } from './shared'
@@ -602,32 +598,14 @@ const buildTaskLifecycleContext = () => ({
     providerId: string
     skillKey: string
   }) => {
-    // 已移除「每账号并发上限」：产品为先扣费，多任务并发不会造成免费滥用，允许同一账号多个任务并行。
-    // 仍保留 skill / provider 槽，作为对上游厂商的并发保护(避免打爆上游)。userId 入参保留以兼容签名。
+    // 按产品要求：任务提交阶段不再做任何并发限制（每账号 / 技能 / 厂商槽位全部移除）。
+    // 产品为先扣费，多任务并发不会造成免费滥用，允许任意并行；不再对上游做并发收口。
+    // 入参保留以兼容调用方签名；返回空槽位数组，releaseTaskConcurrencySlots([]) 为空操作。
     void userId
+    void providerId
+    void skillKey
     const acquiredSlots: RedisConcurrencySlot[] = []
-    const runtimeSettings = await getRedisRuntimeSettings()
-
-    try {
-      const skillResult = await tryAcquireSkillTaskSlot(skillKey, runtimeSettings.taskSkillConcurrencyLimit)
-      if (!skillResult.acquired || !skillResult.slot) {
-        throw new GenerationTaskRequestError(429, `当前技能任务较多，请稍后再试（上限 ${skillResult.limit}）`)
-      }
-      acquiredSlots.push(skillResult.slot)
-
-      if (providerId) {
-        const providerResult = await tryAcquireProviderTaskSlot(providerId, runtimeSettings.taskProviderConcurrencyLimit)
-        if (!providerResult.acquired || !providerResult.slot) {
-          throw new GenerationTaskRequestError(429, `当前模型厂商任务较多，请稍后再试（上限 ${providerResult.limit}）`)
-        }
-        acquiredSlots.push(providerResult.slot)
-      }
-
-      return acquiredSlots
-    } catch (error) {
-      await releaseTaskConcurrencySlots(acquiredSlots)
-      throw error
-    }
+    return acquiredSlots
   },
   releaseTaskConcurrencySlots,
   buildAgentPendingRun,

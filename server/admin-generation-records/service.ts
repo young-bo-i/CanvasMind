@@ -188,9 +188,27 @@ const buildRecordWhereInput = (query: AdminGenerationRecordsQuery): Prisma.Gener
   return andConditions.length ? { AND: andConditions } : {}
 }
 
+// 后台查看者身份，用于归属隔离。
+export type AdminRecordViewer = { id: string; role: string }
+
+// 归属隔离作用域：超管看全部；普通管理员仅限自己名下用户(ownerAdminId=自己)的生成记录。
+const buildRecordOwnerScope = (viewer?: AdminRecordViewer): Prisma.GenerationRecordWhereInput => {
+  if (viewer && viewer.role !== 'SUPER_ADMIN') {
+    return { user: { ownerAdminId: viewer.id || '__none__' } }
+  }
+  return {}
+}
+
 // 分页查询全站生成记录，供后台排查生成链路问题。
-export const listAdminGenerationRecords = async (query: AdminGenerationRecordsQuery) => {
-  const where = buildRecordWhereInput(query)
+export const listAdminGenerationRecords = async (
+  query: AdminGenerationRecordsQuery,
+  viewer?: AdminRecordViewer,
+) => {
+  const baseWhere = buildRecordWhereInput(query)
+  const ownerScope = buildRecordOwnerScope(viewer)
+  const where: Prisma.GenerationRecordWhereInput = Object.keys(ownerScope).length
+    ? { AND: [baseWhere, ownerScope] }
+    : baseWhere
   const totalCount = await prisma.generationRecord.count({ where })
   const pagination = resolvePagination(query, totalCount, {
     defaultPageSize: 10,

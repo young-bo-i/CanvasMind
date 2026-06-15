@@ -199,7 +199,7 @@ const handleTopItemClick = (item?: { actionType?: string, actionValue?: string }
 const openMarketingEntry = () => {
   openMarketingModal({
     source: 'top-menu',
-    tab: isLoggedIn.value ? 'recharge' : 'membership',
+    tab: 'redeem',
   })
 }
 

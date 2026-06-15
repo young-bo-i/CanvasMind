@@ -45,8 +45,25 @@ const buildMineAssetItemsCacheKey = (query: AssetListQuery, currentUserId: strin
   return redisKeys.cache(MINE_ASSET_ITEMS_SCOPE, `${currentUserId}:${buildAssetItemsQueryHash(query)}`)
 }
 
-const buildAllAssetItemsCacheKey = (query: AssetListQuery) => {
-  return redisKeys.cache(ALL_ASSET_ITEMS_SCOPE, buildAssetItemsQueryHash(query))
+// 后台查看者身份，用于资源归属隔离。
+type AssetViewer = { id: string; role: string }
+
+// 归属作用域令牌：超管为 'ALL'(看全部)，普通管理员为其 id(仅看自己名下用户)。必须进缓存键，
+// 否则不同管理员命中同一键导致跨管理员资源串味。
+const resolveAssetOwnerScopeToken = (viewer?: AssetViewer) => {
+  return viewer && viewer.role !== 'SUPER_ADMIN' ? String(viewer.id || 'none') : 'ALL'
+}
+
+// 归属隔离 where：普通管理员仅限自己名下用户(ownerAdminId=自己)的资源；超管不限。
+const buildAssetOwnerScopeWhere = (viewer?: AssetViewer): Prisma.AssetItemWhereInput => {
+  if (viewer && viewer.role !== 'SUPER_ADMIN') {
+    return { user: { ownerAdminId: viewer.id || '__none__' } }
+  }
+  return {}
+}
+
+const buildAllAssetItemsCacheKey = (query: AssetListQuery, ownerScopeToken: string) => {
+  return redisKeys.cache(ALL_ASSET_ITEMS_SCOPE, `${ownerScopeToken}:${buildAssetItemsQueryHash(query)}`)
 }
 
 export const invalidateAssetItemsCaches = async () => {
@@ -290,9 +307,9 @@ export const listMineAssetItems = async (query: AssetListQuery, currentUserId: s
 }
 
 // 查询全站资源，供后台按用户维度统一管理。
-export const listAllAssetItems = async (query: AssetListQuery) => {
+export const listAllAssetItems = async (query: AssetListQuery, viewer?: AssetViewer) => {
   return getOrSetJsonCache({
-    key: buildAllAssetItemsCacheKey(query),
+    key: buildAllAssetItemsCacheKey(query, resolveAssetOwnerScopeToken(viewer)),
     ttlSeconds: 30,
     factory: async () => {
       const publishStateWhere = buildPublishStateWhereInput(query.publishState)
@@ -302,6 +319,7 @@ export const listAllAssetItems = async (query: AssetListQuery) => {
         isDeleted: false,
         ...publishStateWhere,
         ...ownerWhere,
+        ...buildAssetOwnerScopeWhere(viewer),
       }
       const totalCount = await prisma.assetItem.count({ where })
       const pagination = resolvePagination(query, totalCount)
@@ -334,7 +352,12 @@ export const listAllAssetItems = async (query: AssetListQuery) => {
 }
 
 // 批量更新资源状态。
-export const applyAssetAction = async (payload: AssetActionPayload, currentUserId: string, isAdminUser = false) => {
+export const applyAssetAction = async (
+  payload: AssetActionPayload,
+  currentUserId: string,
+  isAdminUser = false,
+  viewer?: AssetViewer,
+) => {
   if (!payload.ids.length) {
     throw new Error('缺少资源 ID')
   }
@@ -358,6 +381,9 @@ export const applyAssetAction = async (payload: AssetActionPayload, currentUserI
 
   if (!(payload.scope === 'all' && isAdminUser)) {
     where.userId = currentUserId
+  } else {
+    // 全站操作：归属隔离，普通管理员只能操作自己名下用户的资源；超管不限。
+    Object.assign(where, buildAssetOwnerScopeWhere(viewer))
   }
 
   const invalidateRelatedCaches = async () => {

@@ -28,6 +28,9 @@ export const handleAdminGenerationSessionsRequest = async (req: any, res: any) =
       return
     }
 
+    // 归属隔离：超管看全部，普通管理员仅能访问自己名下用户的会话。
+    const viewer = { id: currentUser.id, role: currentUser.role }
+
     const requestPath = String(req.url || '').split('?')[0]
     const suffix = requestPath.startsWith(`${ADMIN_GENERATION_SESSIONS_BASE_PATH}/`)
       ? decodeURIComponent(requestPath.slice(ADMIN_GENERATION_SESSIONS_BASE_PATH.length + 1))
@@ -38,33 +41,33 @@ export const handleAdminGenerationSessionsRequest = async (req: any, res: any) =
 
     if (req.method === 'GET' && requestPath === ADMIN_GENERATION_SESSIONS_BASE_PATH) {
       const query = readAdminGenerationSessionsQuery(String(req.url || ''))
-      const data = await listAdminGenerationSessions(query)
+      const data = await listAdminGenerationSessions(query, viewer)
       sendJson(res, 200, { data })
       return
     }
 
     if (req.method === 'GET' && sessionId && !nestedAction) {
-      const data = await getAdminGenerationSessionDetail(sessionId)
+      const data = await getAdminGenerationSessionDetail(sessionId, viewer)
       sendJson(res, 200, { data })
       return
     }
 
     if (req.method === 'GET' && sessionId && nestedAction === 'records') {
       const query = readAdminGenerationSessionsQuery(String(req.url || ''))
-      const data = await listAdminGenerationSessionRecords(sessionId, query.page, query.pageSize)
+      const data = await listAdminGenerationSessionRecords(sessionId, query.page, query.pageSize, viewer)
       sendJson(res, 200, { data })
       return
     }
 
     if (req.method === 'PATCH' && sessionId && !nestedAction) {
       const payload = await readAdminGenerationSessionBody(req)
-      const data = await updateAdminGenerationSession(sessionId, payload)
+      const data = await updateAdminGenerationSession(sessionId, payload, viewer)
       sendJson(res, 200, { data, message: '会话已更新' })
       return
     }
 
     if (req.method === 'DELETE' && sessionId && !nestedAction) {
-      const data = await deleteAdminGenerationSession(sessionId)
+      const data = await deleteAdminGenerationSession(sessionId, viewer)
       sendJson(res, 200, { data, message: '会话已删除' })
       return
     }

@@ -48,7 +48,7 @@ const marketingBalanceText = computed(() => {
 const openMarketingEntry = () => {
   openMarketingModal({
     source: 'canana-header',
-    tab: authStore.isLoggedIn.value ? 'recharge' : 'membership',
+    tab: 'redeem',
   })
 }
 

@@ -220,7 +220,7 @@ const openMarketingEntry = () => {
 
   openMarketingModal({
     source: 'bottom-menu',
-    tab: isLoggedIn.value ? 'recharge' : 'membership',
+    tab: 'redeem',
   })
 }
 

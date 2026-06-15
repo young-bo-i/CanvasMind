@@ -290,10 +290,35 @@ const handleClick = () => {
 const handleInput = (e: Event) => {
   const target = e.target as HTMLInputElement | HTMLTextAreaElement
   inputValue.value = target.value
+  detectMentionTrigger(target)
 }
 
 // 处理键盘事件（回车发送）
 const handleKeydown = (e: KeyboardEvent) => {
+  // @ 选择面板打开时：方向键 / 回车 / Tab / Esc 用于操作面板，不触发发送。
+  if (mentionPanelVisible.value && mentionFilteredReferences.value.length) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      mentionActiveIndex.value = (mentionActiveIndex.value + 1) % mentionFilteredReferences.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      mentionActiveIndex.value = (mentionActiveIndex.value - 1 + mentionFilteredReferences.value.length) % mentionFilteredReferences.value.length
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const picked = mentionFilteredReferences.value[mentionActiveIndex.value]
+      if (picked) insertMentionReference(picked)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMentionPanel()
+      return
+    }
+  }
   // Enter 发送，Shift+Enter 换行
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -359,6 +384,203 @@ const handleSubmit = () => {
 
   // 提交后保留输入内容（提示词 + 参考素材 + 模型/比例/时长等设置），便于在上次基础上微调再次生成（对齐即梦）。
   // 参考素材与工具栏设置本就保持不变，这里不再清空提示词。
+}
+
+// ===== @ 提及参考素材选择面板（即梦式交互）=====
+// 输入 @ 时自动弹出当前已上传的参考素材（图片 / 视频 / 音频），选择后插入 @图片1 这类纯文本标签。
+// 说明：@图片N 仅是提示词里的可读标签，真正的参考素材通过 referenceImages 数组单独下发，二者解耦。
+type MentionReference = { kind: 'image' | 'video' | 'audio' | 'frame'; label: string; url: string }
+
+const activeMentionInputEl = ref<HTMLTextAreaElement | HTMLInputElement | null>(null)
+const mentionPanelVisible = ref(false)
+const mentionActiveIndex = ref(0)
+const mentionQuery = ref('')
+const mentionAtPos = ref(-1)
+// 面板用 fixed 定位并 Teleport 到 body，避免被输入区祖先的 overflow 裁剪。
+const mentionPanelLeft = ref(0)
+const mentionPanelBottom = ref(0)
+let mentionComposing = false
+let mentionBlurTimer: ReturnType<typeof setTimeout> | null = null
+
+const mentionPanelStyle = computed(() => ({
+  position: 'fixed' as const,
+  left: `${mentionPanelLeft.value}px`,
+  bottom: `${mentionPanelBottom.value}px`,
+}))
+
+// 当前模式 / 功能下可被 @ 引用的参考素材，按媒体类型分别编号（图片N / 视频N / 音频N / 首帧 / 尾帧）。
+const mentionReferences = computed<MentionReference[]>(() => {
+  const list: MentionReference[] = []
+  if (currentType.value === 'image' || currentType.value === 'agent') {
+    imageReferenceImages.value.forEach((url, index) => {
+      list.push({ kind: 'image', label: `图片${index + 1}`, url })
+    })
+    return list
+  }
+  if (currentType.value === 'video') {
+    if (videoFeature.value === 'first-last-frame') {
+      if (videoFirstFrameImage.value) list.push({ kind: 'frame', label: '首帧', url: videoFirstFrameImage.value })
+      if (videoLastFrameImage.value) list.push({ kind: 'frame', label: '尾帧', url: videoLastFrameImage.value })
+      return list
+    }
+    if (videoFeature.value === 'multi-frame') {
+      videoKeyframeImages.value.forEach((url, index) => {
+        list.push({ kind: 'image', label: `图片${index + 1}`, url })
+      })
+      return list
+    }
+    // 全能参考：混合素材，按类型各自从 1 编号。
+    let imageNo = 0
+    let videoNo = 0
+    let audioNo = 0
+    videoReferenceImages.value.forEach((url) => {
+      const kind = refKind(url)
+      if (kind === 'video') {
+        videoNo += 1
+        list.push({ kind: 'video', label: `视频${videoNo}`, url })
+      } else if (kind === 'audio') {
+        audioNo += 1
+        list.push({ kind: 'audio', label: `音频${audioNo}`, url })
+      } else {
+        imageNo += 1
+        list.push({ kind: 'image', label: `图片${imageNo}`, url })
+      }
+    })
+  }
+  return list
+})
+
+// 按 @ 后已输入的文本过滤候选。
+const mentionFilteredReferences = computed<MentionReference[]>(() => {
+  const query = mentionQuery.value.trim().toLowerCase()
+  if (!query) return mentionReferences.value
+  return mentionReferences.value.filter((item) => item.label.toLowerCase().includes(query))
+})
+
+// 检测光标前是否正在输入 @xxx（@ 后无空白/换行），是则展开面板。
+const detectMentionTrigger = (target: HTMLTextAreaElement | HTMLInputElement) => {
+  activeMentionInputEl.value = target
+  if (mentionComposing) return
+  const caret = typeof target.selectionStart === 'number' ? target.selectionStart : inputValue.value.length
+  const before = inputValue.value.slice(0, caret)
+  const atIndex = before.lastIndexOf('@')
+  if (atIndex < 0) {
+    closeMentionPanel()
+    return
+  }
+  const token = before.slice(atIndex + 1)
+  if (/[\s\n]/.test(token)) {
+    closeMentionPanel()
+    return
+  }
+  if (!mentionReferences.value.length) {
+    closeMentionPanel()
+    return
+  }
+  mentionAtPos.value = atIndex
+  mentionQuery.value = token
+  if (!mentionPanelVisible.value) mentionActiveIndex.value = 0
+  if (mentionActiveIndex.value >= mentionFilteredReferences.value.length) mentionActiveIndex.value = 0
+  const shouldShow = mentionFilteredReferences.value.length > 0
+  if (shouldShow) computeMentionPanelPosition()
+  mentionPanelVisible.value = shouldShow
+}
+
+// 以当前输入框的视口位置为锚，把面板放在输入框上方、左缘对齐。
+const computeMentionPanelPosition = () => {
+  const el = activeMentionInputEl.value
+  if (!el || typeof window === 'undefined') return
+  const rect = el.getBoundingClientRect()
+  mentionPanelLeft.value = Math.max(8, rect.left + 12)
+  mentionPanelBottom.value = Math.max(8, window.innerHeight - rect.top + 8)
+}
+
+const handleMentionViewportChange = () => {
+  if (!mentionPanelVisible.value) return
+  computeMentionPanelPosition()
+}
+
+watch(mentionPanelVisible, (visible) => {
+  if (typeof window === 'undefined') return
+  if (visible) {
+    window.addEventListener('scroll', handleMentionViewportChange, true)
+    window.addEventListener('resize', handleMentionViewportChange)
+  } else {
+    window.removeEventListener('scroll', handleMentionViewportChange, true)
+    window.removeEventListener('resize', handleMentionViewportChange)
+  }
+})
+
+// 面板打开期间候选列表变化（删参考素材 / 切创作类型或视频功能）时：为空则收起，否则把高亮下标夹回有效范围，
+// 避免 Enter 落到不存在的项导致“既不选择也不发送”。
+watch(mentionFilteredReferences, (list) => {
+  if (!mentionPanelVisible.value) return
+  if (!list.length) {
+    closeMentionPanel()
+    return
+  }
+  if (mentionActiveIndex.value >= list.length) {
+    mentionActiveIndex.value = list.length - 1
+  }
+})
+
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('scroll', handleMentionViewportChange, true)
+    window.removeEventListener('resize', handleMentionViewportChange)
+  }
+  if (mentionBlurTimer) clearTimeout(mentionBlurTimer)
+})
+
+const closeMentionPanel = () => {
+  mentionPanelVisible.value = false
+  mentionQuery.value = ''
+  mentionAtPos.value = -1
+  mentionActiveIndex.value = 0
+}
+
+// 选中后把 @图片N 这类标签插入光标处（替换正在输入的 @token），并把光标移到标签之后。
+const insertMentionReference = (reference: MentionReference) => {
+  const el = activeMentionInputEl.value
+  const at = mentionAtPos.value
+  if (at < 0) {
+    closeMentionPanel()
+    return
+  }
+  const caret = el && typeof el.selectionStart === 'number' ? el.selectionStart : inputValue.value.length
+  const before = inputValue.value.slice(0, at)
+  const after = inputValue.value.slice(caret)
+  const insertText = `@${reference.label} `
+  inputValue.value = `${before}${insertText}${after}`
+  closeMentionPanel()
+  nextTick(() => {
+    const pos = before.length + insertText.length
+    if (el) {
+      el.focus()
+      try {
+        el.setSelectionRange(pos, pos)
+      } catch {
+        // 个别输入类型不支持 setSelectionRange，忽略。
+      }
+    }
+  })
+}
+
+const handleMentionCompositionStart = () => {
+  mentionComposing = true
+}
+
+const handleMentionCompositionEnd = (e: Event) => {
+  mentionComposing = false
+  detectMentionTrigger(e.target as HTMLTextAreaElement | HTMLInputElement)
+}
+
+// 失焦延时关闭：留出时间让面板项的 mousedown 选择先执行。
+const handleMentionBlur = () => {
+  if (mentionBlurTimer) clearTimeout(mentionBlurTimer)
+  mentionBlurTimer = setTimeout(() => {
+    mentionPanelVisible.value = false
+  }, 150)
 }
 
 // 是否禁用提交按钮
@@ -1349,7 +1571,10 @@ onUnmounted(() => {
                   aria-label="生成提示词输入"
                   translate="no"
                   @input="handleInput"
-                  @keydown="handleKeydown"></textarea>
+                  @keydown="handleKeydown"
+                  @compositionstart="handleMentionCompositionStart"
+                  @compositionend="handleMentionCompositionEnd"
+                  @blur="handleMentionBlur"></textarea>
             </div>
             <div class="prompt-textarea-sizer prompt-editor-sizer-S4F9P4">
               <input
@@ -1358,8 +1583,43 @@ onUnmounted(() => {
                   :placeholder="placeholder"
                   translate="no"
                   @input="handleInput"
-                  @keydown="handleKeydown">
+                  @keydown="handleKeydown"
+                  @compositionstart="handleMentionCompositionStart"
+                  @compositionend="handleMentionCompositionEnd"
+                  @blur="handleMentionBlur">
             </div>
+
+            <!-- @ 提及参考素材选择面板：输入 @ 自动弹出，可选 图片/视频/音频，插入 @图片1 这类标签（即梦式交互）。
+                 Teleport 到 body + fixed 定位，避免被输入区祖先 overflow 裁剪。 -->
+            <Teleport to="body">
+              <div
+                  v-if="mentionPanelVisible && mentionFilteredReferences.length"
+                  class="mention-panel"
+                  :style="mentionPanelStyle"
+                  role="listbox"
+                  aria-label="可能 @ 的内容">
+                <div class="mention-panel__title">可能 @ 的内容</div>
+                <div
+                    v-for="(item, index) in mentionFilteredReferences"
+                    :key="`${item.kind}-${item.label}`"
+                    :class="['mention-panel__item', { 'is-active': index === mentionActiveIndex }]"
+                    role="option"
+                    :aria-selected="index === mentionActiveIndex"
+                    @mouseenter="mentionActiveIndex = index"
+                    @mousedown.prevent="insertMentionReference(item)">
+                  <span class="mention-panel__thumb">
+                    <img v-if="item.kind === 'image' || item.kind === 'frame'" :src="item.url" alt="" loading="lazy">
+                    <video v-else-if="item.kind === 'video'" :src="`${item.url}#t=0.1`" muted preload="metadata"></video>
+                    <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+                      <path d="M9 18V6l10-2v12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <circle cx="6.5" cy="18" r="2.5" stroke="currentColor" stroke-width="1.6"/>
+                      <circle cx="16.5" cy="16" r="2.5" stroke="currentColor" stroke-width="1.6"/>
+                    </svg>
+                  </span>
+                  <span class="mention-panel__label">{{ item.label }}</span>
+                </div>
+              </div>
+            </Teleport>
           </div>
         </div>
 
@@ -2322,5 +2582,75 @@ onUnmounted(() => {
 
 .dimension-layout-FUl4Nj .remove-button-container:active .remove-button.generator-reference-clear-btn {
   background: var(--component-reference-remove-pressed, rgba(15, 23, 42, 0.98));
+}
+
+/* ===== @ 提及参考素材选择面板（Teleport 到 body，fixed 定位，left/bottom 由内联样式给出）===== */
+.mention-panel {
+  position: fixed;
+  z-index: 2200;
+  min-width: 200px;
+  max-width: 300px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--bg-block-primary-default, #1f2024);
+  border: 1px solid var(--stroke-primary, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.mention-panel__title {
+  padding: 4px 8px 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
+}
+
+.mention-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+
+.mention-panel__item.is-active,
+.mention-panel__item:hover {
+  background: var(--bg-block-hover, rgba(255, 255, 255, 0.08));
+}
+
+.mention-panel__thumb {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-block-secondary, rgba(255, 255, 255, 0.06));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+}
+
+.mention-panel__thumb img,
+.mention-panel__thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mention-panel__label {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-primary, rgba(255, 255, 255, 0.92));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

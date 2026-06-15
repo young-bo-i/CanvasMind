@@ -18,11 +18,14 @@ export const handleAdminGenerationRecordsRequest = async (req: any, res: any) =>
       return
     }
 
+    // 归属隔离：超管看全部，普通管理员仅能访问自己名下用户的生成记录。
+    const viewer = { id: currentUser.id, role: currentUser.role }
+
     const requestPath = String(req.url || '').split('?')[0]
 
     if (req.method === 'GET' && requestPath === ADMIN_GENERATION_RECORDS_BASE_PATH) {
       const query = readAdminGenerationRecordsQuery(String(req.url || ''))
-      const data = await listAdminGenerationRecords(query)
+      const data = await listAdminGenerationRecords(query, viewer)
       sendJson(res, 200, { data })
       return
     }

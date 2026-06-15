@@ -111,63 +111,6 @@ export const invalidateMarketingCenterOverviewCache = async (userId?: string | n
   await invalidateRedisCachePatterns([MARKETING_CENTER_OVERVIEW_CACHE_PATTERN])
 }
 
-// BuildingAI 风格会员计费规则。
-const parseMembershipPlanConfig = (value: unknown) => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>
-    return {
-      benefits: Array.isArray(record.benefits) ? record.benefits : [],
-      billing: Array.isArray(record.billing) ? record.billing : [],
-    }
-  }
-
-  return {
-    benefits: Array.isArray(value) ? value : [],
-    billing: [],
-  }
-}
-
-const normalizeMembershipBillingRule = (item: Record<string, unknown>) => ({
-  levelId: String(item.levelId || '').trim(),
-  salesPrice: Number(item.salesPrice || 0),
-  originalPrice: item.originalPrice === null || item.originalPrice === undefined || String(item.originalPrice || '').trim() === '' ? null : Number(item.originalPrice),
-  label: String(item.label || '').trim() || null,
-  status: item.status === false ? false : true,
-})
-
-// 一个计划可以展开为多个前台套餐卡片。
-const expandMembershipPlansByBilling = (plans: any[], levels: any[]) => {
-  const levelMap = new Map(levels.map((item) => [item.id, item]))
-
-  return plans.flatMap((plan) => {
-    const config = parseMembershipPlanConfig(plan.benefitsJson)
-    const billingRules = (Array.isArray(config.billing) ? config.billing : [])
-      .map((item) => normalizeMembershipBillingRule(item as Record<string, unknown>))
-      .filter((item) => item.levelId && item.status)
-
-    return billingRules.map((rule, index) => ({
-      ...plan,
-      id: `${plan.id}::${rule.levelId}`,
-      planId: plan.id,
-      levelId: rule.levelId,
-      label: rule.label || plan.label,
-      salesPrice: rule.salesPrice,
-      originalPrice: rule.originalPrice,
-      level: levelMap.get(rule.levelId) || null,
-      benefitsJson: config.benefits,
-      billingIndex: index,
-      billingRules,
-    }))
-  })
-}
-
-const parsePlanPurchaseSelection = (value: string) => {
-  const [planId, levelId] = String(value || '').split('::')
-  return {
-    planId: String(planId || '').trim(),
-    levelId: String(levelId || '').trim(),
-  }
-}
 
 // 积分四舍五入到 2 位小数(精度安全):用于一切扣费/退款/调账/计价金额,规避浮点尾差。
 // 余额的权威加减在 DB 侧(DECIMAL)进行,JS 只负责把"单笔金额"四舍五入到 2 位后传参。
@@ -1219,25 +1162,6 @@ export const getMarketingCenterOverview = async (userId?: string | null) => {
     key: cacheKey,
     ttlSeconds: normalizedUserId ? 120 : 600,
     factory: async () => {
-      const [rawMembershipPlans, membershipLevels, rechargePackages, rewardRules] = await Promise.all([
-        prisma.membershipPlan.findMany({
-          where: { isEnabled: true },
-          include: { level: true },
-          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-        }),
-        prisma.membershipLevel.findMany({ where: { isEnabled: true } }),
-        prisma.rechargePackage.findMany({
-          where: { isEnabled: true },
-          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-        }),
-        prisma.rewardRule.findMany({
-          where: { isEnabled: true },
-          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-        }),
-      ])
-
-      const membershipPlans = expandMembershipPlansByBilling(rawMembershipPlans, membershipLevels)
-
       if (!normalizedUserId) {
         return serializeMarketingCenterRecord({
           user: null,
@@ -1247,18 +1171,11 @@ export const getMarketingCenterOverview = async (userId?: string | null) => {
             logs: [],
           },
           subscription: null,
-          membershipPlans,
-          rechargePackages,
-          rewardRules,
           cardRedeemRecords: [],
-          checkin: {
-            checkedInToday: false,
-            currentRecord: null,
-          },
         })
       }
 
-      const [currentUser, currentBalance, activeSubscription, recentPointLogs, recentRedeemRecords, todayCheckinRecord] = await Promise.all([
+      const [currentUser, currentBalance, activeSubscription, recentPointLogs, recentRedeemRecords] = await Promise.all([
         prisma.appUser.findUnique({
           where: { id: normalizedUserId },
           select: { id: true, name: true, email: true, phone: true, role: true, createdAt: true },
@@ -1284,14 +1201,6 @@ export const getMarketingCenterOverview = async (userId?: string | null) => {
           orderBy: [{ createdAt: 'desc' }],
           take: 10,
         }),
-        prisma.userCheckinRecord.findUnique({
-          where: {
-            userId_checkinDate: {
-              userId: normalizedUserId,
-              checkinDate: formatDateKey(new Date()),
-            },
-          },
-        }),
       ])
 
       return serializeMarketingCenterRecord({
@@ -1308,210 +1217,10 @@ export const getMarketingCenterOverview = async (userId?: string | null) => {
           })),
         },
         subscription: activeSubscription,
-        membershipPlans,
-        rechargePackages,
-        rewardRules,
         cardRedeemRecords: recentRedeemRecords,
-        checkin: {
-          checkedInToday: Boolean(todayCheckinRecord),
-          currentRecord: todayCheckinRecord,
-        },
       })
     },
   })
-}
-
-// 用户签到。
-export const performUserCheckin = async (userId: string) => {
-  const result = await prisma.$transaction(async (tx) => {
-    const today = formatDateKey(new Date())
-    const existing = await tx.userCheckinRecord.findUnique({
-      where: {
-        userId_checkinDate: {
-          userId,
-          checkinDate: today,
-        },
-      },
-    })
-    if (existing) {
-      throw new Error('今天已经签到过了')
-    }
-
-    const yesterday = new Date()
-    yesterday.setDate(yesterday.getDate() - 1)
-    const yesterdayKey = formatDateKey(yesterday)
-    const previousRecord = await tx.userCheckinRecord.findUnique({
-      where: {
-        userId_checkinDate: {
-          userId,
-          checkinDate: yesterdayKey,
-        },
-      },
-    })
-
-    const rewardResults = await grantRewardByTrigger(tx, {
-      userId,
-      triggerType: 'CHECKIN_DAILY',
-      remark: '每日签到奖励',
-      metaJson: { checkinDate: today },
-    })
-
-    const rewardPoints = rewardResults.reduce((sum, item) => sum + item.rewardPoints, 0)
-    const checkinRecord = await tx.userCheckinRecord.create({
-      data: {
-        userId,
-        rewardClaimId: rewardResults[0]?.claimId || null,
-        checkinDate: today,
-        consecutiveDays: previousRecord ? previousRecord.consecutiveDays + 1 : 1,
-        rewardPoints,
-      },
-    })
-
-    return serializeMarketingCenterRecord({
-      checkinRecord,
-      rewardResults,
-      currentBalance: await readCurrentPointBalance(userId, tx),
-    })
-  })
-
-  await invalidateMarketingCenterOverviewCache(userId)
-  return result
-}
-
-// 用户购买会员计划。
-export const createMembershipPurchaseOrder = async (userId: string, selectedPlanId: string) => {
-  const result = await prisma.$transaction(async (tx) => {
-    const selection = parsePlanPurchaseSelection(selectedPlanId)
-    const plan = await tx.membershipPlan.findFirst({
-      where: { id: selection.planId, isEnabled: true },
-      include: { level: true },
-    })
-    if (!plan) {
-      throw new Error('会员计划不存在或已下架')
-    }
-
-    const planConfig = parseMembershipPlanConfig(plan.benefitsJson)
-    const matchedBillingRule = (Array.isArray(planConfig.billing) ? planConfig.billing : [])
-      .map((item) => normalizeMembershipBillingRule(item as Record<string, unknown>))
-      .find((item) => item.levelId === selection.levelId && item.status)
-    if (!matchedBillingRule) {
-      throw new Error('当前会员计费规则不存在或已停用')
-    }
-
-    const now = new Date()
-    const order = await tx.membershipOrder.create({
-      data: {
-        userId,
-        levelId: matchedBillingRule.levelId,
-        planId: plan.id,
-        orderNo: buildSerialNo('VIP'),
-        sourceType: 'DIRECT_PURCHASE',
-        status: 'PAID',
-        totalAmount: matchedBillingRule.salesPrice,
-        paidAmount: matchedBillingRule.salesPrice,
-        bonusPoints: plan.bonusPoints,
-        startTime: now,
-        endTime: addDuration(now, plan.durationUnit, plan.durationValue),
-        paidAt: now,
-        metaJson: {
-          planName: plan.name,
-          durationType: plan.durationType,
-          durationValue: plan.durationValue,
-          durationUnit: plan.durationUnit,
-          billingLevelId: matchedBillingRule.levelId,
-          billingLabel: matchedBillingRule.label,
-        },
-      },
-    })
-
-    const subscription = await activateMembership(tx, {
-      userId,
-      levelId: matchedBillingRule.levelId,
-      sourceType: 'DIRECT_PURCHASE',
-      sourceId: order.id,
-      startTime: now,
-      durationUnit: plan.durationUnit,
-      durationValue: plan.durationValue,
-      bonusPoints: plan.bonusPoints,
-      metaJson: { orderNo: order.orderNo, planId: plan.id, levelId: matchedBillingRule.levelId },
-    })
-
-    await tx.membershipOrder.update({
-      where: { id: order.id },
-      data: {
-        startTime: subscription.startTime,
-        endTime: subscription.endTime,
-      },
-    })
-
-    return serializeMarketingCenterRecord({
-      order: await tx.membershipOrder.findUnique({ where: { id: order.id } }),
-      subscription,
-      currentBalance: await readCurrentPointBalance(userId, tx),
-    })
-  })
-
-  await invalidateMarketingCenterOverviewCache(userId)
-  return result
-}
-
-// 用户创建充值订单并立即入账。
-export const createRechargePurchaseOrder = async (userId: string, rechargePackageId: string) => {
-  const result = await prisma.$transaction(async (tx) => {
-    const rechargePackage = await tx.rechargePackage.findFirst({
-      where: { id: rechargePackageId, isEnabled: true },
-    })
-    if (!rechargePackage) {
-      throw new Error('充值套餐不存在或已下架')
-    }
-
-    const totalPoints = (rechargePackage.points || 0) + (rechargePackage.bonusPoints || 0)
-    const now = new Date()
-    const order = await tx.rechargeOrder.create({
-      data: {
-        userId,
-        rechargePackageId: rechargePackage.id,
-        orderNo: buildSerialNo('RCH'),
-        payChannel: 'MANUAL',
-        payStatus: 'PAID',
-        refundStatus: 'NONE',
-        points: rechargePackage.points,
-        bonusPoints: rechargePackage.bonusPoints,
-        totalAmount: rechargePackage.price,
-        paidAmount: rechargePackage.price,
-        packageSnapshotJson: {
-          name: rechargePackage.name,
-          label: rechargePackage.label,
-          price: rechargePackage.price,
-        },
-        paidAt: now,
-      },
-    })
-
-    await appendPointLog(tx, {
-      userId,
-      rechargeOrderId: order.id,
-      changeType: 'RECHARGE',
-      action: 'INCREASE',
-      changeAmount: totalPoints,
-      sourceType: 'RECHARGE_ORDER',
-      sourceId: order.id,
-      associationNo: order.orderNo,
-      remark: '积分充值到账',
-      metaJson: {
-        points: rechargePackage.points,
-        bonusPoints: rechargePackage.bonusPoints,
-      },
-    })
-
-    return serializeMarketingCenterRecord({
-      order,
-      currentBalance: await readCurrentPointBalance(userId, tx),
-    })
-  })
-
-  await invalidateMarketingCenterOverviewCache(userId)
-  return result
 }
 
 // 用户兑换卡密。
@@ -1521,6 +1230,9 @@ export const redeemCardCode = async (userId: string, code: string) => {
     if (!normalizedCode) {
       throw new Error('请输入卡密')
     }
+
+    // 并发兑换串行化：先锁用户计费行，避免同一用户并发兑换读到相同余额（与积分消费链路一致）。
+    await lockUserBillingRow(tx, userId)
 
     const cardCode = await tx.cardCode.findFirst({
       where: { code: normalizedCode },
@@ -1547,6 +1259,20 @@ export const redeemCardCode = async (userId: string, code: string) => {
       throw new Error('该卡密已过期')
     }
 
+    // 原子占用：仅当仍为 UNUSED 时置 USED，杜绝 findFirst 与更新之间的并发双花(TOCTOU)。
+    // 配合事务起始 lockUserBillingRow 行锁 + cardRedeemRecord.cardCodeId 唯一约束，三重防重。
+    const claimed = await tx.cardCode.updateMany({
+      where: { id: cardCode.id, status: 'UNUSED' },
+      data: {
+        status: 'USED',
+        usedByUserId: userId,
+        usedAt: new Date(),
+      },
+    })
+    if (claimed.count !== 1) {
+      throw new Error('该卡密已被使用')
+    }
+
     const redeemRecord = await tx.cardRedeemRecord.create({
       data: {
         cardCodeId: cardCode.id,
@@ -1557,15 +1283,6 @@ export const redeemCardCode = async (userId: string, code: string) => {
         rewardLevelId: cardCode.batch.rewardLevelId,
         rewardDays: cardCode.batch.rewardDays,
         remark: '卡密兑换成功',
-      },
-    })
-
-    await tx.cardCode.update({
-      where: { id: cardCode.id },
-      data: {
-        status: 'USED',
-        usedByUserId: userId,
-        usedAt: new Date(),
       },
     })
 

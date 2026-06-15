@@ -35,7 +35,7 @@ export const handleAssetItemsRequest = async (req: any, res: any) => {
           return
         }
 
-        const data = await listAllAssetItems(query)
+        const data = await listAllAssetItems(query, { id: currentUser.id, role: currentUser.role })
         sendJson(res, 200, { data })
         return
       }
@@ -63,7 +63,7 @@ export const handleAssetItemsRequest = async (req: any, res: any) => {
         return
       }
 
-      const data = await applyAssetAction(payload, currentUser.id, isBackofficeRole)
+      const data = await applyAssetAction(payload, currentUser.id, isBackofficeRole, { id: currentUser.id, role: currentUser.role })
       sendJson(res, 200, { data })
       return
     }

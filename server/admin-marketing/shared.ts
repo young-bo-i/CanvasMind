@@ -1,13 +1,5 @@
 import { readJsonBody, sendJson } from '../ai-gateway/shared'
 
-export interface MarketingMembershipBillingRulePayload {
-  levelId?: string
-  salesPrice?: number
-  originalPrice?: number | null
-  label?: string
-  status?: boolean
-}
-
 export interface MarketingMembershipLevelPayload {
   name?: string
   level?: number
@@ -19,48 +11,6 @@ export interface MarketingMembershipLevelPayload {
   pointDiscountPercent?: number
   benefitsJson?: unknown
   isEnabled?: boolean
-  sortOrder?: number
-}
-
-export interface MarketingMembershipPlanPayload {
-  name?: string
-  label?: string
-  description?: string
-  durationType?: string
-  durationValue?: number
-  durationUnit?: string
-  bonusPoints?: number
-  benefitsJson?: unknown
-  // 会员计划完全按 BuildingAI 方式使用 billingRules 入参，不再接收旧的单等级单售价字段。
-  billingRules?: MarketingMembershipBillingRulePayload[]
-  isEnabled?: boolean
-  sortOrder?: number
-}
-
-export interface MarketingRechargePackagePayload {
-  name?: string
-  label?: string
-  description?: string
-  points?: number
-  bonusPoints?: number
-  price?: number
-  originalPrice?: number | null
-  badgeText?: string
-  isEnabled?: boolean
-  sortOrder?: number
-  metaJson?: unknown
-}
-
-export interface MarketingRewardRulePayload {
-  code?: string
-  triggerType?: string
-  name?: string
-  description?: string
-  rewardPoints?: number
-  cycleType?: string
-  limitPerCycle?: number
-  isEnabled?: boolean
-  conditionJson?: unknown
   sortOrder?: number
 }
 

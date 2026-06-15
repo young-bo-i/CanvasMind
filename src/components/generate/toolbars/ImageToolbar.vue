@@ -33,13 +33,13 @@ const modelVersions = computed(() =>
 // 图片分辨率档位顺序(与后端 normalizeImageResolution 规范键一致)。
 const IMAGE_RESOLUTION_ORDER = ['0.5K', '1K', '2K', '4K']
 
-// 尺寸配置
+// 尺寸（宽高比）配置。清晰度不再写死在比例标签里，统一由下方「分辨率」选择器决定，避免两处冲突。
 const sizeOptions = [
-  { value: '1:1', label: '1:1', quality: '高清 2K' },
-  { value: '4:3', label: '4:3', quality: '高清 2K' },
-  { value: '3:4', label: '3:4', quality: '高清 2K' },
-  { value: '16:9', label: '16:9', quality: '高清 2K' },
-  { value: '9:16', label: '9:16', quality: '高清 2K' }
+  { value: '1:1', label: '1:1' },
+  { value: '4:3', label: '4:3' },
+  { value: '3:4', label: '3:4' },
+  { value: '16:9', label: '16:9' },
+  { value: '9:16', label: '9:16' }
 ]
 
 const readStoredImageToolbarState = () => {
@@ -148,24 +148,31 @@ const currentModelLabel = computed(() => {
 // 当前模型(含计费配置)。
 const currentModel = computed(() => modelVersions.value.find(v => v.value === currentModelVersion.value) || null)
 
-// 按分辨率计价的模型(nano):支持的分辨率来自 billingRule.imageResolutionPrices 的键。
+// 该模型可选的分辨率档位:
+//  - 按分辨率计价(nano):仅展示已配置价格的档位(即该模型支持的分辨率)。
+//  - 其它(按 token / 按张,如 gpt-image-2):提供完整档位(含 4K),由用户自由选择。
 const supportedImageResolutions = computed<string[]>(() => {
   const billingRule = (currentModel.value?.defaultParams as any)?.billingRule
-  if (!billingRule || billingRule.imageBillingMode !== 'per_resolution') return []
-  const prices = billingRule.imageResolutionPrices
-  const keys = prices && typeof prices === 'object' && !Array.isArray(prices)
-    ? Object.keys(prices).map(k => String(k).trim().toUpperCase())
-    : []
-  return IMAGE_RESOLUTION_ORDER.filter(r => keys.includes(r))
+  if (billingRule && billingRule.imageBillingMode === 'per_resolution') {
+    const prices = billingRule.imageResolutionPrices
+    const keys = prices && typeof prices === 'object' && !Array.isArray(prices)
+      ? Object.keys(prices).map(k => String(k).trim().toUpperCase())
+      : []
+    const filtered = IMAGE_RESOLUTION_ORDER.filter(r => keys.includes(r))
+    if (filtered.length) return filtered
+  }
+  return [...IMAGE_RESOLUTION_ORDER]
 })
 
-// 是否为"按分辨率计价"模型(决定是否展示分辨率选择器)。
-const isPerResolutionModel = computed(() => supportedImageResolutions.value.length > 0)
+// 是否为"按分辨率计价"模型(仅用于对外暴露,便于价格预估区分)。
+const isPerResolutionModel = computed(() =>
+  (currentModel.value?.defaultParams as any)?.billingRule?.imageBillingMode === 'per_resolution',
+)
 
-// 当前选中分辨率(仅 per_resolution 模型有意义)。
+// 当前选中分辨率。
 const currentResolution = ref(String(storedToolbarState?.resolution || '2K'))
 
-// 模型变化:若当前分辨率不在支持列表,切到第一个支持项。
+// 模型变化:若当前分辨率不在该模型支持列表,切到第一个支持项。
 watch(supportedImageResolutions, (list) => {
   if (list.length && !list.includes(currentResolution.value)) {
     currentResolution.value = list[0]
@@ -176,13 +183,11 @@ const selectResolution = (resolution: string) => {
   currentResolution.value = resolution
 }
 
-// 获取当前尺寸配置:per_resolution 模型把 quality 替换为所选清晰分辨率键(供计费),否则用默认档位标签。
+// 当前尺寸配置:quality 始终为所选分辨率档位键——提交任务/计费/上游实际像素尺寸都以此为准,
+// 与「比例」彻底解耦,杜绝比例标签写死 2K 与分辨率选择器冲突的问题。
 const currentSizeConfig = () => {
   const base = sizeOptions.find(s => s.value === currentSize.value) || sizeOptions[0]
-  if (isPerResolutionModel.value) {
-    return { ...base, quality: currentResolution.value }
-  }
-  return base
+  return { ...base, quality: currentResolution.value }
 }
 
 watch(
@@ -327,7 +332,6 @@ defineExpose({
           <div class="select-option-label">
             <div class="select-option-label-content">
               <span>{{ size.label }}</span>
-              <span class="commercial-content-PR23Ed">{{ size.quality }}</span>
             </div>
             <span v-if="currentSize === size.value" class="select-option-check-icon">
               <svg width="1em" height="1em" viewBox="0 0 24 24"
@@ -343,8 +347,9 @@ defineExpose({
           </div>
         </li>
       </ul>
-      <!-- 按分辨率计价模型(nano):展示该模型支持的分辨率,选择后参与计费。 -->
-      <div v-if="isPerResolutionModel" style="padding:8px 12px;border-top:1px solid var(--stroke-primary,rgba(255,255,255,.1))">
+      <!-- 分辨率选择：所有图片模型都展示（按分辨率计价仅列已配置档位，其它模型给完整档位含 4K）。
+           所选分辨率决定上游实际像素尺寸与计费，是清晰度的唯一来源。 -->
+      <div v-if="supportedImageResolutions.length" style="padding:8px 12px;border-top:1px solid var(--stroke-primary,rgba(255,255,255,.1))">
         <div style="font-size:12px;color:var(--text-secondary,#909399);margin-bottom:6px">分辨率</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button
