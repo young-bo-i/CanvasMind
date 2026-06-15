@@ -415,12 +415,357 @@ const extractImageUsageFromPayload = (payload: unknown): { promptTokens: number;
   return { promptTokens, completionTokens, cachedTokens }
 }
 
+const capFlag = (capabilityJson: unknown, flag: string): boolean =>
+  Boolean(capabilityJson && typeof capabilityJson === 'object' && (capabilityJson as Record<string, unknown>)[flag] === true)
+
+// Gemini / Nano Banana 图片模型:走 Gemini 原生 generateContent 端点(支持 aspectRatio + imageSize 到 4K)。
+// 优先看 capabilityJson.imageViaGemini;否则按 model id 识别 gemini*-image。
+const isGeminiImageModel = (modelKey: string, capabilityJson: unknown): boolean => {
+  if (capFlag(capabilityJson, 'imageViaGemini')) return true
+  const key = String(modelKey || '').toLowerCase()
+  return Boolean(key) && /gemini[\w.-]*-image/.test(key)
+}
+
+// 其它"经 OpenAI 兼容 chat 端点出图"的模型(gpt-4o-image、qwen-image 等);明确排除 gpt-image-*(走 /images/generations)与 gemini(走 generateContent)。
+const isChatImageModel = (modelKey: string, capabilityJson: unknown): boolean => {
+  if (capFlag(capabilityJson, 'imageViaChat')) return true
+  const key = String(modelKey || '').toLowerCase()
+  if (!key) return false
+  if (/gpt-image/.test(key) || isGeminiImageModel(modelKey, capabilityJson)) return false
+  return /(4o-image|qwen-image)/.test(key)
+}
+
+// 从 chat 响应解析内联图片:兼容 string 正文里的 ![](data:image..)/http、多模态 parts、message.images。
+const extractImageUrlsFromChatPayload = (json: any): string[] => {
+  const urls: string[] = []
+  const push = (u: unknown) => {
+    const value = String(u || '').trim()
+    if (value && (value.startsWith('http') || value.startsWith('data:')) && !urls.includes(value)) {
+      urls.push(value)
+    }
+  }
+  const pushFromText = (text: unknown) => {
+    if (typeof text !== 'string' || !text) return
+    for (const u of extractImageUrlsFromText(text)) push(u)
+  }
+  const message = json?.choices?.[0]?.message
+  const content = message?.content
+  if (typeof content === 'string') {
+    pushFromText(content)
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === 'string') { pushFromText(part); continue }
+      if (part && typeof part === 'object') {
+        pushFromText(part.text)
+        push(part.image_url?.url ?? part.image_url ?? part.url)
+        if (part.inline_data?.data) push(`data:${part.inline_data.mime_type || 'image/png'};base64,${part.inline_data.data}`)
+      }
+    }
+  }
+  const images = message?.images
+  if (Array.isArray(images)) {
+    for (const it of images) {
+      if (typeof it === 'string') { push(it); continue }
+      const u = it?.image_url?.url ?? it?.url ?? it?.b64_json
+      if (typeof u === 'string' && u) push(u.startsWith('http') || u.startsWith('data:') ? u : `data:image/png;base64,${u}`)
+    }
+  }
+  return urls
+}
+
+// gemini chat 出图忽略 size/aspect_ratio 等参数(实测固定 ~1408x768),唯一能控比例的是 prompt 文本。
+// 这里据所选尺寸(像素 WxH,由前端 resolveImagePixelSize 给出)反推出比例,拼一句中文比例提示到 prompt 末尾,
+// 让 1:1 / 9:16 等选择真正生效(分辨率档位本身仅用于"按分辨率/按次"计费,实际像素由 gemini 决定)。
+const buildAspectHint = (size?: string): string => {
+  const matched = String(size || '').trim().match(/^(\d+)\s*[x×X]\s*(\d+)$/)
+  if (!matched) return ''
+  const w = Number(matched[1])
+  const h = Number(matched[2])
+  if (!w || !h) return ''
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a)
+  const d = gcd(w, h) || 1
+  const rw = Math.round(w / d)
+  const rh = Math.round(h / d)
+  const orient = w === h ? '正方形' : w > h ? '横版' : '竖版'
+  return `（请严格按 ${rw}:${rh} ${orient}比例输出图片）`
+}
+
+// 经 chat 端点出图(非流式):构造 messages(prompt + 比例提示 + 可选参考图 image_url),解析内联图片 + token usage。
+const performChatImageRequest = async (input: {
+  upstream: { baseUrl: string; apiKey: string; chatEndpoint: string }
+  modelKey: string
+  prompt: string
+  size?: string
+  referenceImages?: string[]
+  count?: number
+  signal: AbortSignal
+  fetchWithBurstRateRetry: RequestImageGenerationInput['fetchWithBurstRateRetry']
+  onRetry?: (retryState: RetryState) => Promise<void> | void
+  stage: string
+}) => {
+  const refs = (input.referenceImages || []).map(item => String(item || '').trim()).filter(Boolean)
+  const aspectHint = buildAspectHint(input.size)
+  const finalPrompt = aspectHint ? `${input.prompt} ${aspectHint}` : input.prompt
+  const userContent: unknown = refs.length
+    ? [
+        { type: 'text', text: finalPrompt },
+        ...refs.map(url => ({ type: 'image_url', image_url: { url } })),
+      ]
+    : finalPrompt
+
+  const requestBody = {
+    model: input.modelKey,
+    messages: [{ role: 'user', content: userContent }],
+    stream: false,
+  }
+
+  const chatEndpoint = String(input.upstream.chatEndpoint || '/chat/completions')
+  const upstreamUrl = `${input.upstream.baseUrl.replace(/\/+$/, '')}/${chatEndpoint.replace(/^\/+/, '')}`
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  if (input.upstream.apiKey) {
+    headers.set('Authorization', `Bearer ${input.upstream.apiKey}`)
+  }
+
+  const response = await input.fetchWithBurstRateRetry({
+    url: upstreamUrl,
+    signal: input.signal,
+    stage: input.stage,
+    timeoutMs: resolveUpstreamFetchTimeoutMs(Math.max(1, Math.floor(Number(input.count) || 1))),
+    detail: {
+      modelKey: input.modelKey,
+      endpointType: 'image-chat',
+      referenceImageCount: refs.length,
+    },
+    onRetry: input.onRetry,
+    init: {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+    },
+  })
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '')
+    throw new Error(normalizeGenerationErrorMessage(responseText, `图片生成失败 (${response.status})`))
+  }
+
+  const json = await response.json()
+  const imageUrls = extractImageUrlsFromChatPayload(json)
+  if (!imageUrls.length) {
+    throw new Error('未能从对话响应中解析出图片')
+  }
+
+  return { upstreamUrl, imageUrls, usage: extractImageUsageFromPayload(json) }
+}
+
+// chat 出图一次只返回一张:按 count 串行多次调用并合并图片、累加 token usage,
+// 避免"按 N 张预扣却只拿到 1 张"。count<=1 时单次返回。
+const performChatImageBatch = async (
+  input: Parameters<typeof performChatImageRequest>[0],
+): Promise<{ upstreamUrl: string; imageUrls: string[]; usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null }> => {
+  const total = Math.max(1, Math.floor(Number(input.count) || 1))
+  if (total <= 1) {
+    return performChatImageRequest({ ...input, count: 1 })
+  }
+  const imageUrls: string[] = []
+  let upstreamUrl = ''
+  let hasUsage = false
+  const sum = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 }
+  for (let index = 0; index < total; index += 1) {
+    const result = await performChatImageRequest({ ...input, count: 1 })
+    upstreamUrl = result.upstreamUrl
+    imageUrls.push(...result.imageUrls)
+    if (result.usage) {
+      hasUsage = true
+      sum.promptTokens += result.usage.promptTokens
+      sum.completionTokens += result.usage.completionTokens
+      sum.cachedTokens += result.usage.cachedTokens
+    }
+  }
+  return { upstreamUrl, imageUrls, usage: hasUsage ? sum : null }
+}
+
+// ===== Gemini / Nano Banana 原生 generateContent 出图 =====
+// CometAPI 官方示例:走 /v1beta/models/{model}:generateContent,用 imageConfig.aspectRatio 控比例、imageSize 控分辨率(到 4K)。
+// OpenAI 兼容的 /v1/images/generations 与 /v1/chat/completions 都无法控制比例/尺寸,故 gemini 专走这条。
+const GEMINI_ASPECT_RATIOS = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'])
+
+// 据所选像素尺寸(由前端预置表给出)反推 Gemini 接受的比例标签;不在白名单则返回 ''(让 gemini 用默认)。
+const deriveGeminiAspectRatio = (size?: string): string => {
+  const matched = String(size || '').trim().match(/^(\d+)\s*[x×X]\s*(\d+)$/)
+  if (!matched) return ''
+  const w = Number(matched[1])
+  const h = Number(matched[2])
+  if (!w || !h) return ''
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a)
+  const d = gcd(w, h) || 1
+  const ratio = `${Math.round(w / d)}:${Math.round(h / d)}`
+  return GEMINI_ASPECT_RATIOS.has(ratio) ? ratio : ''
+}
+
+// 据所选像素长边映射到 Gemini imageSize 档位(1K/2K/4K);0.5K 上调到 1K(gemini 无 0.5K)。
+const deriveGeminiImageSize = (size?: string): string => {
+  const matched = String(size || '').trim().match(/^(\d+)\s*[x×X]\s*(\d+)$/)
+  if (!matched) return ''
+  const longEdge = Math.max(Number(matched[1]) || 0, Number(matched[2]) || 0)
+  if (!longEdge) return ''
+  if (longEdge >= 3000) return '4K'
+  if (longEdge >= 1800) return '2K'
+  return '1K'
+}
+
+const performGeminiImageRequest = async (input: {
+  upstream: { baseUrl: string; apiKey: string }
+  modelKey: string
+  prompt: string
+  size?: string
+  referenceImages?: string[]
+  count?: number
+  signal: AbortSignal
+  fetchWithBurstRateRetry: RequestImageGenerationInput['fetchWithBurstRateRetry']
+  onRetry?: (retryState: RetryState) => Promise<void> | void
+  stage: string
+}) => {
+  // generateContent 在 API 根的 /v1beta 下,与 baseUrl 的 /v1 同级:剥掉 baseUrl 末尾的 /v1 或 /v1beta 再拼。
+  const root = String(input.upstream.baseUrl || '').replace(/\/+$/, '').replace(/\/v1(beta)?$/i, '')
+  const upstreamUrl = `${root}/v1beta/models/${encodeURIComponent(input.modelKey)}:generateContent`
+
+  const parts: Array<Record<string, unknown>> = [{ text: input.prompt }]
+  for (const ref of (input.referenceImages || []).map(item => String(item || '').trim()).filter(Boolean)) {
+    const blob = await resolveServerReferenceImageBlob(ref)
+    const base64 = Buffer.from(await blob.arrayBuffer()).toString('base64')
+    parts.push({ inlineData: { mimeType: blob.type || 'image/png', data: base64 } })
+  }
+
+  const imageConfig: Record<string, string> = {}
+  const aspectRatio = deriveGeminiAspectRatio(input.size)
+  if (aspectRatio) imageConfig.aspectRatio = aspectRatio
+  const imageSize = deriveGeminiImageSize(input.size)
+  if (imageSize) imageConfig.imageSize = imageSize
+
+  const requestBody = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseModalities: ['IMAGE'],
+      ...(Object.keys(imageConfig).length ? { imageConfig } : {}),
+    },
+  }
+
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  if (input.upstream.apiKey) {
+    headers.set('Authorization', `Bearer ${input.upstream.apiKey}`)
+  }
+
+  const response = await input.fetchWithBurstRateRetry({
+    url: upstreamUrl,
+    signal: input.signal,
+    stage: input.stage,
+    timeoutMs: resolveUpstreamFetchTimeoutMs(Math.max(1, Math.floor(Number(input.count) || 1))),
+    detail: {
+      modelKey: input.modelKey,
+      endpointType: 'image-gemini',
+      aspectRatio: imageConfig.aspectRatio || '',
+      imageSize: imageConfig.imageSize || '',
+      referenceImageCount: (input.referenceImages || []).length,
+    },
+    onRetry: input.onRetry,
+    init: { method: 'POST', headers, body: JSON.stringify(requestBody) },
+  })
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '')
+    throw new Error(normalizeGenerationErrorMessage(responseText, `图片生成失败 (${response.status})`))
+  }
+
+  const json: any = await response.json()
+  const imageUrls: string[] = []
+  for (const part of (json?.candidates?.[0]?.content?.parts || [])) {
+    const idata = part?.inlineData || part?.inline_data
+    if (idata?.data) {
+      imageUrls.push(`data:${idata.mimeType || idata.mime_type || 'image/png'};base64,${idata.data}`)
+    } else if (typeof part?.text === 'string') {
+      for (const u of extractImageUrlsFromText(part.text)) {
+        if (!imageUrls.includes(u)) imageUrls.push(u)
+      }
+    }
+  }
+  if (!imageUrls.length) {
+    throw new Error('未能从 Gemini 响应中解析出图片')
+  }
+
+  const um = json?.usageMetadata || {}
+  const num = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
+  const promptTokens = num(um.promptTokenCount)
+  const completionTokens = num(um.candidatesTokenCount)
+  const cachedTokens = num(um.cachedContentTokenCount)
+  const usage = (promptTokens || completionTokens || cachedTokens) ? { promptTokens, completionTokens, cachedTokens } : null
+  return { upstreamUrl, imageUrls, usage }
+}
+
+// 多图:gemini 一次一张,按 count 串行多次并合并图片、累加 usage。
+const performGeminiImageBatch = async (
+  input: Parameters<typeof performGeminiImageRequest>[0],
+): Promise<{ upstreamUrl: string; imageUrls: string[]; usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null }> => {
+  const total = Math.max(1, Math.floor(Number(input.count) || 1))
+  if (total <= 1) {
+    return performGeminiImageRequest({ ...input, count: 1 })
+  }
+  const imageUrls: string[] = []
+  let upstreamUrl = ''
+  let hasUsage = false
+  const sum = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 }
+  for (let index = 0; index < total; index += 1) {
+    const result = await performGeminiImageRequest({ ...input, count: 1 })
+    upstreamUrl = result.upstreamUrl
+    imageUrls.push(...result.imageUrls)
+    if (result.usage) {
+      hasUsage = true
+      sum.promptTokens += result.usage.promptTokens
+      sum.completionTokens += result.usage.completionTokens
+      sum.cachedTokens += result.usage.cachedTokens
+    }
+  }
+  return { upstreamUrl, imageUrls, usage: hasUsage ? sum : null }
+}
+
 export const requestImageGeneration = async (input: RequestImageGenerationInput) => {
   const upstream = await resolveGatewayProviderUpstream({
     providerId: input.providerId,
     endpointType: 'image',
     modelKey: input.modelKey,
   })
+
+  // Gemini / Nano Banana:走原生 generateContent(支持比例 + 4K)。
+  if (isGeminiImageModel(input.modelKey, upstream.modelCapabilityJson)) {
+    const body = input.requestBody as Record<string, unknown>
+    return performGeminiImageBatch({
+      upstream,
+      modelKey: input.modelKey,
+      prompt: String(body.prompt || '').trim(),
+      size: String(body.size || ''),
+      count: Math.max(1, Math.floor(Number(body.n) || 1)),
+      signal: input.signal,
+      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
+      onRetry: input.onRetry,
+      stage: 'image_generation',
+    })
+  }
+
+  // 其它 chat 出图模型(gpt-4o-image / qwen-image 等):走 chat 端点(非流式),不走 /images/generations。
+  if (isChatImageModel(input.modelKey, upstream.modelCapabilityJson)) {
+    const body = input.requestBody as Record<string, unknown>
+    return performChatImageBatch({
+      upstream,
+      modelKey: input.modelKey,
+      prompt: String(body.prompt || '').trim(),
+      size: String(body.size || ''),
+      count: Math.max(1, Math.floor(Number(body.n) || 1)),
+      signal: input.signal,
+      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
+      onRetry: input.onRetry,
+      stage: 'image_generation',
+    })
+  }
 
   const headers = new Headers({
     'Content-Type': 'application/json',
@@ -491,6 +836,39 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
     endpointType: 'image-edit',
     modelKey: input.modelKey,
   })
+
+  // Gemini / Nano Banana:图生图也走原生 generateContent,参考图作为 inlineData 传入。
+  if (isGeminiImageModel(input.modelKey, upstream.modelCapabilityJson)) {
+    return performGeminiImageBatch({
+      upstream,
+      modelKey: input.modelKey,
+      prompt: input.prompt,
+      size: input.size,
+      referenceImages: input.referenceImages,
+      count: input.count,
+      signal: input.signal,
+      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
+      onRetry: input.onRetry,
+      stage: 'image_edit',
+    })
+  }
+
+  // 其它 chat 出图模型(gpt-4o-image / qwen-image 等):图生图走 chat 端点,把参考图作为多模态 image_url 传入。
+  if (isChatImageModel(input.modelKey, upstream.modelCapabilityJson)) {
+    return performChatImageBatch({
+      upstream,
+      modelKey: input.modelKey,
+      prompt: input.prompt,
+      size: input.size,
+      referenceImages: input.referenceImages,
+      count: input.count,
+      signal: input.signal,
+      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
+      onRetry: input.onRetry,
+      stage: 'image_edit',
+    })
+  }
+
   const editImageCount = Math.max(1, Math.floor(Number(input.count) || 1))
   const formData = await buildImageEditRequestFormData({
     modelKey: input.modelKey,

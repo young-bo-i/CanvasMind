@@ -696,6 +696,8 @@ export const resolveGatewayProviderUpstream = async (input: {
     baseUrl: provider.baseUrl,
     apiKey: decryptProviderApiKey(provider.apiKeyEncrypted),
     endpoint,
+    // chat 端点单独带出：gemini/nano-banana 等"经 chat 出图"的模型,图片生成要改走这个端点。
+    chatEndpoint: provider.chatEndpoint,
     modelCapabilityJson,
   }
 }
