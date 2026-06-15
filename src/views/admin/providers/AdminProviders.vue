@@ -571,28 +571,24 @@
                 <div class="admin-form__hint">勾选该模型支持的分辨率并设置每张单价(支持小数)；未勾选的分辨率用户端不可选。扣费 = 所选分辨率单价 × 张数。</div>
               </template>
 
-              <!-- per_token:按 token 分档(单位 积分 / 1M tokens,对齐 gpt-image-2 官方 $/1M 口径)+ 保底 -->
+              <!-- per_token:按 token 计价(单位 积分 / 100万 tokens,对齐 gpt-image-2 官方 $/1M)+ 保底。竖排,避免窄栏挤压。 -->
               <template v-else>
-                <label class="admin-form__label">计费规则(按 token 分档 · 每 100万 tokens)</label>
-                <div class="admin-billing-grid">
+                <label class="admin-form__label">计费规则(按 token · 每 100万 tokens)</label>
+                <div style="display:flex;flex-direction:column;gap:8px">
                   <div class="admin-composite-input">
-                    <input v-model.number="modelForm.imageInputPrice1M" class="admin-input" type="number" min="0" step="0.0001" placeholder="输入单价">
+                    <input v-model.number="modelForm.imageInputPrice1M" class="admin-input" type="number" min="0" step="0.0001" placeholder="输入 token 单价" style="flex:1;min-width:0">
                     <span class="admin-composite-input__suffix">输入 · 积分 / 1M</span>
                   </div>
                   <div class="admin-composite-input">
-                    <input v-model.number="modelForm.imageOutputPrice1M" class="admin-input" type="number" min="0" step="0.0001" placeholder="输出单价">
+                    <input v-model.number="modelForm.imageOutputPrice1M" class="admin-input" type="number" min="0" step="0.0001" placeholder="输出 token 单价" style="flex:1;min-width:0">
                     <span class="admin-composite-input__suffix">输出 · 积分 / 1M</span>
                   </div>
                   <div class="admin-composite-input">
-                    <input v-model.number="modelForm.imageCachedPrice1M" class="admin-input" type="number" min="0" step="0.0001" placeholder="缓存命中单价">
-                    <span class="admin-composite-input__suffix">缓存 · 积分 / 1M</span>
-                  </div>
-                  <div class="admin-composite-input">
-                    <input v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="每次保底预扣">
+                    <input v-model.number="modelForm.billingPower" class="admin-input" type="number" min="0" step="0.01" placeholder="每次保底预扣(可填 0)" style="flex:1;min-width:0">
                     <span class="admin-composite-input__suffix">保底预扣 · 积分</span>
                   </div>
                 </div>
-                <div class="admin-form__hint">如 gpt-image-2(官方按 $/1M token):单价填「每 100万 tokens 的积分」。发起时先预扣「保底」积分,生成后按上游返回的输入/输出/缓存命中 token ÷ 100万 × 单价多退少补(需上游返回 usage)。例:输出单价填 3000,一张约 4000 输出 token 扣 ≈12 积分。</div>
+                <div class="admin-form__hint">如 gpt-image-2(官方按 $/1M token):单价填「每 100万 tokens 的积分」。发起时先预扣「保底」积分,生成后按上游返回的输入/输出 token ÷ 100万 × 单价多退少补(需上游返回 usage)。例:输出单价填 3000,一张约 4000 输出 token 扣 ≈12 积分。</div>
               </template>
             </template>
           </div>
@@ -865,10 +861,9 @@ const modelForm = reactive({
     '2K': { enabled: false, price: 0 },
     '4K': { enabled: false, price: 0 },
   } as Record<string, { enabled: boolean; price: number }>,
-  // 图片 per_token 单价(积分 / 100万 tokens,对齐 gpt-image-2 官方 $/1M 口径)。
+  // 图片 per_token 单价(积分 / 100万 tokens,对齐 gpt-image-2 官方 $/1M 口径;只分输入/输出)。
   imageInputPrice1M: 0,
   imageOutputPrice1M: 0,
-  imageCachedPrice1M: 0,
   billingTokens: 1000,
   // 对话(CHAT)按 token 分档单价（积分 / 1k token）。IMAGE/VIDEO 不用。
   inputPrice1k: 0,
@@ -1034,7 +1029,6 @@ const resetModelForm = () => {
   }
   modelForm.imageInputPrice1M = 0
   modelForm.imageOutputPrice1M = 0
-  modelForm.imageCachedPrice1M = 0
   modelForm.billingTokens = 1000
   modelForm.inputPrice1k = 0
   modelForm.outputPrice1k = 0
@@ -1084,7 +1078,6 @@ const applyModelForm = (model: AdminProviderModelItem) => {
   }
   modelForm.imageInputPrice1M = Number(billingRule.imageInputPricePer1M || 0) || 0
   modelForm.imageOutputPrice1M = Number(billingRule.imageOutputPricePer1M || 0) || 0
-  modelForm.imageCachedPrice1M = Number(billingRule.imageCachedPricePer1M || 0) || 0
   modelForm.billingTokens = Number(billingRule.tokens || 1000) || 1000
   modelForm.inputPrice1k = Number(billingRule.inputPricePer1k || 0) || 0
   modelForm.outputPrice1k = Number(billingRule.outputPricePer1k || 0) || 0
@@ -1434,10 +1427,9 @@ const mergeModelDefaultParams = () => {
           .filter((res) => modelForm.imageResolutions[res]?.enabled)
           .map((res) => [res, Number(modelForm.imageResolutions[res].price) || 0]),
       ),
-      // 图片 per_token 单价(积分 / 1M tokens)。
+      // 图片 per_token 单价(积分 / 1M tokens,只分输入/输出)。
       imageInputPricePer1M: Number(modelForm.imageInputPrice1M) || 0,
       imageOutputPricePer1M: Number(modelForm.imageOutputPrice1M) || 0,
-      imageCachedPricePer1M: Number(modelForm.imageCachedPrice1M) || 0,
       // 对话按 token 分档单价；非 CHAT 时这三档保持 0、不参与计费。
       inputPricePer1k: Number(modelForm.inputPrice1k) || 0,
       outputPricePer1k: Number(modelForm.outputPrice1k) || 0,

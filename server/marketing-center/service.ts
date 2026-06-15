@@ -303,16 +303,15 @@ export interface ModelBillingRule {
   // 仅 IMAGE 使用:计费模式 + 各分辨率每张单价(规范键 0.5K/1K/2K/4K)。
   imageBillingMode: ImageBillingMode
   imageResolutionPrices: Record<string, number>
-  // 仅 IMAGE 的 per_token 模式使用:单价按「积分 / 100万(1M) tokens」(对齐 gpt-image-2 官方 $/1M 口径)。
-  // 与对话的 per-1k 单位刻意区分:图片 token 走 /1_000_000 计算,避免 1000× 误差。
+  // 仅 IMAGE 的 per_token 模式使用:输入/输出单价按「积分 / 100万(1M) tokens」(对齐 gpt-image-2 官方 $/1M 口径)。
+  // 与对话的 per-1k 单位刻意区分:图片 token 走 /1_000_000 计算,避免 1000× 误差。不区分缓存命中。
   imageInputPricePer1M: number
   imageOutputPricePer1M: number
-  imageCachedPricePer1M: number
 }
 
 // 从模型 defaultParamsJson.billingRule 解析出归一化计费规则；缺失字段一律按 0。
 export const readModelBillingRule = (value: unknown): ModelBillingRule => {
-  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second', videoResolutionPrices: {}, imageBillingMode: 'per_image', imageResolutionPrices: {}, imageInputPricePer1M: 0, imageOutputPricePer1M: 0, imageCachedPricePer1M: 0 }
+  const empty: ModelBillingRule = { power: 0, inputPricePer1k: 0, outputPricePer1k: 0, cachedPricePer1k: 0, videoBillingMode: 'per_second', videoResolutionPrices: {}, imageBillingMode: 'per_image', imageResolutionPrices: {}, imageInputPricePer1M: 0, imageOutputPricePer1M: 0 }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return empty
   }
@@ -342,7 +341,6 @@ export const readModelBillingRule = (value: unknown): ModelBillingRule => {
     imageResolutionPrices: parseResolutionPrices(rule.imageResolutionPrices, normalizeImageResolution),
     imageInputPricePer1M: num(rule.imageInputPricePer1M),
     imageOutputPricePer1M: num(rule.imageOutputPricePer1M),
-    imageCachedPricePer1M: num(rule.imageCachedPricePer1M),
   }
 }
 
@@ -393,25 +391,21 @@ export const resolveImagePointCostByUsage = (input: {
   const rule = input.billingRule
   const mult = input.billingMultiplier && input.billingMultiplier > 0 ? input.billingMultiplier : 1
 
+  // 图片 token 制只按 输入 / 输出 两档(不区分缓存命中)。输入按全部 prompt token 计。
   const promptTokens = Math.max(0, Number(usage.promptTokens || 0))
   const completionTokens = Math.max(0, Number(usage.completionTokens || 0))
-  const cachedTokens = Math.min(promptTokens, Math.max(0, Number(usage.cachedTokens || 0)))
-  const nonCachedInput = Math.max(0, promptTokens - cachedTokens)
 
   const PER_MILLION = 1_000_000
-  const inputPoints = (nonCachedInput / PER_MILLION) * rule.imageInputPricePer1M
-  const cachePoints = (cachedTokens / PER_MILLION) * rule.imageCachedPricePer1M
+  const inputPoints = (promptTokens / PER_MILLION) * rule.imageInputPricePer1M
   const outputPoints = (completionTokens / PER_MILLION) * rule.imageOutputPricePer1M
-  const pointCost = Math.max(0, roundPoints((inputPoints + cachePoints + outputPoints) * mult))
+  const pointCost = Math.max(0, roundPoints((inputPoints + outputPoints) * mult))
 
   return {
     pointCost,
     breakdown: {
-      inputTokens: nonCachedInput,
-      cachedTokens,
+      inputTokens: promptTokens,
       outputTokens: completionTokens,
       inputPoints: Math.round(inputPoints * mult * 100) / 100,
-      cachePoints: Math.round(cachePoints * mult * 100) / 100,
       outputPoints: Math.round(outputPoints * mult * 100) / 100,
     },
   }
@@ -798,7 +792,7 @@ export const settleChatPointsByUsage = async (input: {
 
   // 三档单价全为 0（未配置分档计费）→ 不做按量结算，沿用保底预扣。
   // 图片走 per-1M(imageXxxPricePer1M)、对话走 per-1k(xxxPricePer1k)。
-  const hasImageTiers = Boolean(billingRule.imageInputPricePer1M || billingRule.imageOutputPricePer1M || billingRule.imageCachedPricePer1M)
+  const hasImageTiers = Boolean(billingRule.imageInputPricePer1M || billingRule.imageOutputPricePer1M)
   const hasChatTiers = Boolean(billingRule.inputPricePer1k || billingRule.outputPricePer1k || billingRule.cachedPricePer1k)
   if (endpointType === 'image' ? !hasImageTiers : !hasChatTiers) {
     return null
