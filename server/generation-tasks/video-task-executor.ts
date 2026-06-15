@@ -73,9 +73,18 @@ export interface VideoTaskExecutorContext {
   persistVideoTaskMeta: (recordId: string, userId: string, videoTask: SavedVideoTask) => Promise<void>
   // 视频完成时调用：若此前超时已退款则按原金额补扣（幂等）；正常完成无退款记录则跳过。
   rechargeVideoIfRefundedForTask: () => Promise<unknown>
+  // multipart/form-data 提交（cometapi-videos 走 /v1/videos + input_reference 文件直传）。可选：仅该协议需要。
+  fetchUpstreamForm?: (input: {
+    url: string
+    apiKey?: string
+    formData: FormData
+    signal: AbortSignal
+  }) => Promise<VideoUpstreamFetchResult>
+  // 把参考图(公网 URL / uploads 相对路径 / data URI)解析为可直传的 Blob。可选：仅 cometapi-videos 协议需要。
+  resolveReferenceBlob?: (url: string) => Promise<Blob>
 }
 
-type VideoProtocol = 'openai-async' | 'chengmeng-async'
+type VideoProtocol = 'openai-async' | 'chengmeng-async' | 'cometapi-videos'
 
 const DEFAULT_POLL_INTERVAL_MS = 3000
 // 视频上游(尤其排队)常超过数十分钟；放宽默认超时，仍可经 extraJson.pollTimeoutMs 覆盖。
@@ -232,6 +241,123 @@ const buildVideoContentArray = (
   }
 }
 
+// ===== CometAPI /v1/videos 视频协议（cometapi-videos；seedance 等模型走这条）=====
+// 重要：protocol 按「厂商的线格式」命名,不要按「模型」命名。同一个 seedance 模型在不同厂商,
+// 端点/字段/参考图机制/JSON-vs-multipart 都可能有细微差别,必须各走各的 protocol 或各自的字段配置:
+//   - 字段名级别的细微差异(seconds vs duration、input_reference vs image)→ 用下面的 extraJson 配置项吸收;
+//   - 线格式根本不同(如火山引擎 Ark 原生 content 数组)→ 另起一个 protocol。
+// 本 protocol = CometAPI /v1/videos(OpenAI-Sora 兼容 multipart),已对 doubao-seedance-2-0 实测通过。
+const COMETAPI_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'])
+
+// size：有分辨率档位(480p/720p/1080p)就按「短边=档位数、长边按比例」算出 WxH(偶数)，让分辨率真正生效；
+// 否则发比例预设(默认 720p)。实测 CometAPI seedance 的 size 既接受比例("16:9")也接受精确像素("1920x1080")。
+const resolveCometapiVideoSize = (ratio: string, resolution: string): string => {
+  const r = String(ratio || '').trim().toLowerCase().replace(/x/g, ':')
+  const rm = r.match(/^(\d+):(\d+)$/)
+  const resMatch = String(resolution || '').match(/(\d{3,4})/)
+  const resNum = resMatch ? Number(resMatch[1]) : 0
+  if (resNum && rm) {
+    const rw = Number(rm[1])
+    const rh = Number(rm[2])
+    const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+    const shortEdge = even(resNum)
+    const longEdge = even((resNum * Math.max(rw, rh)) / Math.min(rw, rh))
+    return rw >= rh ? `${longEdge}x${shortEdge}` : `${shortEdge}x${longEdge}`
+  }
+  return COMETAPI_VIDEO_RATIOS.has(r) ? r : '16:9'
+}
+
+const blobFileExt = (blob: Blob): string => {
+  const t = String(blob.type || '').toLowerCase()
+  if (t.includes('webp')) return 'webp'
+  if (t.includes('jpeg') || t.includes('jpg')) return 'jpg'
+  return 'png'
+}
+
+// CometAPI /v1/videos 提交：multipart/form-data + 文件直传参考图。字段名按 extraJson 可配,
+// 用于吸收同类(Sora 兼容)厂商的细微字段差异。返回上游任务号。
+const submitCometapiVideoTask = async (
+  params: VideoRequestParams,
+  upstream: ResolvedVideoProviderUpstream,
+  context: VideoTaskExecutorContext,
+  signal: AbortSignal,
+): Promise<string> => {
+  const { baseUrl, apiKey, videoEndpoint, extraJson } = upstream
+  // 提前取出并断言注入能力,顺带让 TS 在 await/循环后仍保持非空收窄。
+  const fetchForm = context.fetchUpstreamForm
+  const resolveBlob = context.resolveReferenceBlob
+  if (!fetchForm || !resolveBlob) {
+    throw new Error('cometapi-videos 协议需要 multipart 提交能力（fetchUpstreamForm / resolveReferenceBlob）未注入')
+  }
+  const trimmedBase = baseUrl.replace(/\/+$/, '')
+  const endpoint = videoEndpoint && videoEndpoint.trim() ? videoEndpoint.trim() : '/videos'
+  const submitUrl = `${trimmedBase}/${endpoint.replace(/^\/+/, '')}`
+
+  // 可配字段名:同类厂商若把 seconds 叫 duration、把 input_reference 叫 image 等,改这些配置即可,不改代码。
+  const modelField = readStringExtra(extraJson, 'videoModelField', 'model')
+  const promptField = readStringExtra(extraJson, 'videoPromptField', 'prompt')
+  const secondsField = readStringExtra(extraJson, 'videoSecondsField', 'seconds')
+  const sizeField = readStringExtra(extraJson, 'videoSizeField', 'size')
+  const referenceField = readStringExtra(extraJson, 'videoReferenceField', 'input_reference')
+
+  const minDuration = readNumberExtra(extraJson, 'minDuration', 4)
+  const maxDuration = readNumberExtra(extraJson, 'maxDuration', 15)
+  const defaultDuration = readNumberExtra(extraJson, 'defaultDuration', 5)
+  const seconds = Math.round(clampNumber(params.durationSeconds || defaultDuration, minDuration, maxDuration))
+  const size = resolveCometapiVideoSize(params.ratio, params.resolution)
+  const maxImages = readNumberExtra(extraJson, 'maxImages', 9)
+
+  const form = new FormData()
+  form.append(modelField, params.modelKey)
+  form.append(promptField, params.prompt)
+  form.append(secondsField, String(seconds))
+  if (size) form.append(sizeField, size)
+
+  // 仅图片参考走文件直传(CometAPI /v1/videos wrapper 仅支持图片;多图=全能参考,最多 maxImages)。
+  // 直传文件而非 URL：本地 /uploads 参考图无需公网可达地址即可使用。
+  const imageRefs = params.images.filter(url => detectRefKind(url) === 'image').slice(0, maxImages)
+  let attached = 0
+  for (const ref of imageRefs) {
+    try {
+      const blob = await resolveBlob(ref)
+      form.append(referenceField, blob, `reference-${attached + 1}.${blobFileExt(blob)}`)
+      attached += 1
+    } catch (refError) {
+      context.logGenerationTask('video_task:ref_resolve_failed', {
+        ref: String(ref).slice(0, 160),
+        message: refError instanceof Error ? refError.message : String(refError),
+      })
+    }
+  }
+
+  context.logGenerationTask('video_task:submit_body', {
+    url: submitUrl,
+    protocol: 'cometapi-videos',
+    model: params.modelKey,
+    seconds,
+    size,
+    referenceField,
+    refCount: params.images.length,
+    inputReferenceCount: attached,
+  })
+
+  const result = await fetchForm({ url: submitUrl, apiKey, formData: form, signal })
+  context.logGenerationTask('video_task:submit_response', {
+    url: submitUrl,
+    httpOk: result.ok,
+    status: result.status,
+    response: (() => { try { return JSON.stringify(result.data).slice(0, 1500) } catch { return String(result.rawText || '').slice(0, 1500) } })(),
+  })
+  if (!result.ok) {
+    throw new Error(`视频任务提交失败（${result.status}）：${String(result.rawText || '').slice(0, 300)}`)
+  }
+  const taskNo = String(result.data?.id ?? result.data?.task_id ?? '').trim()
+  if (!taskNo) {
+    throw new Error('视频任务提交成功但未返回任务号')
+  }
+  return taskNo
+}
+
 // 提交任务，返回上游任务号。
 const submitVideoTask = async (
   protocol: VideoProtocol,
@@ -240,6 +366,11 @@ const submitVideoTask = async (
   context: VideoTaskExecutorContext,
   signal: AbortSignal,
 ): Promise<string> => {
+  // cometapi-videos 走独立的 multipart 提交(input_reference 文件直传)，与 JSON 协议完全分开。
+  if (protocol === 'cometapi-videos') {
+    return submitCometapiVideoTask(params, upstream, context, signal)
+  }
+
   const { baseUrl, apiKey, videoEndpoint, extraJson } = upstream
   const trimmedBase = baseUrl.replace(/\/+$/, '')
 
@@ -395,10 +526,20 @@ const submitVideoTask = async (
     model: params.modelKey,
     prompt: params.prompt,
   }
-  if (params.resolution) body.size = params.resolution
-  // 视频比例(如 16:9)。字段名按厂商配置(extraJson.ratioField，默认 'ratio')；
-  // 留空可关闭(ratioField='')。Seedance 等支持比例参数，不传则上游用默认/跟随参考图。
-  const ratioField = readStringExtra(extraJson, 'ratioField', 'ratio')
+  // 「size」字段语义按厂商配置：
+  //  - 默认(sizeMeansRatio!=true)：size 装像素分辨率(如 '720p'/'1080p')——OpenAI/Sora 兼容；比例走单独 ratioField。
+  //  - Seedance 等(sizeMeansRatio=true)：size 装「宽高比」(如 '16:9')，CometAPI/Seedance 官方示例即 size="16:9"；
+  //    分辨率改走 resolutionField(默认不下发，避免上游 400；seedance 的 720p/1080p 多由模型变体决定)。
+  const sizeMeansRatio = readExtra(extraJson, 'sizeMeansRatio') === true
+  // ratioField：默认场景为 'ratio'；size 已装比例时默认 ''（不再单独发，避免重复/被上游当未知字段）。
+  const ratioField = readStringExtra(extraJson, 'ratioField', sizeMeansRatio ? '' : 'ratio')
+  if (sizeMeansRatio) {
+    if (params.ratio) body.size = params.ratio
+    const resolutionField = readStringExtra(extraJson, 'resolutionField', '')
+    if (resolutionField && params.resolution) body[resolutionField] = params.resolution
+  } else if (params.resolution) {
+    body.size = params.resolution
+  }
   if (params.ratio && ratioField) body[ratioField] = params.ratio
   // OpenAI/Sora 兼容视频接口的 seconds 是字符串（如 "4"/"8"）；发数字会被上游拒绝(invalid_request)。
   if (params.durationSeconds) body.seconds = String(params.durationSeconds)
@@ -413,7 +554,13 @@ const submitVideoTask = async (
   } else if (upstreamRefs.length && referenceMode === 'images') {
     body.images = upstreamRefs
   } else if (upstreamRefs.length) {
-    body.input_reference = upstreamRefs[0]
+    // OpenAI/Sora 兼容的 JSON 形态：input_reference 须为对象 { image_url: <url 或 data url> }（或 { file_id }），
+    // 不能是裸字符串——否则兼容网关会把「类型不符」的字段静默丢弃，导致参考图被忽略(只按 prompt 生成)。
+    // 个别上游若确实只认裸字符串 URL，可在 extraJson 配 inputReferenceAsObject=false 回退。
+    const inputReferenceAsObject = readExtra(extraJson, 'inputReferenceAsObject') !== false
+    body.input_reference = inputReferenceAsObject
+      ? { image_url: upstreamRefs[0] }
+      : upstreamRefs[0]
   }
 
   const submitUrl = `${trimmedBase}/${endpoint.replace(/^\/+/, '')}`
@@ -441,6 +588,20 @@ const submitVideoTask = async (
     apiKey,
     body,
     signal,
+  })
+  // 记录上游响应（成功/失败都记），便于线上核对：上游是否认了 input_reference/参考字段、是否回显报错。
+  let respPreview = ''
+  try {
+    respPreview = JSON.stringify(result.data)
+  } catch {
+    respPreview = String(result.rawText || '')
+  }
+  context.logGenerationTask('video_task:submit_response', {
+    url: submitUrl,
+    httpOk: result.ok,
+    status: result.status,
+    refCount: upstreamRefs.length,
+    response: (respPreview || String(result.rawText || '')).slice(0, 2000),
   })
   if (!result.ok) {
     throw new Error(`视频任务提交失败（${result.status}）：${String(result.rawText || '').slice(0, 300)}`)
@@ -640,9 +801,12 @@ export const executeVideoTask = async (
   })
 
   const upstream = await context.resolveVideoProviderUpstream({ providerId, modelKey })
-  const protocol: VideoProtocol = readStringExtra(upstream.extraJson, 'videoProtocol', 'openai-async') === 'chengmeng-async'
+  const rawProtocol = readStringExtra(upstream.extraJson, 'videoProtocol', 'openai-async')
+  const protocol: VideoProtocol = rawProtocol === 'chengmeng-async'
     ? 'chengmeng-async'
-    : 'openai-async'
+    : rawProtocol === 'cometapi-videos'
+      ? 'cometapi-videos'
+      : 'openai-async'
 
   const requestBody = (payload.requestBody || {}) as Record<string, unknown>
   const referenceImages = Array.isArray(payload.referenceImages)
@@ -862,7 +1026,11 @@ export const resumeVideoTask = async (
   }
 
   const upstream = await context.resolveVideoProviderUpstream({ providerId, modelKey })
-  const protocol: VideoProtocol = savedVideoTask.protocol === 'chengmeng-async' ? 'chengmeng-async' : 'openai-async'
+  const protocol: VideoProtocol = savedVideoTask.protocol === 'chengmeng-async'
+    ? 'chengmeng-async'
+    : savedVideoTask.protocol === 'cometapi-videos'
+      ? 'cometapi-videos'
+      : 'openai-async'
   const pollIntervalMs = readNumberExtra(upstream.extraJson, 'pollIntervalMs', DEFAULT_POLL_INTERVAL_MS)
   const pollTimeoutMs = Number(savedVideoTask.pollTimeoutMs)
     || readNumberExtra(upstream.extraJson, 'pollTimeoutMs', DEFAULT_POLL_TIMEOUT_MS)

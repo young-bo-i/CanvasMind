@@ -235,9 +235,14 @@ export const extractImageUrlsFromText = (text: string) => {
     }
   }
 
-  const base64Image = normalizedText.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/)
-  if (base64Image?.[0]) {
-    urls.push(base64Image[0])
+  // 全局匹配:一条响应里可能内联多张 base64 图（多图返回），不能只取第一张，否则按 N 张计费却只回 1 张。
+  const base64Images = normalizedText.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g)
+  if (base64Images) {
+    for (const item of base64Images) {
+      if (!urls.includes(item)) {
+        urls.push(item)
+      }
+    }
   }
 
   return urls

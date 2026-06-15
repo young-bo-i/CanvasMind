@@ -99,7 +99,7 @@ type RequestImageEditInput = {
   fetchWithBurstRateRetry: (input: Omit<FetchWithBurstRateRetryInput, 'logGenerationTask'>) => Promise<Response>
 }
 
-const resolveServerReferenceImageBlob = async (imageValue: string) => {
+export const resolveServerReferenceImageBlob = async (imageValue: string) => {
   const normalizedValue = String(imageValue || '').trim()
   if (normalizedValue.startsWith(UPLOADS_PUBLIC_PATH_PREFIX)) {
     const uploadsDir = getUploadsDir()
@@ -418,20 +418,27 @@ const extractImageUsageFromPayload = (payload: unknown): { promptTokens: number;
 const capFlag = (capabilityJson: unknown, flag: string): boolean =>
   Boolean(capabilityJson && typeof capabilityJson === 'object' && (capabilityJson as Record<string, unknown>)[flag] === true)
 
-// Gemini / Nano Banana 图片模型:走 Gemini 原生 generateContent 端点(支持 aspectRatio + imageSize 到 4K)。
-// 优先看 capabilityJson.imageViaGemini;否则按 model id 识别 gemini*-image。
+// 出图路由统一遵循同一优先级:【显式 capabilityJson 标记】>【按 model id 正则推断】>【端点默认】。
+// 这样"同一个 model id 在不同上游走不同协议"能由每个模型的配置写死,正则只作兜底默认。
+//
+// Gemini / Nano Banana 原生 generateContent 端点(支持 aspectRatio + imageSize 到 4K)。
+// 注意:部分聚合上游(如 CometAPI)并不把 gemini-3 系列挂在 generateContent 通道上,
+// 这类模型必须显式配 imageViaChat 走 chat 端点 —— 该显式标记优先级高于本函数的 gemini 正则。
 const isGeminiImageModel = (modelKey: string, capabilityJson: unknown): boolean => {
+  // 显式 chat 钉死 > 显式 gemini 钉死 > 正则推断:imageViaChat 一旦置真,就不再当作 gemini。
+  if (capFlag(capabilityJson, 'imageViaChat')) return false
   if (capFlag(capabilityJson, 'imageViaGemini')) return true
   const key = String(modelKey || '').toLowerCase()
   return Boolean(key) && /gemini[\w.-]*-image/.test(key)
 }
 
-// 其它"经 OpenAI 兼容 chat 端点出图"的模型(gpt-4o-image、qwen-image 等);明确排除 gpt-image-*(走 /images/generations)与 gemini(走 generateContent)。
+// 其它"经 OpenAI 兼容 chat 端点出图"的模型(gpt-4o-image、qwen-image、CometAPI 上的 nano-banana 等)。
+// imageViaChat 显式标记优先;否则按 model id 兜底,但永远排除 gpt-image-*(走 /images/generations)。
 const isChatImageModel = (modelKey: string, capabilityJson: unknown): boolean => {
   if (capFlag(capabilityJson, 'imageViaChat')) return true
   const key = String(modelKey || '').toLowerCase()
   if (!key) return false
-  if (/gpt-image/.test(key) || isGeminiImageModel(modelKey, capabilityJson)) return false
+  if (/gpt-image/.test(key)) return false
   return /(4o-image|qwen-image)/.test(key)
 }
 
@@ -604,13 +611,16 @@ const deriveGeminiAspectRatio = (size?: string): string => {
 }
 
 // 据所选像素长边映射到 Gemini imageSize 档位(1K/2K/4K);0.5K 上调到 1K(gemini 无 0.5K)。
+// 阈值对齐 IMAGE_PIXEL_SIZE_TABLE 的实际长边(4K 档为 gpt-image-2 像素预算所限已降到 2880~3840,
+// 2K=2048,1K=1024):故 4K 阈值取 2600(兜住 2880),2K 取 1500(兜住 2048)。gemini 走原生
+// generateContent 不受 gpt-image-2 的像素预算约束,4K 实际可出到 4096x4096。
 const deriveGeminiImageSize = (size?: string): string => {
   const matched = String(size || '').trim().match(/^(\d+)\s*[x×X]\s*(\d+)$/)
   if (!matched) return ''
   const longEdge = Math.max(Number(matched[1]) || 0, Number(matched[2]) || 0)
   if (!longEdge) return ''
-  if (longEdge >= 3000) return '4K'
-  if (longEdge >= 1800) return '2K'
+  if (longEdge >= 2600) return '4K'
+  if (longEdge >= 1500) return '2K'
   return '1K'
 }
 
@@ -728,106 +738,259 @@ const performGeminiImageBatch = async (
   return { upstreamUrl, imageUrls, usage: hasUsage ? sum : null }
 }
 
+// ===========================================================================
+// 图片"厂家适配器"层(按厂商/上游格式各自独立、参数写死)
+// ---------------------------------------------------------------------------
+// 每个上游图片格式 = 一个自包含适配器,自带「构造请求 + 调上游 + 解析结果」,互不影响。
+// 模型在 capabilityJson.imageAdapter 里显式声明走哪个适配器(厂家格式);
+// 新增一个奇葩厂家只需加一个适配器对象 + 在该模型上写 imageAdapter,不动分发主干。
+// 未显式声明时按旧 flag/正则兜底推断,保证历史已配置模型不回归。
+//
+// 已接入(均按 CometAPI 实测对齐):
+//   - 'openai-images'          : POST /images/generations(文生图) + /images/edits(图生图 multipart)。
+//                                gpt-image-2 走这条;返回 data[].b64_json + token usage。
+//   - 'chat'                   : POST /chat/completions,图片内联在 message.content 的 markdown 里。
+//                                CometAPI 上的 nano-banana(gemini-3.x)、gpt-4o-image、qwen-image 走这条。
+//   - 'gemini-generatecontent' : POST /v1beta/models/{m}:generateContent(原生比例 + 4K)。
+//                                仅当上游确实把该模型挂在 generateContent 通道时可用。
+// ===========================================================================
+
+type ImageVendorResult = {
+  upstreamUrl: string
+  imageUrls: string[]
+  usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null
+}
+
+type ResolvedImageUpstream = Awaited<ReturnType<typeof resolveGatewayProviderUpstream>>
+
+type ImageAdapterContext = {
+  upstream: ResolvedImageUpstream
+  providerId: string
+  modelKey: string
+  prompt: string
+  size?: string
+  count: number
+  referenceImages: string[]
+  // 文生图原始请求体(已含 size/quality/n 等),openai-images 适配器需要它做 normalize 透传。
+  requestBody?: Record<string, unknown>
+  signal: AbortSignal
+  fetchWithBurstRateRetry: RequestImageGenerationInput['fetchWithBurstRateRetry']
+  onRetry?: (retryState: RetryState) => Promise<void> | void
+}
+
+interface ImageVendorAdapter {
+  key: string
+  label: string
+  generate: (ctx: ImageAdapterContext) => Promise<ImageVendorResult>
+  edit: (ctx: ImageAdapterContext) => Promise<ImageVendorResult>
+}
+
+// --- 适配器 1:OpenAI 图片接口(gpt-image-2) ---
+const openaiImagesAdapter: ImageVendorAdapter = {
+  key: 'openai-images',
+  label: 'OpenAI 图片接口 /images/generations + /images/edits',
+  async generate(ctx) {
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    if (ctx.upstream.apiKey) {
+      headers.set('Authorization', `Bearer ${ctx.upstream.apiKey}`)
+    }
+
+    const requestBody = normalizeImageGenerationRequestBody({
+      requestBody: ctx.requestBody || {},
+      modelKey: ctx.modelKey,
+    })
+    const upstreamImageCount = Math.max(1, Math.floor(Number((requestBody as Record<string, unknown>).n) || 1))
+    const upstreamUrl = `${ctx.upstream.baseUrl.replace(/\/+$/, '')}/${ctx.upstream.endpoint.replace(/^\/+/, '')}`
+    const response = await ctx.fetchWithBurstRateRetry({
+      url: upstreamUrl,
+      signal: ctx.signal,
+      stage: 'image_generation',
+      timeoutMs: resolveUpstreamFetchTimeoutMs(upstreamImageCount),
+      detail: {
+        providerId: ctx.providerId,
+        modelKey: ctx.modelKey,
+        endpointType: 'image',
+        imageCount: upstreamImageCount,
+      },
+      onRetry: ctx.onRetry,
+      init: { method: 'POST', headers, body: JSON.stringify(requestBody) },
+    })
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '')
+      throw new Error(normalizeGenerationErrorMessage(responseText, `图片生成失败 (${response.status})`))
+    }
+
+    // 非流式 JSON 同时拿图片 + token usage;chat-completions 流式端点暂无 usage。
+    let usage: ImageVendorResult['usage'] = null
+    let imageUrls: string[]
+    if (isChatCompletionsEndpoint(ctx.upstream.endpoint)) {
+      imageUrls = await extractImageUrlsFromStreamResponse(response, ctx.signal)
+    } else {
+      const json = await response.json()
+      imageUrls = extractImageUrlsFromJsonResponse(json)
+      usage = extractImageUsageFromPayload(json)
+    }
+    if (!imageUrls.length) {
+      throw new Error('未能获取到生成的图片')
+    }
+    return { upstreamUrl, imageUrls, usage }
+  },
+  async edit(ctx) {
+    const editImageCount = Math.max(1, Math.floor(Number(ctx.count) || 1))
+    const formData = await buildImageEditRequestFormData({
+      modelKey: ctx.modelKey,
+      prompt: ctx.prompt,
+      size: ctx.size,
+      count: editImageCount,
+      referenceImages: ctx.referenceImages,
+      fileNamePrefix: 'reference',
+      resolveReferenceImageBlob: resolveServerReferenceImageBlob,
+    })
+
+    const headers = new Headers()
+    if (ctx.upstream.apiKey) {
+      headers.set('Authorization', `Bearer ${ctx.upstream.apiKey}`)
+    }
+
+    const upstreamUrl = `${ctx.upstream.baseUrl.replace(/\/+$/, '')}/${ctx.upstream.endpoint.replace(/^\/+/, '')}`
+    const response = await ctx.fetchWithBurstRateRetry({
+      url: upstreamUrl,
+      signal: ctx.signal,
+      stage: 'image_edit',
+      timeoutMs: resolveUpstreamFetchTimeoutMs(editImageCount),
+      detail: {
+        providerId: ctx.providerId,
+        modelKey: ctx.modelKey,
+        endpointType: 'image-edit',
+        referenceImageCount: ctx.referenceImages.length,
+        imageCount: editImageCount,
+      },
+      onRetry: ctx.onRetry,
+      init: { method: 'POST', headers, body: formData },
+    })
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '')
+      throw new Error(normalizeGenerationErrorMessage(responseText, `图片编辑失败 (${response.status})`))
+    }
+
+    const editJson = await response.json()
+    const imageUrls = extractImageUrlsFromJsonResponse(editJson)
+    if (!imageUrls.length) {
+      throw new Error('未能获取到编辑后的图片')
+    }
+    return { upstreamUrl, imageUrls, usage: extractImageUsageFromPayload(editJson) }
+  },
+}
+
+// --- 适配器 2:经 chat/completions 出图(nano-banana / 4o-image / qwen-image) ---
+const chatImageAdapter: ImageVendorAdapter = {
+  key: 'chat',
+  label: '经 chat/completions 出图(图片内联在 message.content)',
+  generate(ctx) {
+    return performChatImageBatch({
+      upstream: { baseUrl: ctx.upstream.baseUrl, apiKey: ctx.upstream.apiKey, chatEndpoint: ctx.upstream.chatEndpoint },
+      modelKey: ctx.modelKey,
+      prompt: ctx.prompt,
+      size: ctx.size,
+      count: ctx.count,
+      signal: ctx.signal,
+      fetchWithBurstRateRetry: ctx.fetchWithBurstRateRetry,
+      onRetry: ctx.onRetry,
+      stage: 'image_generation',
+    })
+  },
+  edit(ctx) {
+    return performChatImageBatch({
+      upstream: { baseUrl: ctx.upstream.baseUrl, apiKey: ctx.upstream.apiKey, chatEndpoint: ctx.upstream.chatEndpoint },
+      modelKey: ctx.modelKey,
+      prompt: ctx.prompt,
+      size: ctx.size,
+      referenceImages: ctx.referenceImages,
+      count: ctx.count,
+      signal: ctx.signal,
+      fetchWithBurstRateRetry: ctx.fetchWithBurstRateRetry,
+      onRetry: ctx.onRetry,
+      stage: 'image_edit',
+    })
+  },
+}
+
+// --- 适配器 3:Gemini 原生 generateContent(原生比例 + 4K) ---
+const geminiGenerateContentAdapter: ImageVendorAdapter = {
+  key: 'gemini-generatecontent',
+  label: 'Gemini 原生 generateContent',
+  generate(ctx) {
+    return performGeminiImageBatch({
+      upstream: ctx.upstream,
+      modelKey: ctx.modelKey,
+      prompt: ctx.prompt,
+      size: ctx.size,
+      count: ctx.count,
+      signal: ctx.signal,
+      fetchWithBurstRateRetry: ctx.fetchWithBurstRateRetry,
+      onRetry: ctx.onRetry,
+      stage: 'image_generation',
+    })
+  },
+  edit(ctx) {
+    return performGeminiImageBatch({
+      upstream: ctx.upstream,
+      modelKey: ctx.modelKey,
+      prompt: ctx.prompt,
+      size: ctx.size,
+      referenceImages: ctx.referenceImages,
+      count: ctx.count,
+      signal: ctx.signal,
+      fetchWithBurstRateRetry: ctx.fetchWithBurstRateRetry,
+      onRetry: ctx.onRetry,
+      stage: 'image_edit',
+    })
+  },
+}
+
+const IMAGE_VENDOR_ADAPTERS: Record<string, ImageVendorAdapter> = {
+  [openaiImagesAdapter.key]: openaiImagesAdapter,
+  [chatImageAdapter.key]: chatImageAdapter,
+  [geminiGenerateContentAdapter.key]: geminiGenerateContentAdapter,
+}
+
+// 选适配器:显式 capabilityJson.imageAdapter 优先(每个厂家写死自己的格式),
+// 未声明再按旧 flag/正则兜底,最后默认 openai-images。
+const resolveImageVendorAdapter = (modelKey: string, capabilityJson: unknown): ImageVendorAdapter => {
+  const explicit = capabilityJson && typeof capabilityJson === 'object'
+    ? String((capabilityJson as Record<string, unknown>).imageAdapter || '').trim()
+    : ''
+  if (explicit && IMAGE_VENDOR_ADAPTERS[explicit]) {
+    return IMAGE_VENDOR_ADAPTERS[explicit]
+  }
+  if (isGeminiImageModel(modelKey, capabilityJson)) return geminiGenerateContentAdapter
+  if (isChatImageModel(modelKey, capabilityJson)) return chatImageAdapter
+  return openaiImagesAdapter
+}
+
 export const requestImageGeneration = async (input: RequestImageGenerationInput) => {
   const upstream = await resolveGatewayProviderUpstream({
     providerId: input.providerId,
     endpointType: 'image',
     modelKey: input.modelKey,
   })
-
-  // Gemini / Nano Banana:走原生 generateContent(支持比例 + 4K)。
-  if (isGeminiImageModel(input.modelKey, upstream.modelCapabilityJson)) {
-    const body = input.requestBody as Record<string, unknown>
-    return performGeminiImageBatch({
-      upstream,
-      modelKey: input.modelKey,
-      prompt: String(body.prompt || '').trim(),
-      size: String(body.size || ''),
-      count: Math.max(1, Math.floor(Number(body.n) || 1)),
-      signal: input.signal,
-      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
-      onRetry: input.onRetry,
-      stage: 'image_generation',
-    })
-  }
-
-  // 其它 chat 出图模型(gpt-4o-image / qwen-image 等):走 chat 端点(非流式),不走 /images/generations。
-  if (isChatImageModel(input.modelKey, upstream.modelCapabilityJson)) {
-    const body = input.requestBody as Record<string, unknown>
-    return performChatImageBatch({
-      upstream,
-      modelKey: input.modelKey,
-      prompt: String(body.prompt || '').trim(),
-      size: String(body.size || ''),
-      count: Math.max(1, Math.floor(Number(body.n) || 1)),
-      signal: input.signal,
-      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
-      onRetry: input.onRetry,
-      stage: 'image_generation',
-    })
-  }
-
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-  })
-  if (upstream.apiKey) {
-    headers.set('Authorization', `Bearer ${upstream.apiKey}`)
-  }
-
-  const requestBody = normalizeImageGenerationRequestBody({
-    requestBody: input.requestBody,
+  const adapter = resolveImageVendorAdapter(input.modelKey, upstream.modelCapabilityJson)
+  const body = (input.requestBody || {}) as Record<string, unknown>
+  return adapter.generate({
+    upstream,
+    providerId: input.providerId,
     modelKey: input.modelKey,
-  })
-
-  const upstreamImageCount = Math.max(1, Math.floor(Number((requestBody as Record<string, unknown>).n) || 1))
-  const upstreamUrl = `${upstream.baseUrl.replace(/\/+$/, '')}/${upstream.endpoint.replace(/^\/+/, '')}`
-  const response = await input.fetchWithBurstRateRetry({
-    url: upstreamUrl,
+    prompt: String(body.prompt || '').trim(),
+    size: String(body.size || '') || undefined,
+    count: Math.max(1, Math.floor(Number(body.n) || 1)),
+    referenceImages: [],
+    requestBody: input.requestBody,
     signal: input.signal,
-    stage: 'image_generation',
-    timeoutMs: resolveUpstreamFetchTimeoutMs(upstreamImageCount),
-    detail: {
-      providerId: input.providerId,
-      modelKey: input.modelKey,
-      endpointType: 'image',
-      imageCount: upstreamImageCount,
-    },
+    fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
     onRetry: input.onRetry,
-    init: {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
-    },
   })
-
-  if (!response.ok) {
-    const responseText = await response.text().catch(() => '')
-    throw new Error(normalizeGenerationErrorMessage(
-      responseText,
-      `图片生成失败 (${response.status})`,
-    ))
-  }
-
-  // 非流式 JSON 接口可同时拿到图片与 token usage(gpt-image-2 等按 token 计价用);chat-completions 流式暂无 usage。
-  let usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null = null
-  let imageUrls: string[]
-  if (isChatCompletionsEndpoint(upstream.endpoint)) {
-    imageUrls = await extractImageUrlsFromStreamResponse(response, input.signal)
-  } else {
-    const json = await response.json()
-    imageUrls = extractImageUrlsFromJsonResponse(json)
-    usage = extractImageUsageFromPayload(json)
-  }
-
-  if (!imageUrls.length) {
-    throw new Error('未能获取到生成的图片')
-  }
-
-  return {
-    upstreamUrl,
-    imageUrls,
-    usage,
-  }
 }
 
 export const requestImageEdit = async (input: RequestImageEditInput) => {
@@ -836,95 +999,19 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
     endpointType: 'image-edit',
     modelKey: input.modelKey,
   })
-
-  // Gemini / Nano Banana:图生图也走原生 generateContent,参考图作为 inlineData 传入。
-  if (isGeminiImageModel(input.modelKey, upstream.modelCapabilityJson)) {
-    return performGeminiImageBatch({
-      upstream,
-      modelKey: input.modelKey,
-      prompt: input.prompt,
-      size: input.size,
-      referenceImages: input.referenceImages,
-      count: input.count,
-      signal: input.signal,
-      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
-      onRetry: input.onRetry,
-      stage: 'image_edit',
-    })
-  }
-
-  // 其它 chat 出图模型(gpt-4o-image / qwen-image 等):图生图走 chat 端点,把参考图作为多模态 image_url 传入。
-  if (isChatImageModel(input.modelKey, upstream.modelCapabilityJson)) {
-    return performChatImageBatch({
-      upstream,
-      modelKey: input.modelKey,
-      prompt: input.prompt,
-      size: input.size,
-      referenceImages: input.referenceImages,
-      count: input.count,
-      signal: input.signal,
-      fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
-      onRetry: input.onRetry,
-      stage: 'image_edit',
-    })
-  }
-
-  const editImageCount = Math.max(1, Math.floor(Number(input.count) || 1))
-  const formData = await buildImageEditRequestFormData({
+  const adapter = resolveImageVendorAdapter(input.modelKey, upstream.modelCapabilityJson)
+  return adapter.edit({
+    upstream,
+    providerId: input.providerId,
     modelKey: input.modelKey,
     prompt: input.prompt,
     size: input.size,
-    count: editImageCount,
+    count: Math.max(1, Math.floor(Number(input.count) || 1)),
     referenceImages: input.referenceImages,
-    fileNamePrefix: 'reference',
-    resolveReferenceImageBlob: resolveServerReferenceImageBlob,
-  })
-
-  const headers = new Headers()
-  if (upstream.apiKey) {
-    headers.set('Authorization', `Bearer ${upstream.apiKey}`)
-  }
-
-  const upstreamUrl = `${upstream.baseUrl.replace(/\/+$/, '')}/${upstream.endpoint.replace(/^\/+/, '')}`
-  const response = await input.fetchWithBurstRateRetry({
-    url: upstreamUrl,
     signal: input.signal,
-    stage: 'image_edit',
-    timeoutMs: resolveUpstreamFetchTimeoutMs(editImageCount),
-    detail: {
-      providerId: input.providerId,
-      modelKey: input.modelKey,
-      endpointType: 'image-edit',
-      referenceImageCount: input.referenceImages.length,
-      imageCount: editImageCount,
-    },
+    fetchWithBurstRateRetry: input.fetchWithBurstRateRetry,
     onRetry: input.onRetry,
-    init: {
-      method: 'POST',
-      headers,
-      body: formData,
-    },
   })
-
-  if (!response.ok) {
-    const responseText = await response.text().catch(() => '')
-    throw new Error(normalizeGenerationErrorMessage(
-      responseText,
-      `图片编辑失败 (${response.status})`,
-    ))
-  }
-
-  const editJson = await response.json()
-  const imageUrls = extractImageUrlsFromJsonResponse(editJson)
-  if (!imageUrls.length) {
-    throw new Error('未能获取到编辑后的图片')
-  }
-
-  return {
-    upstreamUrl,
-    imageUrls,
-    usage: extractImageUsageFromPayload(editJson),
-  }
 }
 
 export const resolveWorkspaceImageModel = async (binding?: {

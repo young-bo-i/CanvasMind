@@ -37,8 +37,9 @@ const modelVersions = computed(() =>
 // 视频分辨率档位顺序(与后端规范键一致)。
 const VIDEO_RESOLUTION_ORDER = ['480P', '720P', '1080P']
 
-// 功能（即梦新版三选一）。badge 用于「全能参考」的 New 标。
-const featureOptions = [
+// 功能全集（即梦新版三选一）。实际可选项由所选模型 defaultParams.videoFeatures 声明过滤,
+// 模型不支持的功能不在页面出现(如 CometAPI seedance 只支持「全能参考/参考图」,首尾帧/智能多帧不显示)。
+const ALL_FEATURE_OPTIONS = [
   { value: 'omni-reference', label: '全能参考', icon: 'omni', badge: 'New' },
   { value: 'first-last-frame', label: '首尾帧', icon: 'frame', badge: '' },
   { value: 'multi-frame', label: '智能多帧', icon: 'multi', badge: '' },
@@ -70,7 +71,7 @@ const readStoredVideoToolbarState = () => {
 
 const storedVideoToolbarState = readStoredVideoToolbarState()
 const validVideoModelValues = modelVersions.value.map(item => item.value)
-const validVideoFeatureValues = featureOptions.map(item => item.value)
+const validVideoFeatureValues = ALL_FEATURE_OPTIONS.map(item => item.value)
 const validVideoRatioValues = ratioOptions.map(item => item.value)
 const validVideoDurationValues = durationOptions.map(item => item.value)
 
@@ -156,6 +157,27 @@ const currentModel = computed(() => modelVersions.value.find((m: any) => m.value
 const getCurrentModelLabel = () => currentModel.value?.label || currentModelVersion.value || ''
 const isCurrentModelVip = computed(() => Boolean(currentModel.value?.vip))
 
+// 当前模型支持的「功能」由后台模型配置 defaultParams.videoFeatures（字符串数组）声明;
+// 未声明则回退显示全部(兼容即梦等旧模型)。CometAPI seedance 配 ["omni-reference"],
+// 故「首尾帧/智能多帧」不会出现在该模型的工具栏上。
+const availableFeatureOptions = computed(() => {
+  const declared = (currentModel.value?.defaultParams as any)?.videoFeatures
+  const keys = Array.isArray(declared)
+    ? declared.map((k: any) => String(k).trim()).filter(Boolean)
+    : []
+  if (!keys.length) return ALL_FEATURE_OPTIONS
+  const filtered = ALL_FEATURE_OPTIONS.filter(opt => keys.includes(opt.value))
+  return filtered.length ? filtered : ALL_FEATURE_OPTIONS
+})
+// 仅一个功能时不渲染功能选择器(如 seedance 只有「参考图」),避免无意义的单项下拉。
+const showFeatureSelect = computed(() => availableFeatureOptions.value.length > 1)
+// 切模型后若当前功能不在新模型支持列表,自动回落到第一个可用功能(并同步通知父级)。
+watch(availableFeatureOptions, (opts) => {
+  if (opts.length && !opts.some(o => o.value === currentFeature.value)) {
+    currentFeature.value = opts[0].value
+  }
+}, { immediate: true })
+
 // 当前模型支持的分辨率(来自后台按分辨率定价配置 billingRule.videoResolutionPrices 的键)。
 // 未配置时回退默认 [720P,1080P],兼容旧模型。
 const supportedResolutions = computed<string[]>(() => {
@@ -175,7 +197,7 @@ watch(supportedResolutions, (list) => {
     currentResolution.value = list[0]
   }
 }, { immediate: true })
-const getCurrentFeatureLabel = () => featureOptions.find(f => f.value === currentFeature.value)?.label || '全能参考'
+const getCurrentFeatureLabel = () => ALL_FEATURE_OPTIONS.find(f => f.value === currentFeature.value)?.label || '全能参考'
 
 watch(
   [currentModelVersion, currentFeature, currentSize, currentResolution, currentDuration],
@@ -252,8 +274,8 @@ defineExpose({
       </ul>
     </SelectPopup>
 
-    <!-- 功能：全能参考 / 首尾帧 / 智能多帧 -->
-    <div class="feature-select">
+    <!-- 功能：全能参考 / 首尾帧 / 智能多帧（仅显示当前模型支持的;单一功能时整体隐藏） -->
+    <div v-if="showFeatureSelect" class="feature-select">
       <div ref="featureTriggerRef"
            :class="['lv-select', 'lv-select-single', 'lv-select-size-default', 'toolbar-select', 'select-joF5y7', 'select-NNOj5P', { 'compact': iconOnly }]"
            role="combobox" tabindex="0" :aria-expanded="isFeatureSelectOpen"
@@ -276,9 +298,9 @@ defineExpose({
         </div>
       </div>
     </div>
-    <SelectPopup v-model:visible="isFeatureSelectOpen" :trigger-ref="featureTriggerRef" :placement="placement" title="功能">
+    <SelectPopup v-if="showFeatureSelect" v-model:visible="isFeatureSelectOpen" :trigger-ref="featureTriggerRef" :placement="placement" title="功能">
       <ul class="lv-select-popup-inner">
-        <li v-for="feature in featureOptions" :key="feature.value"
+        <li v-for="feature in availableFeatureOptions" :key="feature.value"
             :class="['lv-select-option', { 'lv-select-option-wrapper-selected': currentFeature === feature.value }]"
             @click.stop="selectFeature(feature.value)">
           <div class="select-option-label">

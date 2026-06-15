@@ -20,7 +20,7 @@ import WfNodeTitle from '../WfNodeTitle.vue'
 import { BANANA_SIZE_OPTIONS, SEEDREAM_SIZE_OPTIONS, getAllImageModels, loadPublicModelCatalog, getDefaultImageModelKey, getModelByName } from '@/config/models'
 import { createGenerationTask, resolveGenerationTaskModel, subscribeGenerationTaskEvents } from '@/api/generation-tasks'
 import WfSelect from '@/components/common/WfSelect.vue'
-import { appendImageReferencesToRequestBody, collectOrderedImageReferences } from '@/shared/image-generation-request'
+import { appendImageReferencesToRequestBody, collectOrderedImageReferences, resolveImagePixelSize } from '@/shared/image-generation-request'
 
 const props = defineProps<{
   id: string
@@ -256,7 +256,12 @@ const handleGenerate = async () => {
       n: 1,
       providerId,
     }
-    if (size.value && currentModel.value?.sizes?.length) requestBody.size = size.value
+    if (size.value && currentModel.value?.sizes?.length) {
+      // 把比例键(如 "1x1"/"16x9")转成上游可接受的合规像素尺寸,不再把比例当 size 直接下发
+      //(与主生成器一致;服务端虽有 coerce 兜底,这里显式转换更稳妥)。
+      const ratio = String(size.value).replace(/[x×]/i, ':')
+      requestBody.size = resolveImagePixelSize({ ratio }) || size.value
+    }
     if (quality.value) requestBody.quality = quality.value
     const hasReferenceImages = refImages.length > 0
     const normalizedRequestBody = hasReferenceImages

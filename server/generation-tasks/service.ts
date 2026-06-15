@@ -103,6 +103,7 @@ import {
   requestImageEdit,
   resolveWorkspaceImageModel,
   requestAgentWorkspaceModelPlan,
+  resolveServerReferenceImageBlob,
 } from './upstream-helpers'
 import { writeScopedLog } from '../shared/logging'
 
@@ -264,6 +265,33 @@ const fetchVideoUpstreamJson = async (input: {
   return { status: response.status, ok: response.ok, data, rawText }
 }
 
+// seedance 协议专用：multipart/form-data 提交。不手动设 Content-Type，让 fetch 按 FormData 自带 boundary。
+const fetchVideoUpstreamForm = async (input: {
+  url: string
+  apiKey?: string
+  formData: FormData
+  signal: AbortSignal
+}) => {
+  const headers: Record<string, string> = {}
+  if (input.apiKey) {
+    headers.Authorization = `Bearer ${input.apiKey}`
+  }
+  const response = await fetch(input.url, {
+    method: 'POST',
+    headers,
+    body: input.formData,
+    signal: input.signal,
+  })
+  const rawText = await response.text().catch(() => '')
+  let data: any = null
+  try {
+    data = rawText ? JSON.parse(rawText) : null
+  } catch {
+    data = null
+  }
+  return { status: response.status, ok: response.ok, data, rawText }
+}
+
 const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: GenerationTaskStartPayload) => {
   const videoContext = {
     syncSharedTaskRuntime,
@@ -272,6 +300,8 @@ const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: 
     sleepWithAbortSignal,
     resolveVideoProviderUpstream,
     fetchUpstreamJson: fetchVideoUpstreamJson,
+    fetchUpstreamForm: fetchVideoUpstreamForm,
+    resolveReferenceBlob: resolveServerReferenceImageBlob,
     buildInitialRecordPayload,
     updateGenerationRecord,
     getGenerationRecordById,

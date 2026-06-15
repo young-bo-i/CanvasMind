@@ -18,11 +18,38 @@ const parseSizeAspect = (value: unknown): { raw: string; aspect: number } | null
 }
 
 // 各分辨率档位的目标「长边」像素（与 normalizeImageResolution / 前端 IMAGE_RESOLUTION_ORDER 对齐）。
+// 4K 目标长边取 3840(UHD)而非 4096(DCI):gpt-image-2 等上游明确要求"最长边 ≤ 3840",
+// 传 4096 会被 HTTP 400 "The longest edge must be less than or equal to 3840." 拒绝。
 const RESOLUTION_TARGET_LONG_EDGE: Record<string, number> = {
   '0.5K': 512,
   '1K': 1024,
   '2K': 2048,
-  '4K': 4096,
+  '4K': 3840,
+}
+
+// 上游可接受的硬上限,作为最终下发前的安全夹取(与实测 gpt-image-2 对齐):
+//  - 最长边 ≤ 3840
+//  - 总像素 ≤ 3840x2160 = 8,294,400 (UHD 预算)
+const MAX_UPSTREAM_LONG_EDGE = 3840
+const MAX_UPSTREAM_PIXELS = 3840 * 2160
+
+// 向下取整到 16 的倍数(夹取场景必须 floor 而非 round,否则可能回弹越过上限)。下限 16。
+const floorTo16 = (value: number): number => Math.max(16, Math.floor(value / 16) * 16)
+
+// 等比缩小 (w,h) 直到同时满足最长边与总像素上限;已在范围内则原样返回。
+const clampToUpstreamLimits = (w: number, h: number): { w: number; h: number } => {
+  let scale = 1
+  const longEdge = Math.max(w, h)
+  if (longEdge > MAX_UPSTREAM_LONG_EDGE) {
+    scale = Math.min(scale, MAX_UPSTREAM_LONG_EDGE / longEdge)
+  }
+  if (w * h > MAX_UPSTREAM_PIXELS) {
+    scale = Math.min(scale, Math.sqrt(MAX_UPSTREAM_PIXELS / (w * h)))
+  }
+  if (scale >= 1) {
+    return { w, h }
+  }
+  return { w: floorTo16(w * scale), h: floorTo16(h * scale) }
 }
 
 // 把任意写法的分辨率归一到档位键（'高清 2K' / '2k' / '2048' → '2K'），无法识别返回 ''。
@@ -47,12 +74,15 @@ const roundTo16 = (value: number): number => Math.max(256, Math.round(value / 16
 
 // 预置尺寸表：标准「分辨率档 × 比例」直接对应一组固定像素尺寸（边长均为 16 的倍数），
 // 命中即原样下发给上游，不做任何"按模型 sizes 贴近/夹取"的计算。
-// 4K·16:9 = 3840x2160（已实测 CometAPI gpt-image-2 接受并出图）。
+// 4K 档需同时满足实测 gpt-image-2 的两条硬约束:最长边 ≤ 3840，且总像素 ≤ 3840x2160=8,294,400(UHD 预算)。
+// 故只有 16:9 / 9:16 能用 3840 长边;1:1 / 4:3 / 3:4 必须缩到像素预算内(均已实测可出图,边长仍可被 16 整除):
+//   1:1=2880x2880(=8.29M) 4:3=3264x2448(7.99M) 3:4=2448x3264 16:9=3840x2160(=8.29M) 9:16=2160x3840
+// 传 4096x4096 会被 "longest edge must be ≤ 3840" 拒绝;传 3328x2496(8.31M) 会被 "exceeds pixel budget" 拒绝。
 const IMAGE_PIXEL_SIZE_TABLE: Record<string, Record<string, string>> = {
   '0.5K': { '1:1': '512x512', '4:3': '512x384', '3:4': '384x512', '16:9': '512x288', '9:16': '288x512' },
   '1K': { '1:1': '1024x1024', '4:3': '1024x768', '3:4': '768x1024', '16:9': '1024x576', '9:16': '576x1024' },
   '2K': { '1:1': '2048x2048', '4:3': '2048x1536', '3:4': '1536x2048', '16:9': '2048x1152', '9:16': '1152x2048' },
-  '4K': { '1:1': '4096x4096', '4:3': '4096x3072', '3:4': '3072x4096', '16:9': '3840x2160', '9:16': '2160x3840' },
+  '4K': { '1:1': '2880x2880', '4:3': '3264x2448', '3:4': '2448x3264', '16:9': '3840x2160', '9:16': '2160x3840' },
 }
 
 /**
@@ -149,7 +179,11 @@ export const coerceImageSizeToPixels = (size: unknown): string => {
   const w = Number(matched[1])
   const h = Number(matched[2])
   if (w >= 256 && h >= 256 && w % 16 === 0 && h % 16 === 0) {
-    return `${Math.round(w)}x${Math.round(h)}` // 已是合规像素
+    // 已是合规像素；但若超出上游硬上限(最长边 3840 / 总像素 8.29M)则等比缩回范围内，
+    // 避免被 "longest edge must be ≤ 3840" 或 "exceeds pixel budget" 之类 400 拒绝
+    //（兜住旧前端缓存 / 后台默认 size / 伪造请求体）。
+    const clamped = clampToUpstreamLimits(w, h)
+    return `${clamped.w}x${clamped.h}`
   }
   return resolveImagePixelSize({ ratio: `${w}:${h}` }) || raw
 }

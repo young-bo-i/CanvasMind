@@ -231,6 +231,20 @@ const findFirstEnabledModelKey = async (providerId: string, category: ModelCateg
 
 const buildProviderDiscoverCacheKey = (providerId: string) => redisKeys.cache('provider-model-discover', providerId)
 
+// 据 model id 粗分类别,作为后台「发现导入」时的预选(管理员导入时仍可改)。
+// 默认 CHAT;命中视频/图片特征则给 VIDEO/IMAGE —— 否则图片/视频模型会被一律存成 CHAT,
+// 之后在图片/视频目录里(按 category 过滤)根本找不到,等于导入即失效。
+const inferModelCategoryFromKey = (modelKey: string): ModelCategory => {
+  const key = String(modelKey || '').toLowerCase()
+  if (/(seedance|veo|kling|runway|hailuo|sora|cogvideo|wan2|minimax.*video|video)/.test(key)) {
+    return 'VIDEO'
+  }
+  if (/(gpt-image|dall-?e|imagen|nano-banana|gemini[\w.-]*-image|flux|seedream|qwen-image|midjourney|stable-diffusion|sdxl|kontext|image)/.test(key)) {
+    return 'IMAGE'
+  }
+  return 'CHAT'
+}
+
 // 读取上游 /v1/models 结果，供后台批量选择导入。
 export const discoverProviderModels = async (providerId: string, viewer?: AdminViewer) => {
   const normalizedProviderId = await assertProviderExists(providerId, viewer)
@@ -267,7 +281,7 @@ export const discoverProviderModels = async (providerId: string, viewer?: AdminV
             modelKey,
             label: String(record.name || record.id || record.model || '').trim() || modelKey,
             description: String(record.description || record.owned_by || '').trim(),
-            category: 'CHAT' as ModelCategory,
+            category: inferModelCategoryFromKey(modelKey),
             sortOrder: index * 10,
             raw: record,
           }
