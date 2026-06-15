@@ -270,11 +270,24 @@ const submitVideoTask = async (
     const defaultAspectRatio = readStringExtra(extraJson, 'defaultAspectRatio', '16:9')
     const requestedRatio = String(params.ratio || '').trim().toLowerCase().replace(/x/g, ':')
     const aspectRatio = allowedRatios.includes(requestedRatio) ? requestedRatio : defaultAspectRatio
-    // 分辨率：文档当前仅支持 720p；前端默认下发大写 720P/1080P，这里统一小写 + 白名单回落，
-    // 避免大写或不支持的值(如 1080P)被上游 400 拒绝。可经 extraJson.allowedResolutions / resolution 扩展。
+    // 分辨率白名单优先级(统一小写 + 不匹配回落,避免上游 400):
+    // 1) 显式 extraJson.allowedResolutions;
+    // 2) 否则取该模型「按分辨率定价」配置的分辨率键(billingRule.videoResolutionPrices)——
+    //    与计费/前端可选项联动:配了 720p/1080p 价就允许上游生成 720p/1080p,杜绝「按 1080P 计费但只生成 720p」的错配;
+    // 3) 都没有则回落 ['720p']。
+    const configuredResolutionKeys = (() => {
+      const billingRule = readExtra(extraJson, 'billingRule')
+      const prices = billingRule && typeof billingRule === 'object' && !Array.isArray(billingRule)
+        ? (billingRule as Record<string, unknown>).videoResolutionPrices
+        : null
+      if (prices && typeof prices === 'object' && !Array.isArray(prices)) {
+        return Object.keys(prices).map(v => String(v).toLowerCase()).filter(Boolean)
+      }
+      return []
+    })()
     const allowedResolutions = Array.isArray(readExtra(extraJson, 'allowedResolutions'))
       ? (readExtra(extraJson, 'allowedResolutions') as unknown[]).map(v => String(v).toLowerCase()).filter(Boolean)
-      : ['720p']
+      : (configuredResolutionKeys.length ? configuredResolutionKeys : ['720p'])
     const defaultResolution = readStringExtra(extraJson, 'resolution', allowedResolutions[0] || '720p').toLowerCase()
     const requestedResolution = params.resolution.trim().toLowerCase()
     const resolution = allowedResolutions.includes(requestedResolution) ? requestedResolution : defaultResolution
