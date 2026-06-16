@@ -41,16 +41,26 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'Home',
     component: Home,
+    meta: {
+      mobileTitle: '首页',
+    },
   },
   {
     path: '/generate',
     name: 'Generate',
     component: Generate,
+    meta: {
+      mobileTitle: '创作',
+    },
   },
   {
     path: '/canvas',
     name: 'Canvas',
     component: Canana,
+    meta: {
+      // 无限画布编辑本期不做移动端，移动访问时显示「请在电脑端使用」。
+      desktopOnly: true,
+    },
   },
   {
     path: '/account',
@@ -58,22 +68,33 @@ const routes: RouteRecordRaw[] = [
     component: AccountManagement,
     meta: {
       requiresAuth: true,
+      mobileTitle: '我的',
     },
   },
   {
     path: '/publish',
     name: 'PublishCenter',
     component: PublishCenter,
+    meta: {
+      mobileTitle: '发布',
+    },
   },
   {
     path: '/asset',
     name: 'AssetManagement',
     component: AssetManagement,
+    meta: {
+      mobileTitle: '作品',
+    },
   },
   {
     path: '/workflow',
     name: 'Workflow',
     component: Workflow,
+    meta: {
+      // 工作流节点编辑器移动端不做，移动访问时显示「请在电脑端使用」。
+      desktopOnly: true,
+    },
   },
   {
     path: '/agentic-assets-canvas',

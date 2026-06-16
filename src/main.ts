@@ -1,5 +1,7 @@
 import { createApp } from 'vue'
 import '@styles/styles.css'
+// 移动端结构性样式层（仅 [data-device="mobile"] 生效，置于全局样式之后以确保覆盖优先级）。
+import '@styles/mobile.css'
 import App from './App.vue'
 import router from './router'
 import { useAuthStore } from './stores/auth'

@@ -1,5 +1,11 @@
 <template>
+  <!-- 移动端:统一切到移动外壳(底部 Tab + 顶栏 + 滚动区),复用同一份 slot/视图,不动路由与业务。 -->
+  <MobileLayout v-if="isMobile">
+    <slot />
+  </MobileLayout>
+
   <div
+    v-else
     class="frontstage-page-shell"
     :class="[`frontstage-page-shell--${layoutModeClass}`]"
     :data-layout-mode="layoutModeClass"
@@ -28,15 +34,19 @@
         </div>
       </div>
     </div>
-    <slot name="after" />
   </div>
+
+  <!-- 移动/桌面共用的覆盖层插槽(弹窗/浮层等),两端都渲染。 -->
+  <slot name="after" />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import SideMenu from '@/components/home/components/SideMenu.vue'
 import TopMenuBar from '@/components/home/components/TopMenuBar.vue'
+import MobileLayout from '@/components/mobile/MobileLayout.vue'
 import { useHomeSideMenuConfig } from '@/composables/useHomeSideMenuConfig'
+import { useBreakpointStore } from '@/stores/breakpoint'
 
 withDefaults(defineProps<{
   layout?: 'standard' | 'raw'
@@ -48,6 +58,7 @@ withDefaults(defineProps<{
   contentScrollY: 'auto',
 })
 
+const { isMobile } = useBreakpointStore()
 const { sideMenuStyleVars, layoutMode } = useHomeSideMenuConfig()
 const isTopMenuLayout = computed(() => layoutMode.value === 'top')
 const layoutModeClass = computed(() => (isTopMenuLayout.value ? 'top' : 'side'))

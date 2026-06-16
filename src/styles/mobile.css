@@ -1,0 +1,116 @@
+/* ============================================================
+ * 移动端结构性样式层（仅 [data-device="mobile"] 生效，桌面端零影响）。
+ *
+ * 思路：移动外壳(MobileLayout)负责导航/顶栏/底 Tab；这一层负责把各「视图内部」
+ * 的桌面布局结构性改造为单列 App 流——中和强制最小宽、把多列网格降到 2 列/单列、
+ * 撤掉桌面固定高度、让卡片/输入区全宽、放大触摸目标。
+ *
+ * 所有选择器都以 [data-device="mobile"] 前缀，确保桌面端不受任何影响。
+ * 即梦原版的混淆类名(record-list-container / responsive-image-grid / entry-* /
+ * dimension-layout-* 等)是稳定结构类，直接命中。
+ * ============================================================ */
+
+[data-device='mobile'] {
+  /* 全局：禁止横向溢出，安全区底部留白基线。 */
+  --m-tabbar-h: calc(54px + env(safe-area-inset-bottom));
+}
+
+[data-device='mobile'] body,
+[data-device='mobile'] #app {
+  overflow-x: hidden;
+}
+
+/* ---- 中和强制最小宽 / 桌面固定高度（否则手机上横向溢出 / 双滚动条）---- */
+[data-device='mobile'] .record-list-container {
+  min-width: 0 !important;
+}
+
+[data-device='mobile'] .entry-lav5_s,
+[data-device='mobile'] .entry-erESAd {
+  height: auto !important;
+  min-height: 100%;
+  overflow: visible !important;
+}
+
+/* 顶部「筛选」浮层在桌面是 fixed right:60px，手机上回收到右上常规位。 */
+[data-device='mobile'] .record-list-container .filter {
+  position: absolute !important;
+  right: 12px !important;
+  top: 8px !important;
+}
+
+/* ---- 信息流 / 网格：多列降到 2 列，卡片全宽友好 ---- */
+[data-device='mobile'] .responsive-image-grid {
+  grid-template-columns: repeat(2, 1fr) !important;
+  gap: 8px !important;
+  padding: 8px !important;
+}
+
+[data-device='mobile'] .responsive-image-grid > :nth-child(4n + 1),
+[data-device='mobile'] .responsive-image-grid > :last-child,
+[data-device='mobile'] .responsive-image-grid > :nth-child(4n) {
+  grid-column: auto !important;
+}
+
+/* 通用瀑布/卡网格(auto-fill minmax)在手机上压到更小列宽，得到 2 列。 */
+[data-device='mobile'] {
+  --grid-card-min: 44vw;
+}
+
+/* ---- 首页内容外壳：收紧边距，单列纵向流 ---- */
+[data-device='mobile'] .home-content-shell {
+  padding: 8px !important;
+}
+
+/* ---- 创作 composer(ContentGenerator)：移动端全宽、撤掉桌面定宽/最小宽 ---- */
+[data-device='mobile'] .dimension-layout-FUl4Nj {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+/* ---- 通用：把超出视口的固定宽度块收成全宽 ---- */
+[data-device='mobile'] .content-TZbgMr,
+[data-device='mobile'] .main-container-nXfW_A,
+[data-device='mobile'] .content-wrapper-cF1zaN {
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+/* ---- 触摸目标：按钮/可点项不小于 40px ---- */
+[data-device='mobile'] button,
+[data-device='mobile'] .lv-btn,
+[data-device='mobile'] [role='button'] {
+  min-height: 40px;
+}
+
+/* ---- Element Plus 弹窗/抽屉移动端全宽化（触摸友好兜底）---- */
+[data-device='mobile'] .el-dialog {
+  width: 92vw !important;
+  max-width: 92vw !important;
+  margin: 0 auto !important;
+}
+
+[data-device='mobile'] .el-drawer.rtl,
+[data-device='mobile'] .el-drawer.ltr {
+  width: 86vw !important;
+}
+
+[data-device='mobile'] .el-drawer.btt,
+[data-device='mobile'] .el-drawer.ttb {
+  height: auto !important;
+  max-height: 80vh !important;
+}
+
+[data-device='mobile'] .el-message-box {
+  width: 86vw !important;
+  max-width: 360px;
+}
+
+/* ---- 协议/条款等长文页：收紧版心 ---- */
+[data-device='mobile'] .policy-detail,
+[data-device='mobile'] .policy-content {
+  max-width: 100% !important;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom)) !important;
+  line-height: 1.7;
+}
