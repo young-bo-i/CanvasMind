@@ -249,21 +249,31 @@ const buildVideoContentArray = (
 // 本 protocol = CometAPI /v1/videos(OpenAI-Sora 兼容 multipart),已对 doubao-seedance-2-0 实测通过。
 const COMETAPI_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'])
 
-// size：有分辨率档位(480p/720p/1080p)就按「短边=档位数、长边按比例」算出 WxH(偶数)，让分辨率真正生效；
-// 否则发比例预设(默认 720p)。实测 CometAPI seedance 的 size 既接受比例("16:9")也接受精确像素("1920x1080")。
-const resolveCometapiVideoSize = (ratio: string, resolution: string): string => {
+// 官方 seedance 尺寸表(分辨率档 × 比例 → 精确 WxH)。两列:1.0 系列(v1) vs 1.5Pro/2.0/2.0Fast(v2)。
+// ⚠ 必须查表下发文档化的精确 WxH:自己按比例硬算(如 1:1/720p 得 720x720)是"未文档化"尺寸,
+//   会被 seedance 静默归一成别的比例 → 出来的视频不是所选比例。
+const SEEDANCE_SIZE_TABLE: Record<'v1' | 'v2', Record<string, Record<string, string>>> = {
+  v1: {
+    '480p': { '16:9': '864x480', '4:3': '736x544', '1:1': '640x640', '3:4': '544x736', '9:16': '480x864', '21:9': '960x416' },
+    '720p': { '16:9': '1248x704', '4:3': '1120x832', '1:1': '960x960', '3:4': '832x1120', '9:16': '704x1248', '21:9': '1504x640' },
+    '1080p': { '16:9': '1920x1088', '4:3': '1664x1248', '1:1': '1440x1440', '3:4': '1248x1664', '9:16': '1088x1920', '21:9': '2176x928' },
+  },
+  v2: {
+    '480p': { '16:9': '864x496', '4:3': '752x560', '1:1': '640x640', '3:4': '560x752', '9:16': '496x864', '21:9': '992x432' },
+    '720p': { '16:9': '1280x720', '4:3': '1112x834', '1:1': '960x960', '3:4': '834x1112', '9:16': '720x1280', '21:9': '1470x630' },
+    '1080p': { '16:9': '1920x1080', '4:3': '1664x1248', '1:1': '1440x1440', '3:4': '1248x1664', '9:16': '1080x1920', '21:9': '2206x946' },
+  },
+}
+
+// 据 model + 分辨率档 + 比例 查官方尺寸表得到精确 WxH;查不到再回退比例预设(默认 720p)。
+const resolveCometapiVideoSize = (modelKey: string, ratio: string, resolution: string): string => {
   const r = String(ratio || '').trim().toLowerCase().replace(/x/g, ':')
-  const rm = r.match(/^(\d+):(\d+)$/)
-  const resMatch = String(resolution || '').match(/(\d{3,4})/)
-  const resNum = resMatch ? Number(resMatch[1]) : 0
-  if (resNum && rm) {
-    const rw = Number(rm[1])
-    const rh = Number(rm[2])
-    const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
-    const shortEdge = even(resNum)
-    const longEdge = even((resNum * Math.max(rw, rh)) / Math.min(rw, rh))
-    return rw >= rh ? `${longEdge}x${shortEdge}` : `${shortEdge}x${longEdge}`
-  }
+  const resMatch = String(resolution || '').match(/(480|720|1080)/)
+  const resKey = resMatch ? `${resMatch[1]}p` : ''
+  // 1.0 系列(doubao-seedance-1-0-*)单独一列;1.5 Pro / 2.0 / 2.0 Fast 共用另一列。
+  const column = /seedance-1-0/i.test(String(modelKey || '')) ? 'v1' : 'v2'
+  const tabled = resKey ? SEEDANCE_SIZE_TABLE[column]?.[resKey]?.[r] : ''
+  if (tabled) return tabled
   return COMETAPI_VIDEO_RATIOS.has(r) ? r : '16:9'
 }
 
@@ -304,7 +314,7 @@ const submitCometapiVideoTask = async (
   const maxDuration = readNumberExtra(extraJson, 'maxDuration', 15)
   const defaultDuration = readNumberExtra(extraJson, 'defaultDuration', 5)
   const seconds = Math.round(clampNumber(params.durationSeconds || defaultDuration, minDuration, maxDuration))
-  const size = resolveCometapiVideoSize(params.ratio, params.resolution)
+  const size = resolveCometapiVideoSize(params.modelKey, params.ratio, params.resolution)
   const maxImages = readNumberExtra(extraJson, 'maxImages', 9)
 
   const form = new FormData()
