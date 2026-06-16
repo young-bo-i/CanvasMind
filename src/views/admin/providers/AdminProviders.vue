@@ -665,10 +665,40 @@
             </div>
           </div>
 
+          <!-- 图片模型：出图适配器（厂商格式，写入 capabilityJson.imageAdapter） -->
+          <div v-if="modelForm.category === 'IMAGE'" class="admin-form__field admin-form__field--full">
+            <label class="admin-form__label" for="model-image-adapter">出图适配器（厂商格式）</label>
+            <select id="model-image-adapter" v-model="modelForm.imageAdapter" class="admin-input">
+              <option v-for="opt in IMAGE_ADAPTER_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <div class="admin-form__hint">显式指定该模型走哪种出图协议；「自动」按模型 ID 推断。gpt-image-2 → OpenAI 图片接口；nano-banana → Gemini generateContent。</div>
+          </div>
+
+          <!-- 视频模型：上游协议（写入 defaultParamsJson.videoProtocol，模型级覆盖厂商默认） -->
+          <div v-if="modelForm.category === 'VIDEO'" class="admin-form__field admin-form__field--full">
+            <label class="admin-form__label" for="model-video-protocol">视频上游协议</label>
+            <select id="model-video-protocol" v-model="modelForm.videoProtocol" class="admin-input">
+              <option v-for="opt in VIDEO_PROTOCOL_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <div class="admin-form__hint">CometAPI seedance 选「CometAPI /v1/videos」；留空则继承厂商默认。</div>
+          </div>
+
+          <!-- 视频模型：支持的功能（写入 defaultParamsJson.videoFeatures，前端只显示勾选项） -->
+          <div v-if="modelForm.category === 'VIDEO'" class="admin-form__field admin-form__field--full">
+            <label class="admin-form__label">支持的功能</label>
+            <div class="admin-check-grid">
+              <label v-for="opt in VIDEO_FEATURE_OPTIONS" :key="opt.key" class="admin-check-item">
+                <input v-model="modelForm.videoFeatures[opt.key]" type="checkbox">
+                <span>{{ opt.label }}</span>
+              </label>
+            </div>
+            <div class="admin-form__hint">前端工具栏只显示这里勾选的功能。CometAPI seedance 只勾「全能参考」（首尾帧/音频/视频参考该端点不支持）。</div>
+          </div>
+
           <div class="admin-form__field admin-form__field--full">
             <label class="admin-form__label" for="model-default-params">默认参数 JSON</label>
             <textarea id="model-default-params" v-model="modelForm.defaultParamsJsonText" class="admin-textarea" placeholder='例如 {"temperature": 0.7}'></textarea>
-            <div class="admin-form__hint">透传到上游的兜底参数；与「能力配置」字段冲突时，能力配置优先</div>
+            <div class="admin-form__hint">透传到上游的兜底参数；与「能力配置」字段冲突时，能力配置优先。视频协议/功能、出图适配器请用上面的表单选项，避免手写 JSON 出错。</div>
           </div>
         </div>
 
@@ -844,6 +874,27 @@ const applyVideoExtraForm = (extra?: ProviderVideoExtraConfig | null) => {
   videoExtraForm.pollTimeoutMs = source.pollTimeoutMs
 }
 
+// 图片出图适配器选项(写入 capabilityJson.imageAdapter)。显式声明 > 模型 ID 正则推断。
+const IMAGE_ADAPTER_OPTIONS = [
+  { value: '', label: '自动（按模型 ID 推断）' },
+  { value: 'openai-images', label: 'OpenAI 图片接口 /images/generations（gpt-image-2）' },
+  { value: 'chat', label: '对话端点出图 /chat/completions（4o-image/qwen-image）' },
+  { value: 'gemini-generatecontent', label: 'Gemini 原生 generateContent（nano-banana，支持 4K）' },
+]
+// 视频上游协议选项(写入 defaultParamsJson.videoProtocol;模型级覆盖厂商默认)。
+const VIDEO_PROTOCOL_OPTIONS = [
+  { value: '', label: '继承厂商默认' },
+  { value: 'cometapi-videos', label: 'CometAPI /v1/videos（multipart，seedance）' },
+  { value: 'openai-async', label: 'OpenAI 异步 /videos（JSON）' },
+  { value: 'chengmeng-async', label: 'chengmeng 异步' },
+]
+// 视频功能选项(写入 defaultParamsJson.videoFeatures;前端工具栏只显示勾选项)。
+const VIDEO_FEATURE_OPTIONS = [
+  { key: 'omni-reference', label: '全能参考（参考图）' },
+  { key: 'first-last-frame', label: '首尾帧' },
+  { key: 'multi-frame', label: '智能多帧' },
+]
+
 const modelForm = reactive({
   category: 'CHAT' as AdminModelCategory,
   label: '',
@@ -885,6 +936,16 @@ const modelForm = reactive({
   // 单次最大出图张数（仅 IMAGE 类别有意义）。最终落入 capabilityJson.maxImagesPerRequest。
   // 不同上游限制不同：gpt-image-2 = 4，dall-e-3 = 1，dall-e-2 = 10。
   maxImagesPerRequest: 1,
+  // 图片出图适配器(厂商格式),最终落入 capabilityJson.imageAdapter；'' = 自动按模型 ID 推断。
+  imageAdapter: '',
+  // 视频上游协议,最终落入 defaultParamsJson.videoProtocol；'' = 继承厂商 extraJson。
+  videoProtocol: '',
+  // 视频支持的功能(最终落入 defaultParamsJson.videoFeatures,前端只显示勾选项)。
+  videoFeatures: {
+    'omni-reference': false,
+    'first-last-frame': false,
+    'multi-frame': false,
+  } as Record<string, boolean>,
 })
 
 const discoverBatchSettings = reactive({
@@ -1047,6 +1108,9 @@ const resetModelForm = () => {
   modelForm.maxContext = 3
   modelForm.isDefault = false
   modelForm.maxImagesPerRequest = 1
+  modelForm.imageAdapter = ''
+  modelForm.videoProtocol = ''
+  modelForm.videoFeatures = { 'omni-reference': false, 'first-last-frame': false, 'multi-frame': false }
 }
 
 // 编辑模型时统一回填，避免能力字段和默认参数丢失。
@@ -1102,6 +1166,17 @@ const applyModelForm = (model: AdminProviderModelItem) => {
   modelForm.maxImagesPerRequest = Number.isFinite(storedMaxImages) && storedMaxImages >= 1
     ? Math.floor(storedMaxImages)
     : 1
+  // 出图适配器 / 视频协议 / 视频功能回填表单。
+  modelForm.imageAdapter = typeof capabilityJson.imageAdapter === 'string' ? capabilityJson.imageAdapter : ''
+  modelForm.videoProtocol = typeof defaultParamsJson.videoProtocol === 'string' ? defaultParamsJson.videoProtocol : ''
+  {
+    const feats = Array.isArray(defaultParamsJson.videoFeatures)
+      ? defaultParamsJson.videoFeatures.map((item: any) => String(item))
+      : []
+    for (const opt of VIDEO_FEATURE_OPTIONS) {
+      modelForm.videoFeatures[opt.key] = feats.includes(opt.key)
+    }
+  }
 }
 
 const loadProviders = async () => {
@@ -1417,7 +1492,7 @@ const toggleModelCapability = (key: string) => {
 const mergeModelDefaultParams = () => {
   const parsedDefaultParams = parseOptionalJson(modelForm.defaultParamsJsonText, '默认参数 JSON') || {}
 
-  return {
+  const merged: Record<string, any> = {
     ...parsedDefaultParams,
     billingRule: {
       power: Number(modelForm.billingPower) || 0,
@@ -1449,6 +1524,20 @@ const mergeModelDefaultParams = () => {
     maxContext: Number(modelForm.maxContext) || 3,
     isDefault: Boolean(modelForm.isDefault),
   }
+
+  // 视频协议 + 功能由表单字段权威写入(覆盖 JSON 文本框里同名键,避免冲突);仅 VIDEO 写入。
+  if (modelForm.category === 'VIDEO') {
+    if (modelForm.videoProtocol) {
+      merged.videoProtocol = modelForm.videoProtocol
+    } else {
+      delete merged.videoProtocol
+    }
+    merged.videoFeatures = VIDEO_FEATURE_OPTIONS
+      .filter(opt => modelForm.videoFeatures[opt.key])
+      .map(opt => opt.key)
+  }
+
+  return merged
 }
 
 const buildModelPayload = (): AdminProviderModelPayload => {
@@ -1464,6 +1553,13 @@ const buildModelPayload = (): AdminProviderModelPayload => {
     }
   } else {
     delete capabilityJson.maxImagesPerRequest
+  }
+
+  // 出图适配器:仅 IMAGE 类别写入 capabilityJson.imageAdapter;'' 表示自动推断,删除该键。
+  if (modelForm.category === 'IMAGE' && modelForm.imageAdapter) {
+    capabilityJson.imageAdapter = modelForm.imageAdapter
+  } else {
+    delete capabilityJson.imageAdapter
   }
 
   return {

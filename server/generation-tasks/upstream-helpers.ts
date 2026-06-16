@@ -656,7 +656,9 @@ const performGeminiImageRequest = async (input: {
   const requestBody = {
     contents: [{ parts }],
     generationConfig: {
-      responseModalities: ['IMAGE'],
+      // 用 TEXT+IMAGE:nano-banana-pro(gemini-3-pro-image,thinking 图片模型)官方示例即如此,
+      // 纯 IMAGE 下它会偶发只"思考"不出图;flash 也兼容(实测两者都稳定返图)。
+      responseModalities: ['TEXT', 'IMAGE'],
       ...(Object.keys(imageConfig).length ? { imageConfig } : {}),
     },
   }
@@ -666,50 +668,74 @@ const performGeminiImageRequest = async (input: {
     headers.set('Authorization', `Bearer ${input.upstream.apiKey}`)
   }
 
-  const response = await input.fetchWithBurstRateRetry({
-    url: upstreamUrl,
-    signal: input.signal,
-    stage: input.stage,
-    timeoutMs: resolveUpstreamFetchTimeoutMs(Math.max(1, Math.floor(Number(input.count) || 1))),
-    detail: {
-      modelKey: input.modelKey,
-      endpointType: 'image-gemini',
-      aspectRatio: imageConfig.aspectRatio || '',
-      imageSize: imageConfig.imageSize || '',
-      referenceImageCount: (input.referenceImages || []).length,
-    },
-    onRetry: input.onRetry,
-    init: { method: 'POST', headers, body: JSON.stringify(requestBody) },
-  })
+  const numToken = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
+  // nano-banana-pro 是 thinking 图片模型,会偶发返回"无图"(安全软拦截 / 仅思考文本 / 空 candidate)。
+  // 对这类瞬时空响应重试一次兜底;显式安全/内容拦截则不重试(重试也会被拦,避免无谓扣费)。
+  const maxAttempts = 2
+  let lastDiag = ''
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await input.fetchWithBurstRateRetry({
+      url: upstreamUrl,
+      signal: input.signal,
+      stage: input.stage,
+      timeoutMs: resolveUpstreamFetchTimeoutMs(Math.max(1, Math.floor(Number(input.count) || 1))),
+      detail: {
+        modelKey: input.modelKey,
+        endpointType: 'image-gemini',
+        aspectRatio: imageConfig.aspectRatio || '',
+        imageSize: imageConfig.imageSize || '',
+        referenceImageCount: (input.referenceImages || []).length,
+        attempt,
+      },
+      onRetry: input.onRetry,
+      init: { method: 'POST', headers, body: JSON.stringify(requestBody) },
+    })
 
-  if (!response.ok) {
-    const responseText = await response.text().catch(() => '')
-    throw new Error(normalizeGenerationErrorMessage(responseText, `图片生成失败 (${response.status})`))
-  }
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '')
+      throw new Error(normalizeGenerationErrorMessage(responseText, `图片生成失败 (${response.status})`))
+    }
 
-  const json: any = await response.json()
-  const imageUrls: string[] = []
-  for (const part of (json?.candidates?.[0]?.content?.parts || [])) {
-    const idata = part?.inlineData || part?.inline_data
-    if (idata?.data) {
-      imageUrls.push(`data:${idata.mimeType || idata.mime_type || 'image/png'};base64,${idata.data}`)
-    } else if (typeof part?.text === 'string') {
-      for (const u of extractImageUrlsFromText(part.text)) {
-        if (!imageUrls.includes(u)) imageUrls.push(u)
+    const json: any = await response.json()
+    const candidate = json?.candidates?.[0]
+    const imageUrls: string[] = []
+    for (const part of (candidate?.content?.parts || [])) {
+      const idata = part?.inlineData || part?.inline_data
+      const fdata = part?.fileData || part?.file_data
+      const fileUri = String(fdata?.fileUri || fdata?.file_uri || '').trim()
+      if (idata?.data) {
+        imageUrls.push(`data:${idata.mimeType || idata.mime_type || 'image/png'};base64,${idata.data}`)
+      } else if (/^https?:\/\//i.test(fileUri)) {
+        // 大图(如 4K)部分上游可能返回文件 URI 而非内联 base64。
+        if (!imageUrls.includes(fileUri)) imageUrls.push(fileUri)
+      } else if (typeof part?.text === 'string' && part?.thought !== true) {
+        // 跳过 thinking 文本(thought=true);其余文本里尽量捞内联/外链图片。
+        for (const u of extractImageUrlsFromText(part.text)) {
+          if (!imageUrls.includes(u)) imageUrls.push(u)
+        }
       }
     }
-  }
-  if (!imageUrls.length) {
-    throw new Error('未能从 Gemini 响应中解析出图片')
-  }
 
-  const um = json?.usageMetadata || {}
-  const num = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
-  const promptTokens = num(um.promptTokenCount)
-  const completionTokens = num(um.candidatesTokenCount)
-  const cachedTokens = num(um.cachedContentTokenCount)
-  const usage = (promptTokens || completionTokens || cachedTokens) ? { promptTokens, completionTokens, cachedTokens } : null
-  return { upstreamUrl, imageUrls, usage }
+    if (imageUrls.length) {
+      const um = json?.usageMetadata || {}
+      const promptTokens = numToken(um.promptTokenCount)
+      const completionTokens = numToken(um.candidatesTokenCount)
+      const cachedTokens = numToken(um.cachedContentTokenCount)
+      const usage = (promptTokens || completionTokens || cachedTokens) ? { promptTokens, completionTokens, cachedTokens } : null
+      return { upstreamUrl, imageUrls, usage }
+    }
+
+    // 无图:取诊断信息;显式安全/内容拦截不重试,其余瞬时空响应重试。
+    const finishReason = String(candidate?.finishReason || '')
+    const blockReason = String(json?.promptFeedback?.blockReason || '')
+    lastDiag = [finishReason && `finishReason=${finishReason}`, blockReason && `blockReason=${blockReason}`]
+      .filter(Boolean).join(' ')
+    const hardBlocked = /SAFETY|PROHIBITED|BLOCK|RECITATION/i.test(`${finishReason} ${blockReason}`)
+    if (attempt >= maxAttempts || hardBlocked) {
+      break
+    }
+  }
+  throw new Error(`未能从 Gemini 响应中解析出图片${lastDiag ? `（${lastDiag}）` : ''}`)
 }
 
 // 多图:gemini 一次一张,按 count 串行多次并合并图片、累加 usage。
