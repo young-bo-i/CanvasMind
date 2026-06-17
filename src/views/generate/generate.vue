@@ -2673,7 +2673,13 @@ watch(
     if (nextUserId === prevUserId) {
       return
     }
-    resetGenerationStateForAccountChange()
+    // ⚠ 只有「从一个已登录账号切到另一个 / 登出」才清空(prevUserId 非空)。
+    // 首次鉴权水合(匿名 '' → 拿到当前用户)不是切号——此时用户可能已经开始输入/生成,
+    // 若在这里 reset 会把刚写好/刚提交的内容连同会话一起清空(历史突然加载即清空的 bug)。
+    // 这种情况只补加载(记录加载是 merge、会话加载会保留当前会话),不清空。
+    if (prevUserId) {
+      resetGenerationStateForAccountChange()
+    }
     if (nextUserId) {
       void loadPersistedGenerationSessions()
       void loadPersistedGeneratingRecords()
