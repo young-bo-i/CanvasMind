@@ -3150,25 +3150,6 @@ const startVideoGenerationTask = async (record: GeneratingRecord) => {
   }
 }
 
-// 图片生成支持跨页面中断；只要服务端任务仍在运行，就能远程停止。
-const handleStopImageGeneration = async (record: GeneratingRecord) => {
-  if (record.done) return
-  if (!record.dbId) return
-
-  try {
-    markRecordStopping(record)
-    const saved = await stopGenerationTask(record.dbId)
-    syncRecordWithPersisted(record, saved)
-    const controller = taskStreamControllers.get(record.dbId)
-    if (controller) {
-      controller.abort()
-      taskStreamControllers.delete(record.dbId)
-    }
-  } catch {
-    // 停止失败时保持当前状态，等待 SSE 或后续同步刷新。
-  }
-}
-
 const handleStopAgentExecution = async (record: GeneratingRecord) => {
   if (!record.agentRun || record.done || !record.dbId) return
 
@@ -3427,7 +3408,6 @@ onUnmounted(() => {
                     :videos="record.videos || []"
                     :error="record.error ? formatGenerationError(record.error, '视频生成失败') : ''"
                     :requerying="Boolean(record.requerying)"
-                    @stop="handleStopImageGeneration(record)"
                     @make-same="handleMakeSameRecord(record)"
                     @download="handleDownloadResult($event, 'video')"
                     @delete="handleDeleteRecord(record)"
@@ -3455,7 +3435,6 @@ onUnmounted(() => {
                     @edit="handleEditImageRecord(record)"
                     @regenerate="handleRegenerateImageRecord(record)"
                     @more="handleOpenImageRecordMore(record)"
-                    @stop="handleStopImageGeneration(record)"
                     @make-same="handleMakeSameRecord(record)"
                 />
               </div>

@@ -157,9 +157,6 @@
             <div class="progress-badge-RuihdC progress-badge-RQDqWu">
               {{ currentProgress }}%{{ currentProgressText || '造梦中' }}
             </div>
-            <button class="stop-generate-button-canana" type="button" @click="$emit('stop')">
-              停止生成
-            </button>
           </div>
           <div v-if="done && !error" class="operations">
             <div class="record-bottom-slots-AYv3JV">
@@ -289,7 +286,7 @@ const props = defineProps({
   conversationEntries: { type: Array as PropType<ConversationEntry[]>, default: () => [] }
 })
 
-const emit = defineEmits(['edit', 'regenerate', 'more', 'preview', 'stop', 'make-same'])
+const emit = defineEmits(['edit', 'regenerate', 'more', 'preview', 'make-same'])
 
 const handlePreview = (index: number) => {
   emit('preview', index)
@@ -574,29 +571,6 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-.stop-generate-button-canana {
-  align-items: center;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  bottom: 16px;
-  color: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 12px;
-  font-weight: 600;
-  height: 32px;
-  justify-content: center;
-  left: 50%;
-  padding: 0 14px;
-  position: absolute;
-  transform: translateX(-50%);
-  z-index: 6;
-}
-
-.stop-generate-button-canana:hover {
-  background: rgba(0, 0, 0, 0.58);
-}
 
 .image-stage-process-group {
   margin-top: 10px;

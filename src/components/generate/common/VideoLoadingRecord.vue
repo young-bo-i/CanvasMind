@@ -74,9 +74,6 @@
             <div class="progress-badge-RuihdC progress-badge-RQDqWu">
               {{ currentProgress }}% {{ currentProgressText || '造梦中' }}
             </div>
-            <button class="stop-generate-button-canana" type="button" @click="$emit('stop')">
-              停止生成
-            </button>
           </div>
         </div>
       </div>
@@ -108,7 +105,7 @@ const props = defineProps({
   requerying: { type: Boolean, default: false },
 })
 
-defineEmits(['stop', 'make-same', 'download', 'delete', 'requery'])
+defineEmits(['make-same', 'download', 'delete', 'requery'])
 
 // 仅「超时」失败才提供重新查询（上游可能只是排队慢）；明确失败(如 file_download_error)不给该按钮。
 const isTimeoutError = computed(() => /超时|timeout/i.test(String(props.error || '')))
@@ -305,29 +302,6 @@ onUnmounted(() => {
   cursor: default;
 }
 
-.stop-generate-button-canana {
-  align-items: center;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  bottom: 16px;
-  color: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 12px;
-  font-weight: 600;
-  height: 32px;
-  justify-content: center;
-  left: 50%;
-  padding: 0 14px;
-  position: absolute;
-  transform: translateX(-50%);
-  z-index: 6;
-}
-
-.stop-generate-button-canana:hover {
-  background: rgba(0, 0, 0, 0.58);
-}
 
 /* 结果卡片快捷动作（做同款 / 下载 / 删除） */
 .record-quick-actions {
