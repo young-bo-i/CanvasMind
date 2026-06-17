@@ -127,6 +127,10 @@ export const buildImageEditRequestFormData = async (input: {
   if (size) formData.append('size', size)
   if (quality) formData.append('quality', quality)
 
+  // 多张参考图必须用数组字段名 image[]（OpenAI/gpt-image-2 标准，最多 16 张）。
+  // 单张用 image（兼容 dall-e 等只认单 image 的模型）。
+  // ⚠ 用重复的 image（非 image[]）发多图，上游会一直不返回 → headers timeout 挂死。
+  const imageFieldName = referenceImages.length > 1 ? 'image[]' : 'image'
   for (let index = 0; index < referenceImages.length; index += 1) {
     const imageValue = referenceImages[index]
     const blob = resolveReferenceImageBlob
@@ -140,7 +144,7 @@ export const buildImageEditRequestFormData = async (input: {
         })
     const mimeType = blob.type || resolveImageMimeType(imageValue)
     const extension = resolveImageFileExtension(mimeType)
-    formData.append('image', blob, `${fileNamePrefix}-${index + 1}.${extension}`)
+    formData.append(imageFieldName, blob, `${fileNamePrefix}-${index + 1}.${extension}`)
   }
 
   return formData

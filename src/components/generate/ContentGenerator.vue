@@ -5,7 +5,6 @@ import { useLoginModalStore } from '@/stores/login-modal'
 import { useSystemSettingsStore } from '@/stores/system-settings'
 import { getModelByName } from '@/config/models'
 import { uploadStorageFile } from '@/api/storage'
-import { resolveImageReferenceLimit } from '@/shared/image-generation-request'
 import type { ModelCapabilityFlags } from '@/shared/provider-capability'
 
 // 导入子组件
@@ -831,22 +830,6 @@ const hasReferencesClass = computed(() =>
 )
 
 const imageReferenceCount = computed(() => imageReferenceImages.value.length)
-
-// 当前图片模型允许的参考图张数上限：gpt-image-2(openai-images)只支持单张参考图,
-// 否则用全局上限 9。与服务端 resolveImageReferenceLimit 同口径,前端直接卡住上传,避免多图挂死。
-const imageReferenceLimit = computed(() => {
-  const modelKey = imageToolbarRef.value?.currentModelVersion || ''
-  const model = modelKey ? getModelByName(modelKey) : null
-  const limit = resolveImageReferenceLimit(modelKey, model?.capabilityJson ?? null)
-  return limit > 0 ? Math.min(limit, IMAGE_REFERENCE_LIMIT) : IMAGE_REFERENCE_LIMIT
-})
-
-// 切到更小上限的模型(如选了 gpt-image-2)时，把超出的参考图裁掉，保证不会带着多图提交。
-watch(imageReferenceLimit, (limit) => {
-  if (imageReferenceImages.value.length > limit) {
-    imageReferenceImages.value = imageReferenceImages.value.slice(0, limit)
-  }
-})
 const collapsedReferenceRecordText = computed(() => {
   if ((currentType.value === 'image' || currentType.value === 'agent') && imageReferenceImages.value.length) {
     return `参考图片 ${imageReferenceImages.value.length} 张`
@@ -1023,7 +1006,7 @@ const applyFilesToSlot = async (rawFiles: File[], slot: ReferenceSlot) => {
     const urls = await uploadReferenceFiles(files)
     if (!urls.length) return
     if (slot === 'image-ref') {
-      imageReferenceImages.value = [...imageReferenceImages.value, ...urls].slice(0, imageReferenceLimit.value)
+      imageReferenceImages.value = [...imageReferenceImages.value, ...urls].slice(0, IMAGE_REFERENCE_LIMIT)
     } else if (slot === 'first-frame') {
       videoFirstFrameImage.value = urls[0]
     } else if (slot === 'last-frame') {
@@ -1250,9 +1233,9 @@ onUnmounted(() => {
                 <div style="transition:none;opacity:1;width:100%;height:100%">
                   <div
                     class="reference-upload-Yi4KkS mini-tVZaR4 generator-reference-upload-mini"
-                    :class="{ 'generator-reference-upload-mini--disabled disabled-wEh7Oq': imageReferenceCount >= imageReferenceLimit, 'reference-upload--dragover': dragOverSlot === 'image-ref' }"
+                    :class="{ 'generator-reference-upload-mini--disabled disabled-wEh7Oq': imageReferenceCount >= IMAGE_REFERENCE_LIMIT, 'reference-upload--dragover': dragOverSlot === 'image-ref' }"
                     :style="{ '--rotate': '0deg' }"
-                    @click.stop="imageReferenceCount < imageReferenceLimit && openImageReferencePicker()"
+                    @click.stop="imageReferenceCount < IMAGE_REFERENCE_LIMIT && openImageReferencePicker()"
                     @dragover.prevent="onSlotDragOver('image-ref')"
                     @dragenter.prevent="onSlotDragOver('image-ref')"
                     @dragleave="onSlotDragLeave('image-ref')"

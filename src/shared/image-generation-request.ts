@@ -188,35 +188,6 @@ export const coerceImageSizeToPixels = (size: unknown): string => {
   return resolveImagePixelSize({ ratio: `${w}:${h}` }) || raw
 }
 
-/**
- * 单次允许的「参考图」张数上限（返回 0 表示不限）。前后端共用,口径一致。
- * - 显式 capabilityJson.maxReferenceImages 优先；
- * - 否则按出图适配器默认：openai-images(gpt-image-2 等)只支持单张参考图
- *   （CometAPI /v1/images/edits 只有单个 image 字段，多图会挂死超时）；chat / gemini 多图不限；
- * - 与服务端 resolveImageVendorAdapter 的路由口径保持一致（显式 imageAdapter > 旧 flag > 正则）。
- */
-export const resolveImageReferenceLimit = (modelKey: unknown, capabilityJson: unknown): number => {
-  const cap = capabilityJson && typeof capabilityJson === 'object'
-    ? capabilityJson as Record<string, unknown>
-    : null
-
-  const explicit = Number(cap?.maxReferenceImages)
-  if (Number.isFinite(explicit) && explicit > 0) {
-    return Math.floor(explicit)
-  }
-
-  const adapter = String(cap?.imageAdapter || '').trim()
-  if (adapter === 'chat' || adapter === 'gemini-generatecontent') return 0
-  if (adapter === 'openai-images') return 1
-  // 旧 flag 兼容
-  if (cap?.imageViaChat === true || cap?.imageViaGemini === true) return 0
-
-  const key = String(modelKey || '').toLowerCase()
-  if (/gemini[\w.-]*-image/.test(key) || /(4o-image|qwen-image)/.test(key)) return 0
-  if (/gpt-image/.test(key)) return 1
-  return 0
-}
-
 export interface OrderedImageReferenceInput {
   order?: number | null | undefined
   imageData?: string | null | undefined
