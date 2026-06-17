@@ -14,6 +14,7 @@ import {
   buildImageEditRequestFormData,
   normalizeImageGenerationRequestBody,
 } from '../../src/shared/upstream-request-normalizer'
+import { resolveImageReferenceLimit } from '../../src/shared/image-generation-request'
 import {
   extractChatTextFromJsonPayload,
   extractChatReasoningFromJsonPayload,
@@ -1026,6 +1027,18 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
     modelKey: input.modelKey,
   })
   const adapter = resolveImageVendorAdapter(input.modelKey, upstream.modelCapabilityJson)
+
+  // 参考图张数硬上限：gpt-image-2 等走 openai-images(/images/edits 单 image 字段)只支持单张参考图,
+  // 多图会让上游一直不返回(UND_ERR_HEADERS_TIMEOUT)→ 干等数分钟后报 fetch failed。
+  // 这里快速失败,给出可操作提示(多图改用 Nano Banana Pro),并让任务正常退费。
+  const referenceLimit = resolveImageReferenceLimit(input.modelKey, upstream.modelCapabilityJson)
+  if (referenceLimit > 0 && input.referenceImages.length > referenceLimit) {
+    throw new Error(
+      `当前模型只支持 ${referenceLimit} 张参考图（你传了 ${input.referenceImages.length} 张）；`
+      + `多张参考图请改用 Nano Banana Pro 等支持多图的模型。`,
+    )
+  }
+
   return adapter.edit({
     upstream,
     providerId: input.providerId,
