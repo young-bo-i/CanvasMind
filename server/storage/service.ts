@@ -183,6 +183,52 @@ export const saveUploadedBuffer = async (input: {
   }
 }
 
+// 把生成结果里的 data: URI 图片落到存储(对象存储或本地 uploads)，换成可访问 URL；
+// http(s)/相对路径原样返回。
+// 用途：上游(gpt-image-2 的 b64_json、nano 内联)返回的是 base64，4K 图有好几 MB，
+// 若直接写进数据库 GenerationRecord.images 会触发 MariaDB「max_allowed_packet」写库失败。
+export const persistDataUriImagesToStorage = async (imageUrls: string[]): Promise<string[]> => {
+  if (!Array.isArray(imageUrls) || !imageUrls.length) {
+    return Array.isArray(imageUrls) ? imageUrls : []
+  }
+  const result: string[] = []
+  for (const raw of imageUrls) {
+    const value = String(raw || '').trim()
+    if (!value || !value.startsWith('data:')) {
+      result.push(value)
+      continue
+    }
+    const matched = value.match(/^data:([^;,]*)((?:;[^,]*)*),(.*)$/is)
+    if (!matched) {
+      result.push(value)
+      continue
+    }
+    const mimeType = (matched[1] || '').trim() || 'image/png'
+    const isBase64 = /;base64/i.test(matched[2] || '')
+    const payload = matched[3] || ''
+    try {
+      const buffer = isBase64
+        ? Buffer.from(payload, 'base64')
+        : Buffer.from(decodeURIComponent(payload), 'utf8')
+      const ext = /jpe?g/i.test(mimeType) ? 'jpg'
+        : /webp/i.test(mimeType) ? 'webp'
+          : /gif/i.test(mimeType) ? 'gif'
+            : 'png'
+      const saved = await saveUploadedBuffer({
+        buffer,
+        mimeType,
+        filename: `generated.${ext}`,
+        category: 'generation',
+      })
+      result.push(saved.publicUrl)
+    } catch {
+      // 上传失败兜底：仍返回原 data URI，至少不丢图(可能仍超库限制，但不静默丢结果)。
+      result.push(value)
+    }
+  }
+  return result
+}
+
 // 获取上传根目录，供静态文件服务复用。
 export const getUploadsDir = () => {
   return readUploadsDir()

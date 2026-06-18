@@ -60,6 +60,7 @@ import {
 import { GenerationTaskRequestError } from './shared'
 import { getGenerationTaskExecutionStrategy, type TaskAbortReason } from './execution-strategies'
 import { executeImageTask } from './image-task-executor'
+import { persistDataUriImagesToStorage } from '../storage/service'
 import { executeVideoTask, resumeVideoTask, type SavedVideoTask } from './video-task-executor'
 import { executeAgentChatTaskFlow } from './agent-chat-task-executor'
 import { executeAgentWorkspaceTaskFlow } from './agent-workspace-task-executor'
@@ -210,20 +211,21 @@ const executeImageGenerationTask = async (task: RunningGenerationTask, payload: 
     emitTaskProgressEvent: (recordId, input) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
     markTaskRetryState,
     resolveImageMaxImagesPerRequest: (providerId, modelKey) => resolveImageModelMaxImagesPerRequest(providerId, modelKey),
-    requestImageGeneration: (input) => requestImageGeneration({
-      ...input,
-      fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({
-        ...retryInput,
-        logGenerationTask,
-      }),
-    }),
-    requestImageEdit: (input) => requestImageEdit({
-      ...input,
-      fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({
-        ...retryInput,
-        logGenerationTask,
-      }),
-    }),
+    requestImageGeneration: async (input) => {
+      const result = await requestImageGeneration({
+        ...input,
+        fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
+      })
+      // 把内联 base64(gpt-image-2 4K 等)落存储换 URL，避免写库超 max_allowed_packet。
+      return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
+    },
+    requestImageEdit: async (input) => {
+      const result = await requestImageEdit({
+        ...input,
+        fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
+      })
+      return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
+    },
     buildInitialRecordPayload,
     updateGenerationRecord,
     getGenerationRecordById,
@@ -475,20 +477,20 @@ const executeAgentWorkspaceTask = async (task: RunningGenerationTask, payload: G
     logGenerationTask,
     logGenerationTaskError,
     resolveWorkspaceImageModel,
-    requestImageEdit: (input) => requestImageEdit({
-      ...input,
-      fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({
-        ...retryInput,
-        logGenerationTask,
-      }),
-    }),
-    requestImageGeneration: (input) => requestImageGeneration({
-      ...input,
-      fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({
-        ...retryInput,
-        logGenerationTask,
-      }),
-    }),
+    requestImageEdit: async (input) => {
+      const result = await requestImageEdit({
+        ...input,
+        fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
+      })
+      return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
+    },
+    requestImageGeneration: async (input) => {
+      const result = await requestImageGeneration({
+        ...input,
+        fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
+      })
+      return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
+    },
     markTaskRetryState,
     refundTaskPointsIfNeeded,
     normalizeGenerationErrorMessage,
