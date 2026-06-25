@@ -6,59 +6,6 @@ import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { visualizer } from 'rollup-plugin-visualizer'
 import path from 'path'
-import fs from 'node:fs/promises'
-
-const MOCK_AGENT_HTTP_RAW_PATH = path.resolve(__dirname, 'src/views/generate/mocks/http_raw.txt')
-
-const createMockAgentRawPlugin = () => ({
-  name: 'mock-agent-http-raw',
-  configureServer(server: any) {
-    const register = (targetServer: any) => {
-      targetServer.middlewares.use(async (req: any, res: any, next: any) => {
-        if (req.url !== '/__mock_agent_http_raw') {
-          next()
-          return
-        }
-
-        try {
-          const content = await fs.readFile(MOCK_AGENT_HTTP_RAW_PATH, 'utf8')
-          res.statusCode = 200
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-          res.end(content)
-        } catch (error: any) {
-          res.statusCode = 404
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          res.end(JSON.stringify({
-            message: error?.message || '读取 http_raw.txt 失败',
-          }))
-        }
-      })
-    }
-
-    register(server)
-  },
-  configurePreviewServer(server: any) {
-    server.middlewares.use(async (req: any, res: any, next: any) => {
-      if (req.url !== '/__mock_agent_http_raw') {
-        next()
-        return
-      }
-
-      try {
-        const content = await fs.readFile(MOCK_AGENT_HTTP_RAW_PATH, 'utf8')
-        res.statusCode = 200
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-        res.end(content)
-      } catch (error: any) {
-        res.statusCode = 404
-        res.setHeader('Content-Type', 'application/json; charset=utf-8')
-        res.end(JSON.stringify({
-          message: error?.message || '读取 http_raw.txt 失败',
-        }))
-      }
-    })
-  },
-})
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -73,8 +20,6 @@ export default defineConfig({
     Components({
       resolvers: [ElementPlusResolver()],
     }),
-    // 仅保留前端本地调试所需的 mock 文件服务。
-    createMockAgentRawPlugin(),
     // 构建产物体积可视化分析：每次 build 后生成 dist/stats.html，
     // 通过 ANALYZE=1 时自动打开浏览器，便于排查重复/超大依赖。
     visualizer({

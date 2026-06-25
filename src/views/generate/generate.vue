@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import ContentGenerator from '../../components/generate/ContentGenerator.vue'
-import ImageLoadingRecord from '../../components/generate/common/ImageLoadingRecord.vue'
-import VideoLoadingRecord from '../../components/generate/common/VideoLoadingRecord.vue'
-import AgentLoadingRecord from '../../components/generate/common/AgentLoadingRecord.vue'
-import ImagePreview from '@/components/ImagePreview.vue'
+// 性能：首屏进入是「空对话」，feed 无记录、也未打开预览，这些组件不参与首屏渲染。
+// 改为按需异步加载，把它们从 generate 初始 chunk 拆出去（生成/打开预览时再下载）。
+const ImageLoadingRecord = defineAsyncComponent(() => import('../../components/generate/common/ImageLoadingRecord.vue'))
+const VideoLoadingRecord = defineAsyncComponent(() => import('../../components/generate/common/VideoLoadingRecord.vue'))
+const AgentLoadingRecord = defineAsyncComponent(() => import('../../components/generate/common/AgentLoadingRecord.vue'))
+const ImagePreview = defineAsyncComponent(() => import('@/components/ImagePreview.vue'))
 import { getAgentModel } from '@/api/agent'
 import { CAPABILITY_FLAGS_REQUEST_FIELD, type ModelCapabilityFlags } from '@/shared/provider-capability'
 import { findCatalogModel, getModelByName, loadPublicModelCatalog, resolveModelLabel, type ImageModel } from '@/config/models'
@@ -51,8 +53,9 @@ import { appendImageReferencesToRequestBody, resolveImagePixelSize } from '@/sha
 import { useAuthStore } from '@/stores/auth'
 import { useLoginModalStore } from '@/stores/login-modal'
 import { useSystemSettingsStore } from '@/stores/system-settings'
-import GenerateAgentRecord from './components/GenerateAgentRecord.vue'
-import ResearchReportRecord from './components/ResearchReportRecord.vue'
+// 性能：agent 对话记录组件、研究报告组件（含 907 行 ResearchFlowTimeline）按需异步加载。
+const GenerateAgentRecord = defineAsyncComponent(() => import('./components/GenerateAgentRecord.vue'))
+const ResearchReportRecord = defineAsyncComponent(() => import('./components/ResearchReportRecord.vue'))
 import type {
   ResearchSearchGroupViewItem,
   ResearchSearchSourceViewItem,
@@ -3267,6 +3270,22 @@ onMounted(() => {
   conversationSidebarCollapsed.value = readStoredConversationSidebarCollapsed()
   void loadPersistedGenerationSessions()
   void loadPersistedGeneratingRecords()
+
+  // 性能：首屏不渲染记录组件（空对话），空闲时后台预取它们的 chunk，
+  // 使首次生成/切历史时无需等待网络下载，避免组件懒加载造成的闪烁。
+  const prefetchRecordChunks = () => {
+    void import('../../components/generate/common/ImageLoadingRecord.vue')
+    void import('../../components/generate/common/VideoLoadingRecord.vue')
+    void import('../../components/generate/common/AgentLoadingRecord.vue')
+  }
+  if (typeof window !== 'undefined') {
+    const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback
+    if (idle) {
+      idle(prefetchRecordChunks, { timeout: 3000 })
+    } else {
+      window.setTimeout(prefetchRecordChunks, 1500)
+    }
+  }
 
   // 检查路由参数（从首页跳转过来的发送请求）
   const { message, type, model, ratio, resolution, skill } = route.query
