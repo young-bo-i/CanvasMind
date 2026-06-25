@@ -35,6 +35,9 @@ const RUNTIME_DEPENDENCY_NAMES = [
   // Redis 运行时由服务端直接导入，必须随独立服务包一起安装。
   'ioredis',
   'prisma',
+  // /uploads 缩略图按需生成用 sharp（server/index.ts 直接 import），必须随独立服务包安装，
+  // 否则生产镜像 npm install --omit=dev 不会装它，运行时报 ERR_MODULE_NOT_FOUND: 'sharp'。
+  'sharp',
 ]
 
 // 读取根目录 package.json，复用版本声明。
