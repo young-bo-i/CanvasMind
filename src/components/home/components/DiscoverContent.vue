@@ -1,7 +1,11 @@
 <template>
   <div class="discover-masonry-viewport">
-    <!-- 空状态提示（无作品或搜索无结果） -->
-    <div v-if="!displayedFeedItems.length" class="discover-empty">
+    <!-- 首批加载：骨架屏，避免闪「还没有作品」空状态 -->
+    <div v-if="feedLoading && !displayedFeedItems.length" class="discover-skeleton">
+      <div v-for="n in 12" :key="n" class="discover-skeleton__tile" :style="{ height: `${160 + (n % 4) * 40}px` }"></div>
+    </div>
+    <!-- 空状态提示（无作品或搜索无结果）：仅在非加载态且无内容时 -->
+    <div v-else-if="!displayedFeedItems.length" class="discover-empty">
       <p class="discover-empty__text">{{ emptyText }}</p>
     </div>
     <div
@@ -106,7 +110,7 @@
         :key="item.id || item.src"
         class="masonry-layout-item-J63wqA masonry-layout-item"
         :data-index="index + 1"
-        :style="feedTileStyle(index)"
+        :style="feedTileStyles[index]"
       >
         <div
           class="feed-item-IXsc39 feed-item-image-NrtAVV cover-container-zfPgao"
@@ -135,6 +139,7 @@
                   elementtiming
                   :fetchpriority="index < 4 ? 'high' : 'low'"
                   loading="lazy"
+                  decoding="async"
                   class="cover-W9HnBB discover-masonry-cover"
                   ccfmp-element="true"
                   :src="item.src"
@@ -200,11 +205,14 @@
       </div>
     </div>
     </div>
+    <!-- 增量加载哨兵（进入视口即加载下一批）+ 底部加载提示 -->
+    <div v-if="displayedFeedItems.length" ref="feedSentinel" class="discover-feed-sentinel" aria-hidden="true"></div>
+    <div v-if="feedLoadingMore" class="discover-loading-more">加载中…</div>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, watch } from 'vue'
 import {
   buildFeedLayoutsFromSizes,
   computeMasonryMetrics,
@@ -333,10 +341,38 @@ function formatFavoriteCount(count) {
 
 const feedItems = ref([])
 
+// 性能：发现页历史改为增量分页加载 + 骨架屏，替代一次性拉取 80 条。
+const FEED_PAGE_SIZE = 30
+const feedLoading = ref(false) // 首批加载中（骨架屏）
+const feedLoadingMore = ref(false) // 增量加载中（底部提示）
+const feedHasMore = ref(true)
+const feedSentinel = ref(null) // 瀑布流底部哨兵，进入视口即增量加载
+let feedSentinelObserver = null
+let feedImagePage = 0
+let feedVideoPage = 0
+
 // 按搜索关键词在已加载作品中本地过滤（匹配标题/alt 或提示词，忽略大小写）；
 // 保留 originalIndex 以便复用按 feedItems 下标缓存的自然尺寸。
+// 性能(P2-12)：搜索关键词 debounce。原先每次按键都会经 displayedFeedItems 级联触发
+// feedDisplaySizes→feedLayouts→scrollHeight→feedTileStyles 整条布局重算 + 全瀑布流重渲染。
+// debounce 把连续输入合并成一次级联，停止输入 220ms 后才过滤。
+const debouncedSearchKeyword = ref(String(props.searchKeyword || ''))
+let searchKeywordTimer = null
+watch(
+  () => props.searchKeyword,
+  (val) => {
+    if (searchKeywordTimer) clearTimeout(searchKeywordTimer)
+    searchKeywordTimer = setTimeout(() => {
+      debouncedSearchKeyword.value = String(val || '')
+    }, 220)
+  },
+)
+onBeforeUnmount(() => {
+  if (searchKeywordTimer) clearTimeout(searchKeywordTimer)
+})
+
 const displayedFeedItems = computed(() => {
-  const keyword = String(props.searchKeyword || '').trim().toLowerCase()
+  const keyword = debouncedSearchKeyword.value.trim().toLowerCase()
   const withIndex = feedItems.value.map((item, originalIndex) => ({ item, originalIndex }))
   if (!keyword) return withIndex
   return withIndex.filter(({ item }) => {
@@ -348,7 +384,7 @@ const displayedFeedItems = computed(() => {
 
 // 空状态文案（按当前筛选类型，搜索无结果时单独提示）
 const emptyText = computed(() => {
-  if (feedItems.value.length && String(props.searchKeyword || '').trim()) {
+  if (feedItems.value.length && debouncedSearchKeyword.value.trim()) {
     return '没有找到匹配的作品，换个关键词试试～'
   }
   if (props.filterType === 'image') return '还没有图片作品，去生成你的第一张图片吧～'
@@ -357,10 +393,23 @@ const emptyText = computed(() => {
 })
 
 /** 每张图 natural 尺寸；未拿到真实尺寸时回退到接口/配置提供的比例提示 */
-const feedNaturalSizes = ref(
+// 性能(P0-3)：用 shallowRef + 原地写 + rAF 合帧。原先每张图 @load 都 .slice() 克隆整数组并重赋值，
+// 级联失效 feedDisplaySizes/feedLayouts/scrollHeight 并重算全部 tile 样式，~120 次 load ≈ O(n²)。
+// 现在 @load 只原地写一个下标，一帧内的多次 load 合并成一次 triggerRef → 一次 O(n) 重算。
+const feedNaturalSizes = shallowRef(
   /** @type {Array<{ w: number; h: number } | null>} */
   ([]),
 )
+
+let naturalSizesFlushScheduled = false
+function scheduleNaturalSizesFlush() {
+  if (naturalSizesFlushScheduled) return
+  naturalSizesFlushScheduled = true
+  requestAnimationFrame(() => {
+    naturalSizesFlushScheduled = false
+    triggerRef(feedNaturalSizes)
+  })
+}
 
 // 瀑布流布局优先使用真实尺寸，失败或未加载时再回退到数据自带的比例提示。
 // 自然尺寸缓存按 feedItems 原始下标存取，过滤后用 originalIndex 取回。
@@ -370,10 +419,19 @@ const feedDisplaySizes = computed(() =>
   )),
 )
 
+// 性能：按 feedItems 长度增减自然尺寸缓存数组，保留已测量的条目。
+// 增量加载追加新项时只在末尾补 null（新项 @load 后测量），不重置已有项——
+// 否则被复用的 <img> 不会再触发 @load，已测尺寸丢失会导致瀑布流回跳。
+// 重置(切筛选/登出)时 feedItems 先被清空为 []，长度归零自然清空缓存。
 watch(
-  () => feedItems.value.map((x) => x.src),
-  (urls) => {
-    feedNaturalSizes.value = urls.map(() => null)
+  () => feedItems.value.length,
+  (length) => {
+    const current = feedNaturalSizes.value
+    const next = current.slice(0, length)
+    while (next.length < length) {
+      next.push(null)
+    }
+    feedNaturalSizes.value = next
   },
   { immediate: true },
 )
@@ -381,9 +439,8 @@ watch(
 function onFeedImgLoad(ev, index) {
   const el = ev.target
   if (!el || !el.naturalWidth || !el.naturalHeight) return
-  const next = feedNaturalSizes.value.slice()
-  next[index] = { w: el.naturalWidth, h: el.naturalHeight }
-  feedNaturalSizes.value = next
+  feedNaturalSizes.value[index] = { w: el.naturalWidth, h: el.naturalHeight }
+  scheduleNaturalSizesFlush()
 }
 
 function onFeedVideoLoad(ev, index) {
@@ -393,9 +450,8 @@ function onFeedVideoLoad(ev, index) {
   try {
     if (!el.currentTime) el.currentTime = 0.1
   } catch {}
-  const next = feedNaturalSizes.value.slice()
-  next[index] = { w: el.videoWidth, h: el.videoHeight }
-  feedNaturalSizes.value = next
+  feedNaturalSizes.value[index] = { w: el.videoWidth, h: el.videoHeight }
+  scheduleNaturalSizesFlush()
 }
 
 function onFeedImgError(index) {
@@ -403,9 +459,8 @@ function onFeedImgError(index) {
   const fallbackSize = feedItems.value[index]?.layoutSize
   if (!fallbackSize) return
   // 图片请求失败时，保留接口或配置里已有的比例，避免退化成 1:1 方图。
-  const next = feedNaturalSizes.value.slice()
-  next[index] = fallbackSize
-  feedNaturalSizes.value = next
+  feedNaturalSizes.value[index] = fallbackSize
+  scheduleNaturalSizesFlush()
 }
 
 /** 瀑布流轨道宽度，用于按屏宽重算列；ResizeObserver 更新 */
@@ -445,29 +500,85 @@ const loadDiscoverFeedItems = async () => {
     return
   }
 
+  feedLoading.value = true
+  feedHasMore.value = true
+  feedImagePage = 0
+  feedVideoPage = 0
+  feedItems.value = []
   try {
-    // 按当前 tab 过滤类型加载。接口一次只返回一种类型，全部=图片/视频各拉一次合并。
-    let assets = []
-    if (props.filterType === 'image') {
-      assets = await listAssetItems({ scope: 'mine', assetType: 'image', take: 80 })
-    } else if (props.filterType === 'video') {
-      assets = await listAssetItems({ scope: 'mine', assetType: 'video', take: 80 })
-    } else {
-      const [images, videos] = await Promise.all([
-        listAssetItems({ scope: 'mine', assetType: 'image', take: 60 }),
-        listAssetItems({ scope: 'mine', assetType: 'video', take: 60 }),
-      ])
-      assets = [...images, ...videos]
-    }
-
-    feedItems.value = assets
-      .map(buildFeedItemFromAsset)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    await fetchNextFeedBatch()
   } catch (error) {
     console.warn('读取我的作品失败。', error)
     feedItems.value = []
+  } finally {
+    feedLoading.value = false
   }
 }
+
+// 拉取下一批并「仅排序新批次后追加」，保持已显示项顺序稳定，避免瀑布流回跳/重排。
+const fetchNextFeedBatch = async () => {
+  // 按当前 tab 过滤类型加载。接口一次只返回一种类型，全部=图片/视频各拉一页合并。
+  let batch = []
+  if (props.filterType === 'image') {
+    const images = await listAssetItems({ scope: 'mine', assetType: 'image', page: feedImagePage + 1, pageSize: FEED_PAGE_SIZE })
+    feedImagePage += 1
+    batch = images
+    feedHasMore.value = images.length === FEED_PAGE_SIZE
+  } else if (props.filterType === 'video') {
+    const videos = await listAssetItems({ scope: 'mine', assetType: 'video', page: feedVideoPage + 1, pageSize: FEED_PAGE_SIZE })
+    feedVideoPage += 1
+    batch = videos
+    feedHasMore.value = videos.length === FEED_PAGE_SIZE
+  } else {
+    const imageSize = Math.ceil(FEED_PAGE_SIZE / 2)
+    const videoSize = Math.floor(FEED_PAGE_SIZE / 2)
+    const [images, videos] = await Promise.all([
+      listAssetItems({ scope: 'mine', assetType: 'image', page: feedImagePage + 1, pageSize: imageSize }),
+      listAssetItems({ scope: 'mine', assetType: 'video', page: feedVideoPage + 1, pageSize: videoSize }),
+    ])
+    feedImagePage += 1
+    feedVideoPage += 1
+    batch = [...images, ...videos]
+    feedHasMore.value = images.length === imageSize || videos.length === videoSize
+  }
+
+  const mappedBatch = batch
+    .map(buildFeedItemFromAsset)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  feedItems.value = [...feedItems.value, ...mappedBatch]
+}
+
+// 滚动触底时增量加载下一批。
+const loadMoreFeedItems = async () => {
+  if (feedLoading.value || feedLoadingMore.value || !feedHasMore.value || !authStore.isLoggedIn.value) {
+    return
+  }
+  feedLoadingMore.value = true
+  try {
+    await fetchNextFeedBatch()
+  } catch (error) {
+    console.warn('加载更多作品失败。', error)
+  } finally {
+    feedLoadingMore.value = false
+  }
+}
+
+// 底部哨兵进入视口(±600px，root=null 用浏览器视口，兼容页面级滚动)即触发增量加载。
+watch(feedSentinel, (el) => {
+  if (feedSentinelObserver) {
+    feedSentinelObserver.disconnect()
+    feedSentinelObserver = null
+  }
+  if (!el || typeof IntersectionObserver === 'undefined') {
+    return
+  }
+  feedSentinelObserver = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) {
+      void loadMoreFeedItems()
+    }
+  }, { root: null, rootMargin: '600px 0px' })
+  feedSentinelObserver.observe(el)
+})
 
 onMounted(async () => {
   await loadDiscoverFeedItems()
@@ -513,6 +624,10 @@ onBeforeUnmount(() => {
     window.removeEventListener(AUTH_LOGIN_SUCCESS_EVENT, authLoginSuccessListener)
     authLoginSuccessListener = null
   }
+  if (feedSentinelObserver) {
+    feedSentinelObserver.disconnect()
+    feedSentinelObserver = null
+  }
 })
 
 const masonryMetrics = computed(() => {
@@ -539,18 +654,21 @@ const heroInlineStyle = computed(() => {
   }
 })
 
-function feedTileStyle(index) {
-  const r = feedLayouts.value[index]
-  if (!r) {
-    return { left: '0', top: '0', width: '0', height: '0', visibility: 'hidden' }
-  }
-  return {
-    left: `${r.left}px`,
-    top: `${r.top}px`,
-    width: `${r.width}px`,
-    height: `${r.height}px`,
-  }
-}
+// 性能(P0-3)：预算出整组 tile 样式数组，模板用 feedTileStyles[index] 取值，
+// 取代每个 tile 每次渲染都调用 feedTileStyle(index) 函数（O(n) 调用 / 渲染）。
+const feedTileStyles = computed(() =>
+  feedLayouts.value.map((r) => {
+    if (!r) {
+      return { left: '0', top: '0', width: '0', height: '0', visibility: 'hidden' }
+    }
+    return {
+      left: `${r.left}px`,
+      top: `${r.top}px`,
+      width: `${r.width}px`,
+      height: `${r.height}px`,
+    }
+  }),
+)
 
 const currentSlide = ref(0)
 
@@ -642,6 +760,13 @@ function openWorkDetailFromCarousel(item, index) {
   width: 100%;
 }
 
+/* 性能(P2-5)：离屏瀑布流 tile 跳过布局/绘制（每 tile 含 ~6 个内联 SVG + 封面）。
+   tile 由内联 left/top/width/height 绝对定位，尺寸已确定；content-visibility 只跳过离屏内容渲染。 */
+.discover-masonry-track .masonry-layout-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+
 .discover-masonry-cover {
   object-fit: cover;
 }
@@ -675,6 +800,34 @@ function openWorkDetailFromCarousel(item, index) {
   color: var(--text-tertiary, #6b7785);
   font-size: 14px;
   line-height: 22px;
+}
+
+/* 首批加载骨架屏 + 增量加载提示 + 底部哨兵 */
+.discover-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 8px 0;
+}
+.discover-skeleton__tile {
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(204, 221, 255, 0.06) 25%, rgba(204, 221, 255, 0.12) 37%, rgba(204, 221, 255, 0.06) 63%);
+  background-size: 400% 100%;
+  animation: discover-skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes discover-skeleton-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+.discover-feed-sentinel {
+  width: 100%;
+  height: 1px;
+}
+.discover-loading-more {
+  padding: 16px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary, rgba(204, 221, 255, 0.4));
 }
 
 .cover-container-zfPgao {

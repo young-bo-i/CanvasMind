@@ -70,7 +70,17 @@
             </div>
           </div>
         </div>
-        <div v-if="videoGroups.length" class="image-s9z">
+        <!-- 首批加载：骨架屏，避免闪空状态 -->
+        <div v-if="loading && !videoGroups.length" class="image-s9z">
+          <div class="row-zep">
+            <div class="container-c5d">
+              <div class="image-qvw">
+                <div v-for="n in 18" :key="n" class="image-bqm asset-skeleton-tile"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="videoGroups.length" class="image-s9z">
           <div class="vList-q9n style-FG29L">
             <div class="style-MK2n3">
               <div class="style-TK4rG">
@@ -86,11 +96,17 @@
                         <div
                           v-for="video in group.videos"
                           :key="video.id"
+                          v-observe-video
+                          :data-video-id="video.id"
                           class="image-bqm"
                         >
                           <div>
                             <div class="container-pm3">
+                              <!-- 性能(P0-1/P2-4/P2-8)：只给进入视口(±400px)的视频挂载 <video>，离开即卸载释放解码管线。
+                                   避免一次性挂 120 个 <video> + 强制首帧解码把媒体解码器打满、Tab 卡死。
+                                   离屏时显示 poster 占位(无 poster 则灰底)，不再每个视频独立预加载。 -->
                               <video
+                                v-if="!observerSupported || visibleVideoIds.has(video.id)"
                                 class="image-w9g"
                                 :src="video.src"
                                 :poster="video.poster"
@@ -99,6 +115,11 @@
                                 preload="metadata"
                                 @loadedmetadata="renderVideoFirstFrame"
                               ></video>
+                              <div
+                                v-else
+                                class="image-w9g video-poster-placeholder"
+                                :style="video.poster ? { backgroundImage: `url(${video.poster})` } : undefined"
+                              ></div>
                             </div>
                           </div>
                         </div>
@@ -106,6 +127,8 @@
                     </div>
                   </div>
                 </template>
+                <div ref="loadMoreSentinel" class="load-more-detector-c4r"></div>
+                <div v-if="loadingMore" class="asset-loading-more">加载中…</div>
               </div>
             </div>
           </div>
@@ -122,20 +145,93 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch, onBeforeUnmount, type Directive } from 'vue'
 import type { FilterOption, VideoFilterType, VideoGroup } from '@/views/asset/types'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   active: boolean
   videoFilterOptions: FilterOption<VideoFilterType>[]
   videoFilter: VideoFilterType
   videoGroups: VideoGroup[]
-}>()
+  loading?: boolean
+  loadingMore?: boolean
+  hasMore?: boolean
+}>(), {
+  loading: false,
+  loadingMore: false,
+  hasMore: false,
+})
 
 const emit = defineEmits<{
   'set-video-filter': [filter: VideoFilterType]
   'enter-batch-mode': []
   'edit-in-capcut': []
+  'load-more': []
 }>()
+
+// 底部 sentinel：进入视口即触发增量加载（父级有守卫，重复触发安全）。
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+let loadMoreObserver: IntersectionObserver | null = null
+watch(loadMoreSentinel, (el) => {
+  if (loadMoreObserver) {
+    loadMoreObserver.disconnect()
+    loadMoreObserver = null
+  }
+  if (!el || !observerSupported) {
+    return
+  }
+  loadMoreObserver = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting) && props.hasMore && !props.loadingMore) {
+      emit('load-more')
+    }
+  }, { rootMargin: '400px 0px' })
+  loadMoreObserver.observe(el)
+})
+
+// 性能(P0-1/P2-4/P2-8)：视频网格按视口窗口化挂载。
+// 仅当 tile 进入视口(含 ±400px 缓冲)时把它的 id 放进集合，模板据此挂载真正的 <video>；
+// 离开视口即移除 → <video> 卸载 → 解码管线释放。把同时存在的 <video> 数量从“全部”降到“一屏”。
+const observerSupported = typeof IntersectionObserver !== 'undefined'
+const visibleVideoIds = ref(new Set<string>())
+
+let videoObserver: IntersectionObserver | null = null
+const ensureObserver = () => {
+  if (videoObserver || !observerSupported) return videoObserver
+  videoObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const id = (entry.target as HTMLElement).dataset.videoId
+      if (!id) continue
+      if (entry.isIntersecting) {
+        visibleVideoIds.value.add(id)
+      } else {
+        visibleVideoIds.value.delete(id)
+      }
+    }
+  }, { rootMargin: '400px 0px' })
+  return videoObserver
+}
+
+// 自定义指令：挂载时观察 tile，卸载时取消观察并清理可见集合，避免列表变化(切筛选/翻页)后残留。
+const vObserveVideo: Directive<HTMLElement> = {
+  mounted(el) {
+    ensureObserver()?.observe(el)
+  },
+  unmounted(el) {
+    videoObserver?.unobserve(el)
+    const id = el.dataset.videoId
+    if (id) visibleVideoIds.value.delete(id)
+  },
+}
+
+onBeforeUnmount(() => {
+  videoObserver?.disconnect()
+  videoObserver = null
+  visibleVideoIds.value.clear()
+  if (loadMoreObserver) {
+    loadMoreObserver.disconnect()
+    loadMoreObserver = null
+  }
+})
 
 // 无封面图时:metadata 预加载只拿到时长不会绘制画面(显示纯黑)。
 // 跳到 ~0.1s 触发浏览器解码并绘制首帧,作为视频缩略图。
@@ -151,3 +247,31 @@ const renderVideoFirstFrame = (event: Event) => {
   }
 }
 </script>
+
+<style scoped>
+/* 离屏视频占位：有封面则铺封面，无封面用灰底，避免空白且无需挂载 <video>。 */
+.video-poster-placeholder {
+  background-color: rgba(255, 255, 255, 0.04);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+/* 骨架屏瓦片 + 增量加载提示 */
+.asset-skeleton-tile {
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(204, 221, 255, 0.06) 25%, rgba(204, 221, 255, 0.12) 37%, rgba(204, 221, 255, 0.06) 63%);
+  background-size: 400% 100%;
+  animation: asset-skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes asset-skeleton-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+.asset-loading-more {
+  padding: 16px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary, rgba(204, 221, 255, 0.4));
+}
+</style>

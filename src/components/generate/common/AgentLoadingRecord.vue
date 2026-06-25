@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import AgentLoadingIcon from './AgentLoadingIcon.vue'
 
 const props = defineProps<{
@@ -129,8 +129,8 @@ const buildReferenceCardStyle = (index: number) => {
 }
 
 // 简单的 markdown 渲染（标题、段落、列表）
-const renderedContent = computed(() => {
-  return props.content
+const renderMarkdown = (text: string) => {
+  return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -142,6 +142,49 @@ const renderedContent = computed(() => {
     .replace(/\n/g, '<br>')
     .replace(/^/, '<p>')
     .replace(/$/, '</p>')
+}
+
+// 性能(P2-2)：原先是 computed，流式每个 token 都对“整段累积内容”跑 9 段全局正则并重建 v-html
+// (O(n²)，长答案末尾明显卡顿+闪烁)。改为节流到 ~12fps 渲染；完成(done)时立即渲染最终结果，
+// 保证最终内容正确，同时把流式期间的重算次数从“每 token”降到“每帧档位”。
+const renderedContent = ref('')
+let markdownThrottleTimer: ReturnType<typeof setTimeout> | null = null
+let markdownPending = false
+const MARKDOWN_THROTTLE_MS = 80
+
+watch(
+  () => [props.content, props.done] as const,
+  () => {
+    if (props.done) {
+      if (markdownThrottleTimer) {
+        clearTimeout(markdownThrottleTimer)
+        markdownThrottleTimer = null
+      }
+      markdownPending = false
+      renderedContent.value = renderMarkdown(props.content)
+      return
+    }
+    if (markdownThrottleTimer) {
+      markdownPending = true
+      return
+    }
+    renderedContent.value = renderMarkdown(props.content)
+    markdownThrottleTimer = setTimeout(() => {
+      markdownThrottleTimer = null
+      if (markdownPending) {
+        markdownPending = false
+        renderedContent.value = renderMarkdown(props.content)
+      }
+    }, MARKDOWN_THROTTLE_MS)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (markdownThrottleTimer) {
+    clearTimeout(markdownThrottleTimer)
+    markdownThrottleTimer = null
+  }
 })
 
 // ----------------------------------------------------------------------------

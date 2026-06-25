@@ -45,6 +45,8 @@
                 :src="getPreviewUrl(record) || ''"
                 :alt="record.prompt || '生成结果预览'"
                 class="admin-generation-card__image"
+                loading="lazy"
+                decoding="async"
               >
               <div v-else class="admin-generation-card__image admin-generation-card__image--empty">
                 无结果预览

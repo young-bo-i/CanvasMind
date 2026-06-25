@@ -144,10 +144,6 @@ export default defineConfig({
           if (!id.includes('node_modules')) {
             return
           }
-          // Vue Flow 仅工作流页用到，单独成 chunk
-          if (id.includes('@vue-flow')) {
-            return 'vue-flow'
-          }
           // Element Plus 图标
           if (id.includes('@element-plus/icons-vue')) {
             return 'el-icons'

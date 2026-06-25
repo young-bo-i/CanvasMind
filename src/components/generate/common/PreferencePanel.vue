@@ -215,7 +215,8 @@ const calculateBestPlacement = (): 'top' | 'bottom' => {
 
 // 计算面板位置
 const calculatePosition = () => {
-  if (!props.triggerRef) return
+  // 性能(evt-3)：面板隐藏时直接返回，避免全局 scroll(capture) 监听在面板不可见时仍每次 getBoundingClientRect 触发强制 reflow。
+  if (!props.visible || !props.triggerRef) return
 
   const triggerRect = props.triggerRef.getBoundingClientRect()
   const panelWidth = panelRef.value?.offsetWidth || ESTIMATED_PANEL_WIDTH
@@ -336,16 +337,32 @@ watch(() => props.visible, (newVal) => {
   }
 })
 
+// 性能(evt-3)：scroll/resize 重定位用 rAF 节流 + 可见性短路，避免可见时每个 scroll 事件都强制 reflow，
+// 不可见时则零成本（直接 return）。
+let positionRaf: number | null = null
+const schedulePositionUpdate = () => {
+  if (!props.visible) return
+  if (positionRaf !== null) return
+  positionRaf = requestAnimationFrame(() => {
+    positionRaf = null
+    calculatePosition()
+  })
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
-  window.addEventListener('resize', calculatePosition)
-  window.addEventListener('scroll', calculatePosition, true)
+  window.addEventListener('resize', schedulePositionUpdate)
+  window.addEventListener('scroll', schedulePositionUpdate, true)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('resize', calculatePosition)
-  window.removeEventListener('scroll', calculatePosition, true)
+  window.removeEventListener('resize', schedulePositionUpdate)
+  window.removeEventListener('scroll', schedulePositionUpdate, true)
+  if (positionRaf !== null) {
+    cancelAnimationFrame(positionRaf)
+    positionRaf = null
+  }
 })
 </script>
 

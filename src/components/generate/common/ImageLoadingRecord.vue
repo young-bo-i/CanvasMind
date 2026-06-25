@@ -41,7 +41,7 @@
               <div class="visible-messages-wrapper">
                 <div
                   v-for="(entry, index) in renderedConversationEntries"
-                  :key="`${index}-${entry.stageKey}-${entry.text}`"
+                  :key="`${index}-${entry.stageKey}`"
                   class="message-item"
                 >
                   <div class="connector"></div>
@@ -297,7 +297,10 @@ const currentProgressText = ref(props.progressText)
 const conversationExpanded = ref(true)
 const currentStageTypedText = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
-let typingTimer: ReturnType<typeof setInterval> | null = null
+// 性能(evt-5)：打字机改用 rAF（按 elapsed 时间一次显示多字符），把更新封顶到屏幕刷新率、
+// 标签页后台时自动暂停，取代 18ms setInterval 的固定 ~55Hz 逐字 reactive 写入（多并发卡片成倍）。
+let typingRaf: ReturnType<typeof requestAnimationFrame> | null = null
+let typingLastAt = 0
 
 // 按真实执行顺序展示阶段，便于从上到下阅读完整流程。
 const orderedConversationEntries = computed(() => {
@@ -386,10 +389,11 @@ const stopTimer = () => {
 }
 
 const stopTypingTimer = () => {
-  if (typingTimer) {
-    clearInterval(typingTimer)
-    typingTimer = null
+  if (typingRaf !== null) {
+    cancelAnimationFrame(typingRaf)
+    typingRaf = null
   }
+  typingLastAt = 0
 }
 
 // 当前阶段文案使用轻量打字机效果，模拟 SSE 流式吐字感。
@@ -413,15 +417,28 @@ const syncCurrentStageTypingText = () => {
     return
   }
 
-  typingTimer = setInterval(() => {
+  // 原速约 18ms/字 ≈ 55 字/秒；用 elapsed 时间换算每帧应揭示的字符数。
+  const charsPerMs = 1 / 18
+  typingLastAt = 0
+  const step = (ts: number) => {
+    if (!typingLastAt) typingLastAt = ts
     const currentLength = currentStageTypedText.value.length
     if (currentLength >= nextText.length) {
-      stopTypingTimer()
+      typingRaf = null
+      typingLastAt = 0
       return
     }
-
-    currentStageTypedText.value = nextText.slice(0, currentLength + 1)
-  }, 18)
+    const revealCount = Math.max(1, Math.floor((ts - typingLastAt) * charsPerMs))
+    const nextLength = Math.min(nextText.length, currentLength + revealCount)
+    if (nextLength > currentLength) {
+      currentStageTypedText.value = nextText.slice(0, nextLength)
+      typingLastAt = ts
+    }
+    typingRaf = currentStageTypedText.value.length >= nextText.length
+      ? null
+      : requestAnimationFrame(step)
+  }
+  typingRaf = requestAnimationFrame(step)
 }
 
 // 完成时停止进度条

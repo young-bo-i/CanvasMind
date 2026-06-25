@@ -29,8 +29,6 @@ import { isSystemConfigPath } from './system-config/constants'
 import { handleSystemConfigRequest } from './system-config/request-handler'
 import { isSystemInitPath } from './system-init/constants'
 import { handleSystemInitRequest } from './system-init/request-handler'
-import { isWorkflowDefinitionsPath } from './workflow-definitions/constants'
-import { handleWorkflowDefinitionsRequest } from './workflow-definitions/request-handler'
 import { isGenerationRecordsPath } from './generation-records/constants'
 import { handleGenerationRecordsRequest } from './generation-records/request-handler'
 import { isGenerationSessionsPath } from './generation-sessions/constants'
@@ -593,14 +591,6 @@ const REQUEST_ROUTE_STRATEGIES: RequestRouteStrategy[] = [
     match: isSystemConfigPath,
     handle: async (req, res) => {
       await handleSystemConfigRequest(req, res)
-      return true
-    },
-  },
-  {
-    key: 'workflow-definitions',
-    match: isWorkflowDefinitionsPath,
-    handle: async (req, res) => {
-      await handleWorkflowDefinitionsRequest(req, res)
       return true
     },
   },

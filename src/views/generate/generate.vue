@@ -184,6 +184,9 @@ const previewImages = ref<GeneratePreviewImageItem[]>([])
 const sessionSearchKeyword = ref('')
 const generationSessions = ref<PersistedGenerationSession[]>([])
 const currentSessionId = ref('')
+// 进入生成页默认走「新对话」：不恢复上次会话，feed 为空，直到首次生成才懒创建新会话。
+// 仅当用户手动在侧栏切换历史会话时才置 false 并加载该会话记录。
+const newConversationMode = ref(true)
 const conversationSidebarCollapsed = ref(false)
 const isGenerationSessionsLoading = ref(false)
 
@@ -227,8 +230,22 @@ const writeStoredConversationSidebarCollapsed = (collapsed: boolean) => {
 }
 
 // 生成当前记录在对话区展示的阶段文案。
+// 性能(P2-3)：按 record + content 记忆化。该函数在 v-for 模板里每条图片记录每次渲染都会被调用，
+// 原先每次都 split+正则生成新数组，新 identity 会破坏 ImageLoadingRecord 的 prop 相等性、触发其
+// 子组件 computed 重算并重渲染；与流式逐 token 叠加放大。content 未变时返回同一数组引用。
+const recordConversationEntriesCache = new WeakMap<
+  GeneratingRecord,
+  { content: string; result: ReturnType<typeof parseStageConversationEntries> }
+>()
 const getRecordConversationEntries = (record: GeneratingRecord) => {
-  return parseStageConversationEntries(record.content)
+  const content = String(record.content || '')
+  const cached = recordConversationEntriesCache.get(record)
+  if (cached && cached.content === content) {
+    return cached.result
+  }
+  const result = parseStageConversationEntries(record.content)
+  recordConversationEntriesCache.set(record, { content, result })
+  return result
 }
 
 const formatResearchTimelineTime = () => {
@@ -1195,6 +1212,10 @@ const handlePreviewRegenerate = async (image: GeneratePreviewImageItem) => {
 
 // 当前会话列表先支持关键词搜索，便于快速定位提示词和结果文本。
 const visibleGeneratingRecords = computed(() => {
+  // 新对话模式：feed 一律为空（还没有归属会话），首次生成会懒创建会话并退出该模式。
+  if (newConversationMode.value) {
+    return []
+  }
   const activeSession = String(currentSessionId.value || '').trim()
   const keyword = String(sessionSearchKeyword.value || '').trim().toLowerCase()
   const now = Date.now()
@@ -1328,6 +1349,11 @@ const applyCurrentSessionId = (sessionId: string) => {
 }
 
 const syncCurrentSessionWithSessionList = (sessions: PersistedGenerationSession[]) => {
+  // 新对话模式：不自动选中任何历史会话（保持空 feed），等用户手动切换或首次生成。
+  if (newConversationMode.value) {
+    return
+  }
+
   if (!sessions.length) {
     applyCurrentSessionId('')
     return
@@ -1383,6 +1409,8 @@ const handleCreateSession = async () => {
     }
     return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   })
+  // 已创建真实空会话并切换，退出懒新对话模式。
+  newConversationMode.value = false
   applyCurrentSessionId(createdSession.id)
   sessionSearchKeyword.value = ''
   const scrollNode = document.getElementById('scroll-list-generate-session')
@@ -1487,11 +1515,14 @@ const handleVerifyResearchReport = async (record: GeneratingRecord) => {
 }
 
 const handleSelectSidebarDefault = () => {
+  // 手动切换历史 → 退出新对话模式，加载该会话记录。
+  newConversationMode.value = false
   applyCurrentSessionId(sidebarDefaultSession.value.id)
   sessionSearchKeyword.value = ''
 }
 
 const handleSelectSidebarSession = (id: string) => {
+  newConversationMode.value = false
   applyCurrentSessionId(id)
   sessionSearchKeyword.value = ''
 }
@@ -2663,6 +2694,8 @@ const resetGenerationStateForAccountChange = () => {
   generatingRecords.value = []
   generationSessions.value = []
   applyCurrentSessionId('')
+  // 切换账号后也从新对话开始（不串上一个账号的会话视图）。
+  newConversationMode.value = true
 }
 
 // 监听登录用户变化（登录 / 登出 / 切换账号）：先重置旧账号的内存态，再按需重新拉取，
@@ -2693,31 +2726,45 @@ const ensureCurrentGenerationSession = async () => {
     return null
   }
 
-  if (!generationSessions.value.length) {
-    await loadPersistedGenerationSessions()
-  }
-
-  if (currentSessionId.value) {
+  // 已选中有效会话且非新对话模式 → 直接复用当前会话。
+  if (!newConversationMode.value && currentSessionId.value) {
+    if (!generationSessions.value.length) {
+      await loadPersistedGenerationSessions()
+    }
     const matchedSession = generationSessions.value.find(session => session.id === currentSessionId.value)
     if (matchedSession) {
       return matchedSession
     }
   }
 
-  const defaultSession = generationSessions.value.find(session => session.isDefault) || generationSessions.value[0]
-  if (defaultSession) {
-    applyCurrentSessionId(defaultSession.id)
-    return defaultSession
+  // 新对话模式 / 无有效会话 → 懒创建一个新会话（每次新对话首次生成各自独立），并退出新对话模式。
+  try {
+    const createdSession = await createGenerationSessionRequest()
+    generationSessions.value = [
+      createdSession,
+      ...generationSessions.value.filter(session => session.id !== createdSession.id),
+    ].sort((left, right) => {
+      if (left.isDefault !== right.isDefault) {
+        return left.isDefault ? -1 : 1
+      }
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    })
+    newConversationMode.value = false
+    applyCurrentSessionId(createdSession.id)
+    return createdSession
+  } catch {
+    // 创建失败兜底：退回默认/首个已有会话，保证仍能生成。
+    if (!generationSessions.value.length) {
+      await loadPersistedGenerationSessions()
+    }
+    const fallbackSession = generationSessions.value.find(session => session.isDefault) || generationSessions.value[0]
+    if (fallbackSession) {
+      newConversationMode.value = false
+      applyCurrentSessionId(fallbackSession.id)
+      return fallbackSession
+    }
+    return null
   }
-
-  await loadPersistedGenerationSessions()
-  const reloadedDefaultSession = generationSessions.value.find(session => session.isDefault) || generationSessions.value[0]
-  if (reloadedDefaultSession) {
-    applyCurrentSessionId(reloadedDefaultSession.id)
-    return reloadedDefaultSession
-  }
-
-  return null
 }
 
 const touchSessionAfterRecordCreated = (sessionId: string) => {
@@ -3213,7 +3260,10 @@ const handlePageClick = (e: MouseEvent) => {
 }
 
 onMounted(() => {
-  currentSessionId.value = readStoredCurrentSessionId()
+  // 进入生成页一律走「新对话」：不恢复上次会话（不读取 stored sessionId），feed 为空。
+  // 历史会话仍在侧栏，手动切换才加载；首次生成时懒创建新会话。
+  newConversationMode.value = true
+  currentSessionId.value = ''
   conversationSidebarCollapsed.value = readStoredConversationSidebarCollapsed()
   void loadPersistedGenerationSessions()
   void loadPersistedGeneratingRecords()

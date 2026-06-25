@@ -1,8 +1,7 @@
-export type TabType = 'image' | 'video' | 'canvas' | 'editor' | 'story' | 'audio'
+export type TabType = 'image' | 'video' | 'editor' | 'story' | 'audio'
 
 export type ImageFilterType = 'all' | 'hd' | 'favorite'
 export type VideoFilterType = 'all' | 'favorite'
-export type CanvasFilterType = 'all'
 export type EditorFilterType = 'all' | 'favorite'
 export type StoryFilterType = 'all' | 'favorite'
 export type AudioFilterType = 'all' | 'voice' | 'song' | 'music' | 'favorite'

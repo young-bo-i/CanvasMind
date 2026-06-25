@@ -148,13 +148,17 @@
     width: min(1568px, 100%);
 }
 
-.entryContainer-fe9 .image-s9z .row-zep .image-qvw > .image-bqm { 
-    box-sizing: border-box; 
+.entryContainer-fe9 .image-s9z .row-zep .image-qvw > .image-bqm {
+    box-sizing: border-box;
     margin-bottom: 2px;
     position: relative;
     width: 100%;
     aspect-ratio: 1 / 1;
-} 
+    /* 性能(P2-5类)：离屏 tile 跳过布局/绘制；contain-intrinsic-size 用 auto 让浏览器记住实测尺寸，
+       占位高度按列宽(clamp 96-148px 方形)估为 130px。 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 130px;
+}
 
 .entryContainer-fe9 .image-s9z .row-zep .image-qvw > .image-bqm,
 .entryContainer-fe9 .image-s9z .row-zep .image-qvw > .image-bqm > div:first-child,

@@ -130,7 +130,17 @@
               </div>
             </div>
           </div>
-          <div v-if="imageGroups.length" class="image-s9z">
+          <!-- 首批加载：骨架屏，避免闪「暂无相关资产」空状态 -->
+          <div v-if="loading && !imageGroups.length" class="image-s9z">
+            <div class="row-zep">
+              <div class="container-c5d">
+                <div class="image-qvw">
+                  <div v-for="n in 18" :key="n" class="image-bqm asset-skeleton-tile"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="imageGroups.length" class="image-s9z">
             <div class="vList-q9n style-FG29L" id="style-FG29L">
               <div id="style-MK2n3" class="style-MK2n3">
                 <div id="style-TK4rG" class="style-TK4rG">
@@ -152,7 +162,9 @@
                           >
                             <div>
                               <div class="container-pm3">
-                                <img class="image-w9g" :src="image.src" :alt="image.id">
+                                <!-- 性能(P0-1)：loading=lazy 使离屏图片不下载/不解码，decoding=async 让解码不阻塞主线程。
+                                     tile 已有 aspect-ratio:1/1 占位，无布局抖动。 -->
+                                <img class="image-w9g" :src="image.src" :alt="image.id" loading="lazy" decoding="async">
                               </div>
                             </div>
                             <div v-if="isBatchMode" class="select-av5">
@@ -167,7 +179,8 @@
                       </div>
                     </div>
                   </template>
-                  <div class="load-more-detector-c4r"></div>
+                  <div ref="loadMoreSentinel" class="load-more-detector-c4r"></div>
+                  <div v-if="loadingMore" class="asset-loading-more">加载中…</div>
                 </div>
               </div>
             </div>
@@ -185,16 +198,24 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch, onBeforeUnmount } from 'vue'
 import type { FilterOption, ImageFilterType, ImageGroup } from '@/views/asset/types'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   imageFilterOptions: FilterOption<ImageFilterType>[]
   imageFilter: ImageFilterType
   isBatchMode: boolean
   selectedCount: number
   imageGroups: ImageGroup[]
   isSelected: (itemId: string) => boolean
-}>()
+  loading?: boolean
+  loadingMore?: boolean
+  hasMore?: boolean
+}>(), {
+  loading: false,
+  loadingMore: false,
+  hasMore: false,
+})
 
 const emit = defineEmits<{
   'set-image-filter': [filter: ImageFilterType]
@@ -206,5 +227,52 @@ const emit = defineEmits<{
   'enter-batch-mode': []
   'exit-batch-mode': []
   'asset-click': [itemId: string]
+  'load-more': []
 }>()
+
+// 性能：用 IntersectionObserver 监听底部 sentinel，进入视口(±400px)即触发增量加载。
+// 父级对 load-more 有 loading/loadingMore/hasMore 守卫，重复触发安全。
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+let io: IntersectionObserver | null = null
+watch(loadMoreSentinel, (el) => {
+  if (io) {
+    io.disconnect()
+    io = null
+  }
+  if (!el || typeof IntersectionObserver === 'undefined') {
+    return
+  }
+  io = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting) && props.hasMore && !props.loadingMore) {
+      emit('load-more')
+    }
+  }, { rootMargin: '400px 0px' })
+  io.observe(el)
+})
+onBeforeUnmount(() => {
+  if (io) {
+    io.disconnect()
+    io = null
+  }
+})
 </script>
+
+<style scoped>
+/* 骨架屏瓦片：复用网格 .image-bqm 的方形布局，呼吸式占位。 */
+.asset-skeleton-tile {
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(204, 221, 255, 0.06) 25%, rgba(204, 221, 255, 0.12) 37%, rgba(204, 221, 255, 0.06) 63%);
+  background-size: 400% 100%;
+  animation: asset-skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes asset-skeleton-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+.asset-loading-more {
+  padding: 16px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary, rgba(204, 221, 255, 0.4));
+}
+</style>

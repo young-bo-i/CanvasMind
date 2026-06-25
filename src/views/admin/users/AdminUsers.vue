@@ -75,6 +75,7 @@
                         trigger="click"
                         placement="bottom-end"
                         popper-class="admin-user-card-dropdown"
+                        :persistent="false"
                         @command="(command: string | number | boolean | object) => handleUserCommand(String(command), user)"
                         @click.stop
                       >

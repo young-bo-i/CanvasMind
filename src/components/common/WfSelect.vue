@@ -72,16 +72,22 @@ const updatePosition = () => {
   }
 }
 
+// 性能(evt-4)：原先开着下拉时每帧 requestAnimationFrame 都调用 getBoundingClientRect（持续强制 reflow），
+// 即便没有任何滚动/缩放也空转。由于 onScroll 已在滚动时直接关闭下拉，唯一需要重定位的场景是窗口 resize，
+// 故改为仅监听 resize（rAF 节流），空闲时零 getBoundingClientRect 调用。
 let rafId = null
+const onReposition = () => {
+  if (rafId) return
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    if (open.value) updatePosition()
+  })
+}
 const startTracking = () => {
-  const track = () => {
-    if (!open.value) return
-    updatePosition()
-    rafId = requestAnimationFrame(track)
-  }
-  rafId = requestAnimationFrame(track)
+  window.addEventListener('resize', onReposition)
 }
 const stopTracking = () => {
+  window.removeEventListener('resize', onReposition)
   if (rafId) { cancelAnimationFrame(rafId); rafId = null }
 }
 

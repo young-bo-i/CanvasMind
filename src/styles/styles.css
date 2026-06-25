@@ -81,7 +81,7 @@ body,html {
     overflow: hidden;
     overscroll-behavior-x: none;
     padding: 0;
-    --canvas-float-backdrop-blur: 32px
+    --canvas-float-backdrop-blur: 16px
 }
 
 /* 抬高消息提示层级，避免被自定义详情弹层覆盖。 */
@@ -1442,7 +1442,7 @@ body,html {
         body,html {
             --font-family: CapCut Sans,PingFang SC,Hiragino Sans GB,Microsoft YaHei,Arial,sans-serif;
             --alphanumeric-font-family: Montserrat,var(--font-family);
-            --canvas-float-backdrop-blur: 32px
+            --canvas-float-backdrop-blur: 16px
         }
 
         html [lv-theme=dark],html body[lv-theme-version="2.0"] {
@@ -4478,7 +4478,7 @@ body,html {
             overflow: hidden;
             overscroll-behavior-x: none;
             padding: 0;
-            --canvas-float-backdrop-blur: 32px
+            --canvas-float-backdrop-blur: 16px
         }
 
         html [lv-theme=dark],html body[lv-theme-version="2.0"] {
@@ -6862,8 +6862,10 @@ body,html {
         }
 
         .dimension-layout-FUl4Nj {
-            -webkit-backdrop-filter: blur(80px);
-            backdrop-filter: blur(80px);
+            /* 性能(P2-9)：模糊核 80px 每像素采样量极大，面板展开过渡/滚动时按面板面积每帧重采样会掉帧。
+               降到 20px 视觉几乎无差但成本大幅下降。 */
+            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(20px);
             background: var(--component-input-bg);
             border-radius: 24px;
             flex-direction: column;
@@ -6970,8 +6972,9 @@ body,html {
         }
 
         .task-indicator-container-flqXza .task-indicator-srBESV {
-            -webkit-backdrop-filter: blur(64px);
-            backdrop-filter: blur(64px);
+            /* 性能(P2-9)：模糊核 64px → 20px，降低任务指示器滚动/动画时的重采样成本。 */
+            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(20px);
             background-color: var(--component-float-block-default);
             border-radius: 18px;
             bottom: 0;

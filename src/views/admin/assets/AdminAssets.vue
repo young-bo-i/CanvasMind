@@ -109,6 +109,8 @@
                       :src="resolveAssetPreviewUrl(item)"
                       :alt="item.title || '资源预览'"
                       class="admin-asset-card__image"
+                      loading="lazy"
+                      decoding="async"
                     >
                   </button>
                   <div v-else class="admin-asset-card__image admin-asset-card__image--empty">无预览</div>

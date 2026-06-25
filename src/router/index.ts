@@ -6,14 +6,11 @@ import { useLoadingStore } from '../stores/loading'
 // 核心页面懒加载，避免全部进入主 bundle 拖慢首屏
 const Home = () => import('../views/home/home.vue')
 const Generate = () => import('../views/generate/generate.vue')
-const Canana = () => import('../views/canana/canana.vue')
 const AccountManagement = () => import('../views/account/AccountManagement.vue')
 const PublishCenter = () => import('../views/publish/PublishCenter.vue')
 const AssetManagement = () => import('../views/asset/AssetManagement.vue')
-const Workflow = () => import('../views/workflow/index.vue')
 const Install = () => import('../views/install/InstallView.vue')
 const PolicyDetail = () => import('../views/policies/PolicyDetail.vue')
-const AgenticAssetsCanvasView = () => import('../views/agentic-assets-canvas/AgenticAssetsCanvasView.vue')
 const AdminLayout = () => import('../components/admin/layout/AdminLayout.vue')
 const AdminDashboard = () => import('../views/admin/dashboard/AdminDashboard.vue')
 const AdminAssets = () => import('../views/admin/assets/AdminAssets.vue')
@@ -54,15 +51,6 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
-    path: '/canvas',
-    name: 'Canvas',
-    component: Canana,
-    meta: {
-      // 无限画布编辑本期不做移动端，移动访问时显示「请在电脑端使用」。
-      desktopOnly: true,
-    },
-  },
-  {
     path: '/account',
     name: 'AccountManagement',
     component: AccountManagement,
@@ -86,20 +74,6 @@ const routes: RouteRecordRaw[] = [
     meta: {
       mobileTitle: '作品',
     },
-  },
-  {
-    path: '/workflow',
-    name: 'Workflow',
-    component: Workflow,
-    meta: {
-      // 工作流节点编辑器移动端不做，移动访问时显示「请在电脑端使用」。
-      desktopOnly: true,
-    },
-  },
-  {
-    path: '/agentic-assets-canvas',
-    name: 'AgenticAssetsCanvas',
-    component: AgenticAssetsCanvasView,
   },
   {
     path: '/policies/:type',

@@ -149,9 +149,6 @@ const actionItems = computed(() => {
 })
 
 const resolveMenuRoutePath = (item: { key: string, actionType: string, actionValue: string }) => {
-  if (item.key === 'workflow' && item.actionType === 'route') {
-    return '/agentic-assets-canvas'
-  }
   return item.actionValue
 }
 

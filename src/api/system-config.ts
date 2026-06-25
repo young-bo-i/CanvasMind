@@ -519,40 +519,6 @@ export const createDefaultHomeSideMenuSettings = (): SystemHomeSideMenuSettingsC
       sortOrder: 30,
     },
     {
-      key: 'canvas',
-      title: '画布',
-      section: 'center',
-      groupKey: 'group-center-main',
-      iconSource: 'default',
-      iconType: 'system',
-      icon: 'canvas',
-      inactiveIconUrl: '',
-      activeIconUrl: '',
-      visible: true,
-      badgeText: '',
-      badgeTone: 'default',
-      actionType: 'route',
-      actionValue: '/canvas',
-      sortOrder: 40,
-    },
-    {
-      key: 'workflow',
-      title: '工作流',
-      section: 'center',
-      groupKey: 'group-center-main',
-      iconSource: 'default',
-      iconType: 'system',
-      icon: 'workflow',
-      inactiveIconUrl: '',
-      activeIconUrl: '',
-      visible: true,
-      badgeText: '',
-      badgeTone: 'default',
-      actionType: 'route',
-      actionValue: '/agentic-assets-canvas',
-      sortOrder: 50,
-    },
-    {
       key: 'account',
       title: '账号',
       section: 'center',
@@ -1118,24 +1084,32 @@ const normalizeHomeSideMenuSettings = (value?: SystemHomeSideMenuSettingsConfig 
       ...(matchedItem || {}),
     }
 
-    // 工作流入口统一接入新的画布工作台页面，兼容旧配置里残留的 /workflow。
-    if (nextItem.key === 'workflow' && nextItem.actionType === 'route') {
-      nextItem.actionValue = '/agentic-assets-canvas'
-    }
-
     return {
       ...nextItem,
     }
   })
 
-  const extraItems = incomingItems.filter(item => !normalizedItems.some(defaultItem => defaultItem.key === item.key))
+  // 画布(/canvas)与工作流(/agentic-assets-canvas、旧 /workflow)功能已下线：
+  // 过滤掉旧配置里残留的对应菜单项，避免前台渲染出指向已删除路由的失效链接。
+  const isRemovedMenuItem = (item: { key?: string; actionValue?: string }) =>
+    item.key === 'canvas'
+    || item.key === 'workflow'
+    || item.actionValue === '/canvas'
+    || item.actionValue === '/workflow'
+    || item.actionValue === '/agentic-assets-canvas'
+
+  const extraItems = incomingItems.filter(item =>
+    !normalizedItems.some(defaultItem => defaultItem.key === item.key) && !isRemovedMenuItem(item),
+  )
 
   return {
     ...defaults,
     ...(value || {}),
     layoutMode: value?.layoutMode === 'top' ? 'top' : 'side',
     groups: [...normalizedGroups, ...extraGroups].sort((left, right) => left.sortOrder - right.sortOrder),
-    items: [...normalizedItems, ...extraItems].sort((left, right) => left.sortOrder - right.sortOrder),
+    items: [...normalizedItems, ...extraItems]
+      .filter(item => !isRemovedMenuItem(item))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
   }
 }
 

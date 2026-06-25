@@ -11,6 +11,7 @@
                   class="image-player-image"
                   :src="currentImage.src"
                   :alt="currentImage.id"
+                  decoding="async"
                 >
               </div>
             </div>
@@ -213,7 +214,9 @@
                 :class="{ 'selected-_OYWHD': index === internalIndex }"
                 @click="internalIndex = index"
               >
-                <img :src="image.src" :alt="image.id">
+                <!-- 性能(P0-4)：缩略条 loading=lazy 使非可见缩略图不下载/不解码，decoding=async 不阻塞主线程。
+                     原先打开灯箱即并发挂载整库(最多120张)4K 原图缩略图，瞬时冻结数百ms~秒。 -->
+                <img :src="image.src" :alt="image.id" loading="lazy" decoding="async">
               </div>
             </div>
           </div>

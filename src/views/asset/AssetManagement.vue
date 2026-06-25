@@ -25,6 +25,9 @@
           :selected-count="selectedCount"
           :image-groups="imageGroups"
           :is-selected="isSelected"
+          :loading="imageLoading"
+          :loading-more="imageLoadingMore"
+          :has-more="imageHasMore"
           @set-image-filter="setImageFilter"
           @batch-delete="handleBatchDelete"
           @batch-download="handleBatchDownload"
@@ -34,22 +37,20 @@
           @enter-batch-mode="enterBatchMode"
           @exit-batch-mode="exitBatchMode"
           @asset-click="handleAssetClick"
+          @load-more="loadMoreImageAssets"
       />
       <AssetVideoTab
           :active="activeTab === 'video'"
           :video-filter-options="videoFilterOptions"
           :video-filter="videoFilter"
           :video-groups="videoGroups"
+          :loading="videoLoading"
+          :loading-more="videoLoadingMore"
+          :has-more="videoHasMore"
           @set-video-filter="setVideoFilter"
           @enter-batch-mode="enterBatchMode"
           @edit-in-capcut="handleEditInCapCut"
-      />
-      <AssetCanvasTab
-          :active="activeTab === 'canvas'"
-          :canvas-filter-options="canvasFilterOptions"
-          :canvas-filter="canvasFilter"
-          @set-canvas-filter="setCanvasFilter"
-          @enter-batch-mode="enterBatchMode"
+          @load-more="loadMoreVideoAssets"
       />
       <AssetEditorTab
           :active="activeTab === 'editor'"
@@ -105,7 +106,6 @@ import PublishArtworkModal from '@/components/PublishArtworkModal.vue'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import AssetImageTab from '@/views/asset/components/AssetImageTab.vue'
 import AssetVideoTab from '@/views/asset/components/AssetVideoTab.vue'
-import AssetCanvasTab from '@/views/asset/components/AssetCanvasTab.vue'
 import AssetEditorTab from '@/views/asset/components/AssetEditorTab.vue'
 import AssetStoryTab from '@/views/asset/components/AssetStoryTab.vue'
 import AssetAudioTab from '@/views/asset/components/AssetAudioTab.vue'
@@ -115,7 +115,6 @@ import {
   tabs,
   imageFilterOptions,
   videoFilterOptions,
-  canvasFilterOptions,
   editorFilterOptions,
   storyFilterOptions,
   audioFilterOptions,
@@ -124,7 +123,6 @@ import { applyAssetAction } from '@/api/asset-items'
 import { AUTH_LOGIN_SUCCESS_EVENT } from '@/stores/auth'
 import type {
   AudioFilterType,
-  CanvasFilterType,
   EditorFilterType,
   ImageFilterType,
   ImageItem,
@@ -139,7 +137,6 @@ const activeTab = ref<TabType>('image')
 // 筛选状态
 const imageFilter = ref<ImageFilterType>('all')
 const videoFilter = ref<VideoFilterType>('all')
-const canvasFilter = ref<CanvasFilterType>('all')
 const editorFilter = ref<EditorFilterType>('all')
 const storyFilter = ref<StoryFilterType>('all')
 const audioFilter = ref<AudioFilterType>('music')
@@ -157,8 +154,24 @@ const publishArtworkVisible = ref<boolean>(false)
 const publishSubmitting = ref<boolean>(false)
 const publishTargetImage = ref<ImageItem | null>(null)
 
-const { imageGroups, allImages, loadImageAssets, resolvePreviewIndexByItemId } = useAssetImages()
-const { videoGroups, loadVideoAssets } = useAssetVideos()
+const {
+  imageGroups,
+  allImages,
+  loading: imageLoading,
+  loadingMore: imageLoadingMore,
+  hasMore: imageHasMore,
+  loadImageAssets,
+  loadMoreImageAssets,
+  resolvePreviewIndexByItemId,
+} = useAssetImages()
+const {
+  videoGroups,
+  loading: videoLoading,
+  loadingMore: videoLoadingMore,
+  hasMore: videoHasMore,
+  loadVideoAssets,
+  loadMoreVideoAssets,
+} = useAssetVideos()
 // 视频资产是否已加载过(首次切到视频 tab 再懒加载,避免无谓请求)。
 const videoAssetsLoaded = ref(false)
 
@@ -257,10 +270,6 @@ const setImageFilter = (filter: ImageFilterType) => {
 
 const setVideoFilter = (filter: VideoFilterType) => {
   videoFilter.value = filter
-}
-
-const setCanvasFilter = (filter: CanvasFilterType) => {
-  canvasFilter.value = filter
 }
 
 const setEditorFilter = (filter: EditorFilterType) => {

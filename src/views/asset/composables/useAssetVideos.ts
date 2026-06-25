@@ -47,24 +47,61 @@ const buildVideoGroupsFromAssets = (items: PersistedAssetItem[]) => buildVideoGr
   })),
 )
 
+const VIDEO_PAGE_SIZE = 40
+
 export const useAssetVideos = () => {
   const videoGroups = ref<VideoGroup[]>([])
+  const rawItems = ref<PersistedAssetItem[]>([])
+  const loading = ref(false)
+  const loadingMore = ref(false)
+  const hasMore = ref(true)
+  const page = ref(0)
 
   const allVideos = computed(() => videoGroups.value.flatMap(group => group.videos))
 
-  const loadVideoAssets = async () => {
-    try {
-      const assets = await listAssetItems({
-        scope: 'mine',
-        assetType: 'video',
-        take: 120,
-      })
+  const fetchNextVideoPage = async () => {
+    const nextPage = page.value + 1
+    const assets = await listAssetItems({
+      scope: 'mine',
+      assetType: 'video',
+      page: nextPage,
+      pageSize: VIDEO_PAGE_SIZE,
+    })
+    page.value = nextPage
+    hasMore.value = assets.length === VIDEO_PAGE_SIZE
+    rawItems.value = [...rawItems.value, ...assets]
+    videoGroups.value = rawItems.value.length ? buildVideoGroupsFromAssets(rawItems.value) : []
+  }
 
-      videoGroups.value = assets.length ? buildVideoGroupsFromAssets(assets) : []
+  const loadVideoAssets = async () => {
+    loading.value = true
+    hasMore.value = true
+    page.value = 0
+    rawItems.value = []
+    videoGroups.value = []
+    try {
+      await fetchNextVideoPage()
     } catch (error) {
       // 401(未登录)由 readApiData 统一拉起登录弹窗;其它错误已由其默认 toast 提示。这里仅置空避免崩页。
       console.warn('读取视频资产列表失败。', error)
       videoGroups.value = []
+      rawItems.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const loadMoreVideoAssets = async () => {
+    if (loading.value || loadingMore.value || !hasMore.value) {
+      return
+    }
+    loadingMore.value = true
+    try {
+      await fetchNextVideoPage()
+    } catch (error) {
+      console.warn('加载更多视频资产失败。', error)
+    } finally {
+      loadingMore.value = false
     }
   }
 
@@ -75,7 +112,11 @@ export const useAssetVideos = () => {
   return {
     allVideos,
     videoGroups,
+    loading,
+    loadingMore,
+    hasMore,
     loadVideoAssets,
+    loadMoreVideoAssets,
     resolvePreviewIndexByItemId,
   }
 }
