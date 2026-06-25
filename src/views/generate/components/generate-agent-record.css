@@ -230,7 +230,6 @@
     margin-left: 4px;
     overflow: hidden;
     transition: grid-template-rows .3s ease-in-out, -ms-grid-rows .3s ease-in-out;
-    will-change: grid-template-rows
 }
 
 .process-group .content-wrapper-WwWXWE.collapsed-yhY7l2 {

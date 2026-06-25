@@ -64,3 +64,21 @@ export const buildAssetUrl = (path: string) => {
   // 其余以站点 API 基址补全，解决 /uploads 相对路径命中前端端口的问题。
   return buildApiUrl(normalizedPath)
 }
+
+/**
+ * 缩略图 URL：给同源 /uploads 图片追加 ?w=<width>，后端按需生成并缓存 webp 缩略图，
+ * 用于资产网格/发现 feed/账户画廊/管理台等缩略场景（原图常是 4K，几 MB；缩略后传输/解码降 ~90%）。
+ * data:/blob:/外链 或非 /uploads 资源原样返回；全屏预览/下载请用 buildAssetUrl 原图。
+ */
+export const buildThumbnailUrl = (url: string, width = 640) => {
+  const normalized = String(url || '').trim()
+  if (!normalized || /^data:/i.test(normalized) || /^blob:/i.test(normalized)) {
+    return normalized
+  }
+  if (!normalized.includes('/uploads/') || /[?&]w=/.test(normalized)) {
+    return normalized
+  }
+  const [base, hash] = normalized.split('#')
+  const separator = base.includes('?') ? '&' : '?'
+  return `${base}${separator}w=${width}${hash ? `#${hash}` : ''}`
+}

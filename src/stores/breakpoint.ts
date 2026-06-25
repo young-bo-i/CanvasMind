@@ -19,11 +19,22 @@ const isClient = () => typeof window !== 'undefined'
 
 const width = ref<number>(isClient() ? window.innerWidth : 1280)
 let listenerBound = false
+let rafScheduled = false
 
+// 性能(P2-16)：resize/orientationchange 用 rAF 合帧，且仅在值真正变化时写 ref，
+// 避免每个 resize 事件都写响应式 + 触发下游(data-device / SelectPopup 等)重算。
 const sync = () => {
-  if (isClient()) {
-    width.value = window.innerWidth
+  if (!isClient() || rafScheduled) {
+    return
   }
+  rafScheduled = true
+  window.requestAnimationFrame(() => {
+    rafScheduled = false
+    const next = window.innerWidth
+    if (next !== width.value) {
+      width.value = next
+    }
+  })
 }
 
 const bindListener = () => {

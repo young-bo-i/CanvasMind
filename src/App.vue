@@ -6,10 +6,12 @@
       <DesktopOnlyNotice v-if="isMobile && isDesktopOnlyRoute" />
       <ThemeToggle />
       <LoginModal
+        v-if="loginModalMounted"
         :visible="loginModalVisible"
         @update:visible="setLoginModalVisible"
       />
       <MarketingModal
+        v-if="marketingModalMounted"
         :visible="marketingModalVisible"
         @update:visible="setMarketingModalVisible"
       />
@@ -19,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch, watchEffect, computed, defineAsyncComponent } from 'vue'
+import { watch, watchEffect, computed, defineAsyncComponent, ref } from 'vue'
 import { ElConfigProvider } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useBreakpointStore } from '@/stores/breakpoint'
@@ -41,6 +43,13 @@ const router = useRouter()
 const authStore = useAuthStore()
 const { loginModalVisible, openLoginModal, setLoginModalVisible } = useLoginModalStore()
 const { marketingModalVisible, setMarketingModalVisible } = useMarketingModalStore()
+
+// 性能(P2-13)：弹窗虽是 defineAsyncComponent，但无外层 v-if 时首屏挂载即触发 import()。
+// 用 sticky 挂载标志：仅首次打开时才挂载(并下载 chunk)，之后保持挂载避免重开闪烁。
+const loginModalMounted = ref(false)
+const marketingModalMounted = ref(false)
+watch(loginModalVisible, (visible) => { if (visible) loginModalMounted.value = true }, { immediate: true })
+watch(marketingModalVisible, (visible) => { if (visible) marketingModalMounted.value = true }, { immediate: true })
 
 // 把当前设备形态写到 <html data-device>（与 data-theme 同机制），供 CSS/移动外壳判定。
 const { isMobile } = useBreakpointStore()

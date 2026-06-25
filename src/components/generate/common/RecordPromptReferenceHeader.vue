@@ -293,7 +293,7 @@ const handleReferenceImageError = (src: string, index: number) => {
   top: 0;
   transition: width .3s cubic-bezier(.25, .75, .6, 1.1), opacity .3s cubic-bezier(.25, .75, .6, 1.1), transform .3s cubic-bezier(.25, .75, .6, 1.1);
   width: 100%;
-  will-change: width, opacity, transform;
+  will-change: opacity, transform;
 }
 
 .reference-content {

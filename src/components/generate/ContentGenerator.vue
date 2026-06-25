@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onUnmounted, watch, defineAsyncComponent } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useLoginModalStore } from '@/stores/login-modal'
 import { useSystemSettingsStore } from '@/stores/system-settings'
@@ -9,7 +9,15 @@ import type { ModelCapabilityFlags } from '@/shared/provider-capability'
 
 // 导入子组件
 import { TypeSelector, type CreationType } from './selectors'
-import { AgentToolbar, ImageToolbar, VideoToolbar, DigitalHumanToolbar } from './toolbars'
+// AgentToolbar 是默认工具栏(首屏即渲染)，保持 eager 避免切换闪烁；
+// 性能(P1-2)：Image/Video/DigitalHuman 工具栏只在切到对应类型时才渲染 → 改异步懒加载，
+// 把它们(及其依赖)从 ContentGenerator 首屏 chunk 拆出。Image/Video 被模板 ref 访问，故 import type 保留实例类型。
+import { AgentToolbar } from './toolbars'
+import type ImageToolbarComp from './toolbars/ImageToolbar.vue'
+import type VideoToolbarComp from './toolbars/VideoToolbar.vue'
+const ImageToolbar = defineAsyncComponent(() => import('./toolbars/ImageToolbar.vue'))
+const VideoToolbar = defineAsyncComponent(() => import('./toolbars/VideoToolbar.vue'))
+const DigitalHumanToolbar = defineAsyncComponent(() => import('./toolbars/DigitalHumanToolbar.vue'))
 
 // 弹出方向类型
 type Placement = 'top' | 'bottom' | 'auto'
@@ -184,8 +192,8 @@ const typeSelectorRef = ref<InstanceType<typeof TypeSelector> | null>(null)
 const typeSelectorExpandRef = ref<InstanceType<typeof TypeSelector> | null>(null)
 const agentToolbarRef = ref<InstanceType<typeof AgentToolbar> | null>(null)
 const agentToolbarExpandRef = ref<InstanceType<typeof AgentToolbar> | null>(null)
-const imageToolbarRef = ref<InstanceType<typeof ImageToolbar> | null>(null)
-const videoToolbarRef = ref<InstanceType<typeof VideoToolbar> | null>(null)
+const imageToolbarRef = ref<InstanceType<typeof ImageToolbarComp> | null>(null)
+const videoToolbarRef = ref<InstanceType<typeof VideoToolbarComp> | null>(null)
 
 // 当 TypeSelector 弹窗打开时，关闭 AgentToolbar 的面板
 const handleTypeSelectorOpen = () => {
@@ -1966,7 +1974,7 @@ onUnmounted(() => {
     opacity var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function),
     transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
   width: 100%;
-  will-change: margin-top, opacity, transform;
+  will-change: opacity, transform;
 }
 
 .dimension-layout-FUl4Nj .toolbar-k7Mdy_.collapsed-jPdgrA {
@@ -2246,7 +2254,6 @@ onUnmounted(() => {
   max-width: 100%;
   position: relative;
   transition: height var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-  will-change: height;
 }
 
 .dimension-layout-FUl4Nj .references-vWIzeo.references-Gf5d1P.collapsed-_VpN2b,
@@ -2342,7 +2349,7 @@ onUnmounted(() => {
 .dimension-layout-FUl4Nj .reference-group-c2buvf:not(.tiled-afeZsr) {
   transition: margin var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function),
     transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-  will-change: margin, transform;
+  will-change: transform;
 }
 
 .dimension-layout-FUl4Nj .reference-group-c2buvf.generator-reference-group--multi.collapsed-J9LsWu,
@@ -2352,7 +2359,7 @@ onUnmounted(() => {
   transform-origin: left center;
   transition: margin var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function),
     transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-  will-change: margin, transform;
+  will-change: transform;
 }
 
 .dimension-layout-FUl4Nj .generator-reference-group--multi .reference-group-background-f6pFpT {
@@ -2366,7 +2373,7 @@ onUnmounted(() => {
   background: linear-gradient(90deg, rgba(37, 38, 46, 0.6) 82.41%, rgba(37, 38, 46, 0) 98.03%);
   filter: blur(12px);
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: width, height, opacity, transform;
+  will-change: opacity, transform;
 }
 
 .dimension-layout-FUl4Nj .generator-reference-group--multi .reference-group-hover-trigger-YTDCQf {

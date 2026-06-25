@@ -126,8 +126,6 @@ export const initializeSystem = async (payload: {
   email?: string
   siteName?: string
   siteDescription?: string
-  siteLogoUrl?: string
-  siteIconUrl?: string
   requesterIp?: string
   userAgent?: string
 }) => {
@@ -237,8 +235,6 @@ export const initializeSystem = async (payload: {
       ...systemConfig.siteInfo,
       siteName: nextSiteName,
       siteDescription: normalizeSiteText(payload.siteDescription, systemConfig.siteInfo.siteDescription),
-      siteLogoUrl: normalizeSiteText(payload.siteLogoUrl, systemConfig.siteInfo.siteLogoUrl),
-      siteIconUrl: normalizeSiteText(payload.siteIconUrl, systemConfig.siteInfo.siteIconUrl),
     },
     loginSettings: {
       ...systemConfig.loginSettings,

@@ -245,8 +245,6 @@ const createDefaultSystemForm = (): SystemConfigPayload => ({
   siteInfo: {
     siteName: 'Canana',
     siteDescription: '',
-    siteLogoUrl: '',
-    siteIconUrl: '',
     icpText: '',
     icpLink: '',
     copyrightText: '',
@@ -298,8 +296,6 @@ const {
 const applySystemForm = (value: SystemConfigPayload) => {
   systemForm.siteInfo.siteName = value.siteInfo.siteName
   systemForm.siteInfo.siteDescription = value.siteInfo.siteDescription
-  systemForm.siteInfo.siteLogoUrl = value.siteInfo.siteLogoUrl
-  systemForm.siteInfo.siteIconUrl = value.siteInfo.siteIconUrl
   systemForm.siteInfo.icpText = value.siteInfo.icpText
   systemForm.siteInfo.icpLink = value.siteInfo.icpLink
   systemForm.siteInfo.copyrightText = value.siteInfo.copyrightText
@@ -339,8 +335,6 @@ const buildSystemPayload = (): SystemConfigPayload => ({
   siteInfo: {
     siteName: systemForm.siteInfo.siteName,
     siteDescription: systemForm.siteInfo.siteDescription,
-    siteLogoUrl: systemForm.siteInfo.siteLogoUrl,
-    siteIconUrl: systemForm.siteInfo.siteIconUrl,
     icpText: systemForm.siteInfo.icpText,
     icpLink: systemForm.siteInfo.icpLink,
     copyrightText: systemForm.siteInfo.copyrightText,

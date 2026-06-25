@@ -65,11 +65,7 @@
               :site-name="currentSiteName"
               :brand-initial="brandInitial"
               :site-name-error="siteNameError"
-              :uploading-logo="uploadingLogo"
-              :uploading-icon="uploadingIcon"
               @update-field="handleWebsiteFieldUpdate"
-              @pick-logo="openFilePicker('logo')"
-              @pick-icon="openFilePicker('icon')"
             />
 
             <InstallSuccess
@@ -139,21 +135,6 @@
         </div>
       </div>
     </div>
-
-    <input
-      ref="logoInputRef"
-      class="hidden"
-      type="file"
-      accept="image/*"
-      @change="handleFileChange($event, 'logo')"
-    >
-    <input
-      ref="iconInputRef"
-      class="hidden"
-      type="file"
-      accept="image/*"
-      @change="handleFileChange($event, 'icon')"
-    >
   </div>
 </template>
 
@@ -162,8 +143,6 @@ import { ArrowRight, Check } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { buildAssetUrl } from '@/api/http'
-import { uploadStorageFile } from '@/api/storage'
 import { useAuthStore } from '@/stores/auth'
 import { useSystemInitStore } from '@/stores/system-init'
 import { useSystemSettingsStore } from '@/stores/system-settings'
@@ -181,10 +160,6 @@ const systemSettingsStore = useSystemSettingsStore()
 
 const step = ref(0)
 const appVersion = '1.0.2'
-const logoInputRef = ref<HTMLInputElement | null>(null)
-const iconInputRef = ref<HTMLInputElement | null>(null)
-const uploadingLogo = ref(false)
-const uploadingIcon = ref(false)
 const adminPanelVisible = ref(false)
 let adminPanelTimer: number | null = null
 
@@ -199,8 +174,6 @@ const adminForm = reactive<InstallAdminFormModel>({
 const websiteForm = reactive<InstallWebsiteFormModel>({
   siteName: 'CananaMind',
   siteDescription: '',
-  siteLogoUrl: '',
-  siteIconUrl: '',
 })
 
 const submitting = computed(() => systemInitStore.systemInitLoading.value)
@@ -298,52 +271,6 @@ const handleWebsiteFieldUpdate = (field: keyof InstallWebsiteFormModel, value: s
   websiteForm[field] = value
 }
 
-const openFilePicker = (type: 'logo' | 'icon') => {
-  if (type === 'logo') {
-    logoInputRef.value?.click()
-    return
-  }
-
-  iconInputRef.value?.click()
-}
-
-const handleFileChange = async (event: Event, type: 'logo' | 'icon') => {
-  const input = event.target as HTMLInputElement | null
-  const file = input?.files?.[0]
-  if (!file) {
-    return
-  }
-
-  try {
-    if (type === 'logo') {
-      uploadingLogo.value = true
-    } else {
-      uploadingIcon.value = true
-    }
-
-    const uploaded = await uploadStorageFile(file, 'asset')
-    const publicUrl = buildAssetUrl(uploaded.publicUrl || uploaded.filePath || '')
-
-    if (type === 'logo') {
-      websiteForm.siteLogoUrl = publicUrl
-    } else {
-      websiteForm.siteIconUrl = publicUrl
-    }
-  } catch (error: any) {
-    ElMessage.error(error?.message || '上传图片失败')
-  } finally {
-    if (input) {
-      input.value = ''
-    }
-
-    if (type === 'logo') {
-      uploadingLogo.value = false
-    } else {
-      uploadingIcon.value = false
-    }
-  }
-}
-
 const handlePrevStep = () => {
   if (step.value <= 0) {
     return
@@ -367,8 +294,6 @@ const handleSubmit = async () => {
       email: adminForm.email,
       siteName: websiteForm.siteName,
       siteDescription: websiteForm.siteDescription,
-      siteLogoUrl: websiteForm.siteLogoUrl,
-      siteIconUrl: websiteForm.siteIconUrl,
     })
 
     await Promise.all([

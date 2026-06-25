@@ -503,6 +503,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { BRAND_LOGO_URL } from '@/config/branding'
 import SideMenu from '@/components/home/components/SideMenu.vue'
 import HomeSideMenuIcon from '@/components/home/components/HomeSideMenuIcon.vue'
 import AdminThemeWorkbenchItemActions, { type WorkbenchMenuActionKey } from './AdminThemeWorkbenchItemActions.vue'
@@ -535,7 +536,7 @@ const emit = defineEmits<{
   'menu-reorder': [payload: { sourceMenuKey: string, targetMenuKey: string, position: 'before' | 'after' }]
 }>()
 
-const resolvedSiteLogoUrl = computed(() => String(props.siteInfo.siteLogoUrl || '').trim())
+const resolvedSiteLogoUrl = computed(() => BRAND_LOGO_URL)
 const resolvedSiteName = computed(() => String(props.siteInfo.siteName || 'Canana').trim() || 'Canana')
 const showTopMenu = computed(() => props.settings.showTopMenu)
 const showCenterMenu = computed(() => props.settings.showCenterMenu)
@@ -651,8 +652,6 @@ const previewSystemSettings = computed(() => ({
   siteInfo: {
     siteName: props.siteInfo.siteName || 'Canana',
     siteDescription: props.siteInfo.siteDescription || '',
-    siteLogoUrl: props.siteInfo.siteLogoUrl || '',
-    siteIconUrl: props.siteInfo.siteIconUrl || '',
     icpText: props.siteInfo.icpText || '',
     icpLink: props.siteInfo.icpLink || '',
     copyrightText: props.siteInfo.copyrightText || '',

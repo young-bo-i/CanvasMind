@@ -14,8 +14,6 @@ const createDefaultSettings = (): SystemConfigPayload => ({
   siteInfo: {
     siteName: 'Canana',
     siteDescription: '',
-    siteLogoUrl: '',
-    siteIconUrl: '',
     icpText: '',
     icpLink: '',
     copyrightText: '',
@@ -80,20 +78,7 @@ const syncSiteRuntime = (settings: SystemConfigPayload) => {
     document.head.appendChild(descriptionMeta)
   }
   descriptionMeta.setAttribute('content', description)
-
-  const iconUrl = String(settings.siteInfo.siteIconUrl || '').trim()
-  if (!iconUrl) {
-    return
-  }
-
-  let favicon = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null
-  if (!favicon) {
-    favicon = document.createElement('link')
-    favicon.rel = 'icon'
-    document.head.appendChild(favicon)
-  }
-
-  favicon.href = iconUrl
+  // favicon 已在 index.html 写死为固定品牌图标，不再随后台配置动态设置。
 }
 
 const syncThemeRuntime = (settings: SystemConfigPayload) => {

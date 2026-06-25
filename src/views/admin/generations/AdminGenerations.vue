@@ -42,7 +42,7 @@
             <div class="admin-generation-card__preview">
               <img
                 v-if="getPreviewUrl(record)"
-                :src="getPreviewUrl(record) || ''"
+                :src="buildThumbnailUrl(getPreviewUrl(record) || '', 640)"
                 :alt="record.prompt || '生成结果预览'"
                 class="admin-generation-card__image"
                 loading="lazy"
@@ -112,6 +112,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive } from 'vue'
+import { buildThumbnailUrl } from '@/api/http'
 import AdminFilterChips, { type AdminFilterChipGroup } from '@/components/admin/common/AdminFilterChips.vue'
 import AdminFilterToolbar from '@/components/admin/common/AdminFilterToolbar.vue'
 import AdminPagination from '@/components/admin/common/AdminPagination.vue'

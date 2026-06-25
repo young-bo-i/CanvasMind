@@ -3,8 +3,6 @@ import { readJsonBody, sendJson } from '../ai-gateway/shared'
 export interface SystemSiteInfoPayload {
   siteName?: string
   siteDescription?: string
-  siteLogoUrl?: string
-  siteIconUrl?: string
   icpText?: string
   icpLink?: string
   copyrightText?: string

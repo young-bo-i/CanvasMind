@@ -46,6 +46,7 @@ const getAssetResolutionLabel = (item: PersistedAssetItem) => {
 const buildImageGroupsFromAssets = (items: PersistedAssetItem[]) => buildImageGroups(
   items.map(item => ({
     id: item.id,
+    // 保留原图 URL(灯箱全屏预览要用)；网格缩略图在 AssetImageTab 模板用 buildThumbnailUrl 套 ?w=。
     src: buildAssetUrl(item.previewUrl || item.fileUrl),
     promptText: item.promptText,
     modelLabel: item.modelLabel || '图片 4.0',

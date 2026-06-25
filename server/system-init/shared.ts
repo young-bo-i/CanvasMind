@@ -8,8 +8,6 @@ export interface SystemInitPayload {
   email?: string
   siteName?: string
   siteDescription?: string
-  siteLogoUrl?: string
-  siteIconUrl?: string
 }
 
 // 读取初始化模块请求体。

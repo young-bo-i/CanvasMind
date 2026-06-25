@@ -158,7 +158,7 @@
 
                                           loading="lazy"
                                           class="cover-Qo4B2U"
-                                          :src="item.imageSrc"
+                                          :src="buildThumbnailUrl(item.imageSrc, 640)"
                                           :alt="item.id"
                                           @load="onFeedImageLoad($event, index)"
                                           @error="onFeedImageError(index)"
@@ -266,7 +266,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import HomeDetailModalFrom from '@/components/home/components/HomeDetailModalFrom.vue'
 import { applyAssetAction, listAssetItems, type PersistedAssetItem } from '@/api/asset-items'
-import { buildAssetUrl } from '@/api/http'
+import { buildAssetUrl, buildThumbnailUrl } from '@/api/http'
 import {
   buildPlainMasonryLayoutsFromSizes,
   computePlainMasonryMetrics,

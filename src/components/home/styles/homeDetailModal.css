@@ -989,7 +989,7 @@
     display: flex;
     justify-content: center;
     transition: max-width var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), height var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), box-shadow var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), opacity var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: max-width, height, box-shadow, opacity, transform
+    will-change: opacity, transform;
 }
 
 @keyframes enable-visibility-hidden-_bbhnk {
@@ -1036,7 +1036,6 @@
 .task-indicator-container-W5j74R {
     bottom: calc(var(--content-generator-height) + 28px);
     transition: max-width var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: max-width;
     z-index: 10
 }
 
@@ -1228,7 +1227,7 @@
     max-width: 100%;
     transition: margin-top var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), opacity var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
     width: 100%;
-    will-change: margin-top, opacity, transform
+    will-change: opacity, transform;
 }
 
 .toolbar-CO0C5P.collapsed-S9RClR {
@@ -1310,7 +1309,7 @@
     transform: rotate(var(--rotate));
     transition: width .3s cubic-bezier(.4, 0, .2, 1), height .3s cubic-bezier(.4, 0, .2, 1), border-radius .3s cubic-bezier(.4, 0, .2, 1), color .3s cubic-bezier(.4, 0, .2, 1), background-color .3s cubic-bezier(.4, 0, .2, 1), opacity .3s cubic-bezier(.4, 0, .2, 1), transform .3s cubic-bezier(.4, 0, .2, 1);
     width: 100%;
-    will-change: width, height, border-radius, opacity, transform
+    will-change: opacity, transform;
 }
 
 .reference-upload-Iq2Aoa .icon-WluqJM {
@@ -1359,7 +1358,6 @@
     max-width: 100%;
     position: relative;
     transition: height var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: height
 }
 
 .references-F9DFuS.collapsed-R4A10A {
@@ -1411,7 +1409,7 @@
 
 .reference-group-HKgRli:not(.tiled-lQ4YIV) {
     transition: margin var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: margin, transform
+    will-change: transform;
 }
 
 .reference-group-HKgRli:not(.tiled-lQ4YIV).collapsed-UdOX7K {
@@ -1430,7 +1428,7 @@
     top: 4px;
     transition: width .3s cubic-bezier(.4, 0, .2, 1), height .3s cubic-bezier(.4, 0, .2, 1), opacity .3s cubic-bezier(.4, 0, .2, 1), transform .3s cubic-bezier(.4, 0, .2, 1);
     width: 48px;
-    will-change: width, height, opacity, transform
+    will-change: opacity, transform;
 }
 
 .reference-group-hover-trigger-JVucjj {
@@ -1472,7 +1470,6 @@
     transition: width .3s cubic-bezier(.4, 0, .2, 1);
     visibility: hidden;
     width: var(--tiled-reference-group-content-width);
-    will-change: width
 }
 
 .reference-group-content-XEvTUj:not(.tiled-lQ4YIV) {

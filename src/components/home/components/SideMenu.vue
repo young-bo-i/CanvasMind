@@ -59,6 +59,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useHomeSideMenuConfig } from '@/composables/useHomeSideMenuConfig'
 import { useSystemSettingsStore } from '@/stores/system-settings'
+import { BRAND_LOGO_URL } from '@/config/branding'
 import CenterMenu from './CenterMenu.vue'
 import BottomMenu from './BottomMenu.vue'
 import HomeSideMenuIcon from './HomeSideMenuIcon.vue'
@@ -92,13 +93,7 @@ const { sideMenuSettings, topItems } = useHomeSideMenuConfig({
 const { publicSystemSettings } = useSystemSettingsStore()
 const router = useRouter()
 
-const resolvedSiteLogoUrl = computed(() => {
-  return String(
-    props.systemSettingsOverride?.siteInfo.siteLogoUrl
-    || publicSystemSettings.value.siteInfo.siteLogoUrl
-    || '',
-  ).trim()
-})
+const resolvedSiteLogoUrl = computed(() => BRAND_LOGO_URL)
 
 const resolvedSiteName = computed(() => {
   return String(

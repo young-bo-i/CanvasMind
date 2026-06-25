@@ -4,8 +4,6 @@ import { readApiData } from './response'
 export interface SystemSiteInfoConfig {
   siteName: string
   siteDescription: string
-  siteLogoUrl: string
-  siteIconUrl: string
   icpText: string
   icpLink: string
   copyrightText: string

@@ -127,10 +127,10 @@
                   v-if="item.isVideo"
                   class="cover-W9HnBB discover-masonry-cover"
                   :src="item.videoUrl"
-                  :poster="item.src || undefined"
+                  :poster="item.src ? buildThumbnailUrl(item.src, 640) : undefined"
                   muted
                   playsinline
-                  preload="metadata"
+                  preload="none"
                   @loadedmetadata="onFeedVideoLoad($event, originalIndex)"
                 ></video>
                 <img
@@ -142,7 +142,7 @@
                   decoding="async"
                   class="cover-W9HnBB discover-masonry-cover"
                   ccfmp-element="true"
-                  :src="item.src"
+                  :src="buildThumbnailUrl(item.src, 640)"
                   :alt="item.alt"
                   @load="onFeedImgLoad($event, originalIndex)"
                   @error="onFeedImgError(originalIndex)"
@@ -163,7 +163,8 @@
                     <img
                       :src="item.user.avatarSrc"
                       class="dreamina-component-avatar discover-feed-avatar"
-
+                      loading="lazy"
+                      decoding="async"
                       draggable="false"
                       :alt="item.user.name"
                     >
@@ -220,7 +221,7 @@ import {
 } from '@/components/home/discoverMasonryLayout'
 import { listAssetItems } from '@/api/asset-items'
 import { AUTH_LOGIN_SUCCESS_EVENT, useAuthStore } from '@/stores/auth'
-import { buildAssetUrl } from '@/api/http'
+import { buildAssetUrl, buildThumbnailUrl } from '@/api/http'
 import discoverContent from '@/data/homeDiscoverContent.json'
 
 const emit = defineEmits(['open-work-detail'])

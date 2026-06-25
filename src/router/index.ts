@@ -253,22 +253,60 @@ const router = createRouter({
   routes,
 })
 
+// 性能(P1-5)：缓存“系统已初始化”标志。返回访客冷加载时据此乐观放行，
+// 不再 await 后端 getSystemInitStatus 往返才允许首帧渲染（首帧少一个 RTT，通常 100-500ms）。
+const SYSTEM_INITIALIZED_FLAG_KEY = 'canvasmind_system_initialized'
+const readCachedInitialized = () => {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(SYSTEM_INITIALIZED_FLAG_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const writeCachedInitialized = (value: boolean) => {
+  try {
+    if (typeof localStorage === 'undefined') return
+    if (value) localStorage.setItem(SYSTEM_INITIALIZED_FLAG_KEY, '1')
+    else localStorage.removeItem(SYSTEM_INITIALIZED_FLAG_KEY)
+  } catch {
+    // 忽略隐私模式下 localStorage 不可用。
+  }
+}
+
 // 对需要登录的页面做统一拦截，未登录时回到首页显示登录入口。
 router.beforeEach(async (to) => {
   // 路由切换开启全局进度条
   useLoadingStore().start('route')
 
   const systemInitStore = useSystemInitStore()
-  if (!systemInitStore.systemInitInitialized.value || systemInitStore.systemInitLoading.value) {
-    await systemInitStore.loadStatus()
+  const statusKnown = systemInitStore.systemInitInitialized.value && !systemInitStore.systemInitLoading.value
+  if (!statusKnown) {
+    if (readCachedInitialized()) {
+      // 曾确认已初始化 → 后台拉状态、乐观放行（不阻塞首帧）；若发现实际未初始化则清缓存，下次冷加载会回到等待+跳转。
+      void systemInitStore.loadStatus().then(() => {
+        if (systemInitStore.systemInitInitialized.value && !systemInitStore.isInitialized.value) {
+          writeCachedInitialized(false)
+        }
+      })
+    } else {
+      // 未知 / 从未初始化：必须等状态确定，否则未初始化系统会闪一下首页再跳转。
+      await systemInitStore.loadStatus()
+    }
   }
 
-  if (!systemInitStore.isInitialized.value && to.path !== '/install') {
-    return {
-      path: '/install',
-      query: to.fullPath && to.fullPath !== '/install'
-        ? { redirect: to.fullPath }
-        : undefined,
+  // 仅在状态已确定时才据此重定向；乐观放行且状态尚未回来时跳过(此次按已初始化处理，后续导航会纠正)。
+  const statusResolved = systemInitStore.systemInitInitialized.value && !systemInitStore.systemInitLoading.value
+  if (statusResolved) {
+    if (!systemInitStore.isInitialized.value && to.path !== '/install') {
+      return {
+        path: '/install',
+        query: to.fullPath && to.fullPath !== '/install'
+          ? { redirect: to.fullPath }
+          : undefined,
+      }
+    }
+    if (systemInitStore.isInitialized.value) {
+      writeCachedInitialized(true)
     }
   }
 

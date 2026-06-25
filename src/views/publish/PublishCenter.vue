@@ -1348,7 +1348,7 @@ onMounted(async () => {
   border-radius: var(--lv-border-radius-large);
   cursor: pointer;
   transition: all 0.1s linear;
-  will-change: transform, background-color;
+  will-change: transform;
 }
 
 .video-upload-placeholder:hover {
@@ -1388,7 +1388,7 @@ onMounted(async () => {
   border-radius: var(--lv-border-radius-large);
   cursor: pointer;
   transition: all 0.1s linear;
-  will-change: transform, background-color;
+  will-change: transform;
 }
 
 .upload-dropzone:hover {

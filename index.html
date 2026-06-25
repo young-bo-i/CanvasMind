@@ -2,11 +2,15 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/brand-favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0c0c0c" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="CanvasMind - AI-powered infinite canvas for image generation and creative collaboration" />
+    <!-- 性能：预加载首屏可见的关键字体（拉丁/数字 + 品牌标题字），让其与 CSS/JS 并行下载、更早完成 swap，减少回退字闪烁。
+         crossorigin 必填（字体始终 CORS 拉取），否则预加载与实际请求不匹配会重复下载。 -->
+    <link rel="preload" as="font" type="font/ttf" href="/fonts/Montserrat-Regular.20250416.subset.ttf" crossorigin />
+    <link rel="preload" as="font" type="font/ttf" href="/fonts/FZYASHJW-Demibold.20251015.subset.ttf" crossorigin />
     <title>CanvasMind</title>
   </head>
   <body lv-theme="light" lv-theme-version="2.0">

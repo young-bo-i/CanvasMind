@@ -430,7 +430,8 @@
   position: relative;
   width: 100%;
   -webkit-overflow-scrolling: touch;
-  will-change: transform;
+  /* 性能(P2-7)：删除永久 will-change。该容器从不做 transform 动画，永久声明会按整列高度
+     分配 GPU backing store(可达十几 MB)、零收益。 */
 }
 
 .masonry-layout-scroll-content-_Gm3oO {
@@ -457,6 +458,9 @@
 .account-masonry-item {
   height: 325px;
   position: absolute;
+  /* 性能(P2-6)：离屏 tile 跳过布局/绘制；高度固定 325px，content-visibility 安全。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 325px;
 }
 
 .feed-item-WyLpPh {
@@ -634,7 +638,7 @@
 
 .cover-container-d6w2vX .cover-Qo4B2U {
   transition: transform .2s cubic-bezier(.4, .95, .6, 1.1);
-  will-change: transform;
+  /* 性能(P2-7)：去掉永久 will-change（每张封面常驻合成层）。transition:transform 在 hover 时即会按需合成。 */
 }
 
 .cover-container-d6w2vX:hover .cover-Qo4B2U {

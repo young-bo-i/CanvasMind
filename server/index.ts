@@ -2,7 +2,9 @@ import { createServer } from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import zlib from 'node:zlib'
+import crypto from 'node:crypto'
 import { promisify } from 'node:util'
+import sharp from 'sharp'
 import { AI_GATEWAY_MATCH_PATHS } from './ai-gateway/constants'
 import { handleAiGatewayRequest } from './ai-gateway/request-handler'
 import { isAuthPath } from './auth/constants'
@@ -166,16 +168,100 @@ const handleUploadsRequest = async (req: any, res: any, requestPath: string) => 
     return false
   }
 
-  // 读取文件并返回。
-  const fileBuffer = await fs.readFile(filePath)
-  res.statusCode = 200
-  res.setHeader('Content-Type', getContentTypeByFilePath(filePath))
-  // 安全：用户上传内容同源回显，禁止 MIME 嗅探；并用 CSP sandbox 阻断直接访问
-  // SVG/HTML 时的脚本执行(存储型 XSS)，但不影响 <img> 内联渲染。
+  const stat = await fs.stat(filePath)
+
+  // 性能(P0 缩略图管线 + P2-9 缓存)：
+  // - ?w=<宽> 时按需把图片缩放成 webp 缩略图并落盘缓存，按需供给媒体网格(原图常是 4K，几 MB)，
+  //   单图传输/解码可降 ~90%+。仅对位图(png/jpg/webp/avif)生效；gif/svg/视频维持原文件。
+  // - 始终下发 Cache-Control(immutable，内容按 timestamp+uuid 寻址近乎不可变) + ETag + 304，
+  //   让回访/重开弹窗/翻回不再重下原图。
+  const requestedWidth = readUploadsWidthParam(req)
+  const wantThumb = requestedWidth > 0 && isResizableImagePath(filePath)
+  const targetWidth = wantThumb ? snapThumbnailWidth(requestedWidth) : 0
+
+  const etag = `"${crypto.createHash('sha1').update(`${relativePath}:${stat.mtimeMs}:${stat.size}:w${targetWidth}`).digest('hex').slice(0, 24)}"`
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+  res.setHeader('ETag', etag)
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox; img-src 'self' data:; style-src 'unsafe-inline'")
-  res.end(fileBuffer)
+  if (req.headers['if-none-match'] === etag) {
+    res.statusCode = 304
+    res.end()
+    return true
+  }
+
+  let body: Buffer
+  let contentType = getContentTypeByFilePath(filePath)
+  if (targetWidth > 0) {
+    const thumb = await readOrCreateThumbnail(filePath, relativePath, stat.mtimeMs, targetWidth, uploadsDir)
+    if (thumb) {
+      body = thumb
+      contentType = 'image/webp'
+    } else {
+      body = await fs.readFile(filePath) // 解码失败兜底原图
+    }
+  } else {
+    body = await fs.readFile(filePath)
+  }
+
+  res.statusCode = 200
+  res.setHeader('Content-Type', contentType)
+  res.end(body)
   return true
+}
+
+// 允许的缩略图宽度白名单：限制磁盘缓存条目数，防止 ?w= 任意取值刷爆缓存盘。
+const THUMBNAIL_WIDTH_STEPS = [320, 640, 960, 1280]
+const snapThumbnailWidth = (width: number) => {
+  for (const step of THUMBNAIL_WIDTH_STEPS) {
+    if (width <= step) return step
+  }
+  return THUMBNAIL_WIDTH_STEPS[THUMBNAIL_WIDTH_STEPS.length - 1]
+}
+
+const isResizableImagePath = (filePath: string) => /\.(png|jpe?g|webp|avif)$/i.test(filePath)
+
+const readUploadsWidthParam = (req: any) => {
+  try {
+    const value = new URL(String(req.url || ''), 'http://localhost').searchParams.get('w')
+    const width = Number(value || 0)
+    return Number.isFinite(width) && width > 0 ? Math.floor(width) : 0
+  } catch {
+    return 0
+  }
+}
+
+// 读取/生成 webp 缩略图（磁盘缓存，按 源路径+mtime+宽度 寻址；源更新后 mtime 变化自动失效）。
+const readOrCreateThumbnail = async (
+  filePath: string,
+  relativePath: string,
+  mtimeMs: number,
+  width: number,
+  uploadsDir: string,
+): Promise<Buffer | null> => {
+  const cacheDir = path.join(uploadsDir, '.thumb-cache')
+  const cacheKey = crypto.createHash('sha1').update(`${relativePath}:${mtimeMs}:w${width}`).digest('hex')
+  const cachePath = path.join(cacheDir, `${cacheKey}.webp`)
+  if (await isFileExists(cachePath)) {
+    try {
+      return await fs.readFile(cachePath)
+    } catch {
+      // 缓存读失败则重新生成。
+    }
+  }
+  try {
+    const source = await fs.readFile(filePath)
+    const output = await sharp(source)
+      .rotate() // 依据 EXIF 方向自动旋正
+      .resize(width, null, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 72 })
+      .toBuffer()
+    await fs.mkdir(cacheDir, { recursive: true })
+    await fs.writeFile(cachePath, output).catch(() => {})
+    return output
+  } catch {
+    return null // 非图片/解码失败 → 调用方回退原图
+  }
 }
 
 // 根据文件后缀推导响应类型。

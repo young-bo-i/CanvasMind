@@ -5,7 +5,7 @@
         <div class="admin-card__header">
           <div>
             <h4 class="admin-card__title">品牌基础</h4>
-            <div class="admin-card__desc">配置站点名称、描述、Logo 与图标，统一前后台品牌感知。</div>
+            <div class="admin-card__desc">配置站点名称与描述。Logo 与图标已固定，无需在此设置。</div>
           </div>
         </div>
         <div class="admin-card__content">
@@ -14,17 +14,9 @@
               <label class="admin-form__label" for="system-site-name">站点名称</label>
               <input id="system-site-name" v-model.trim="form.siteInfo.siteName" class="admin-input" type="text" placeholder="例如：Canana AI">
             </div>
-            <div class="admin-form__field">
-              <label class="admin-form__label" for="system-site-icon">站点图标</label>
-              <input id="system-site-icon" v-model.trim="form.siteInfo.siteIconUrl" class="admin-input" type="text" placeholder="favicon 地址">
-            </div>
             <div class="admin-form__field admin-form__field--full">
               <label class="admin-form__label" for="system-site-description">站点描述</label>
               <textarea id="system-site-description" v-model.trim="form.siteInfo.siteDescription" class="admin-textarea" placeholder="站点简介、SEO 描述或首页说明"></textarea>
-            </div>
-            <div class="admin-form__field admin-form__field--full">
-              <label class="admin-form__label" for="system-site-logo">站点 Logo</label>
-              <input id="system-site-logo" v-model.trim="form.siteInfo.siteLogoUrl" class="admin-input" type="text" placeholder="Logo 图片地址">
             </div>
           </div>
         </div>

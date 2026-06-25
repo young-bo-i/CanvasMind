@@ -164,7 +164,7 @@
                               <div class="container-pm3">
                                 <!-- 性能(P0-1)：loading=lazy 使离屏图片不下载/不解码，decoding=async 让解码不阻塞主线程。
                                      tile 已有 aspect-ratio:1/1 占位，无布局抖动。 -->
-                                <img class="image-w9g" :src="image.src" :alt="image.id" loading="lazy" decoding="async">
+                                <img class="image-w9g" :src="buildThumbnailUrl(image.src, 640)" :alt="image.id" loading="lazy" decoding="async">
                               </div>
                             </div>
                             <div v-if="isBatchMode" class="select-av5">
@@ -199,6 +199,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { buildThumbnailUrl } from '@/api/http'
 import type { FilterOption, ImageFilterType, ImageGroup } from '@/views/asset/types'
 
 const props = withDefaults(defineProps<{

@@ -65,7 +65,6 @@
     transition-duration: .2s;
     transition-property: width;
     transition-timing-function: ease-out;
-    will-change: width
 }
 
 .platform-ui-service-side-drawer-container.normal-mode:not(.visible) {
@@ -3411,7 +3410,7 @@ div.normal-button-mS74ha {
     max-width: 100%;
     transition: margin-top var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), opacity var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
     width: 100%;
-    will-change: margin-top, opacity, transform
+    will-change: opacity, transform;
 }
 
 .toolbar-settings-YNMCja {
@@ -3460,7 +3459,6 @@ div.normal-button-mS74ha {
     max-width: 100%;
     position: relative;
     transition: height var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: height
 }
 
 .reference-item-aI97LK {
@@ -3491,7 +3489,7 @@ div.normal-button-mS74ha {
     top: 4px;
     transition: width .3s cubic-bezier(.4, 0, .2, 1), height .3s cubic-bezier(.4, 0, .2, 1), opacity .3s cubic-bezier(.4, 0, .2, 1), transform .3s cubic-bezier(.4, 0, .2, 1);
     width: 48px;
-    will-change: width, height, opacity, transform
+    will-change: opacity, transform;
 }
 
 .reference-group-hover-trigger-YTDCQf {
@@ -3561,7 +3559,7 @@ div.normal-button-mS74ha {
     padding: 0 4px 0 0;
     scrollbar-width: auto;
     transition: height var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), --scrollbar-background-color .1s linear;
-    will-change: height, transform
+    will-change: transform;
 }
 
 .textarea-rfj34A.lv-textarea:focus, .textarea-rfj34A.lv-textarea:hover {
@@ -3722,7 +3720,7 @@ div.normal-button-mS74ha {
     display: flex;
     justify-content: center;
     transition: max-width var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), height var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), box-shadow var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), opacity var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function), transform var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: max-width, height, box-shadow, opacity, transform
+    will-change: opacity, transform;
 }
 
 @keyframes enable-visibility-hidden-kIvR_L {
@@ -3758,7 +3756,6 @@ div.normal-button-mS74ha {
 .task-indicator-container-flqXza {
     bottom: calc(var(--content-generator-height) + 28px);
     transition: max-width var(--content-generator-collapse-transition-duration) var(--content-generator-collapse-transition-timing-function);
-    will-change: max-width;
     z-index: 10
 }
 
@@ -3868,7 +3865,7 @@ div.normal-button-mS74ha {
     text-align: center;
     transition: margin .3s cubic-bezier(.4, 0, .2, 1), color .3s cubic-bezier(.4, 0, .2, 1), opacity .3s cubic-bezier(.4, 0, .2, 1), transform .3s cubic-bezier(.4, 0, .2, 1);
     white-space: nowrap;
-    will-change: width, height, margin, opacity, transform
+    will-change: opacity, transform;
 }
 
 /* 视频首尾帧交换按钮样式 */

@@ -106,7 +106,7 @@
                     @click="openImagePreview(item)"
                   >
                     <img
-                      :src="resolveAssetPreviewUrl(item)"
+                      :src="buildThumbnailUrl(resolveAssetPreviewUrl(item), 640)"
                       :alt="item.title || '资源预览'"
                       class="admin-asset-card__image"
                       loading="lazy"
@@ -228,6 +228,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { buildThumbnailUrl } from '@/api/http'
 import AdminFilterChips, { type AdminFilterChipGroup } from '@/components/admin/common/AdminFilterChips.vue'
 import AdminFilterToolbar from '@/components/admin/common/AdminFilterToolbar.vue'
 import AdminPagination from '@/components/admin/common/AdminPagination.vue'

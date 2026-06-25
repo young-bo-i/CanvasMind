@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { listAssetItems, type PersistedAssetItem } from '@/api/asset-items'
-import { buildAssetUrl } from '@/api/http'
+import { buildAssetUrl, buildThumbnailUrl } from '@/api/http'
 import type { VideoGroup, VideoItem } from '@/views/asset/types'
 
 const formatGroupDate = (value: string | Date) => {
@@ -38,7 +38,7 @@ const buildVideoGroupsFromAssets = (items: PersistedAssetItem[]) => buildVideoGr
     // 与首页一致:src 带 #t=0.1 媒体片段,让浏览器在无封面时也原生渲染首帧作为预览(纯 JS seek 在生产/无 Range 时不可靠)。
     src: item.fileUrl ? `${buildAssetUrl(item.fileUrl)}#t=0.1` : '',
     // 海报只用真实封面/缩略图;没有就留空(绝不用 mp4 当海报,否则黑块)。
-    poster: (item.coverUrl || item.thumbnailUrl) ? buildAssetUrl(item.coverUrl || item.thumbnailUrl) : undefined,
+    poster: (item.coverUrl || item.thumbnailUrl) ? buildThumbnailUrl(buildAssetUrl(item.coverUrl || item.thumbnailUrl), 640) : undefined,
     promptText: item.promptText,
     modelLabel: item.modelLabel || '视频',
     durationLabel: formatDurationLabel(item),

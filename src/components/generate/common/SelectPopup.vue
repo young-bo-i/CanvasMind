@@ -45,12 +45,8 @@ const actualPlacement = ref<'top' | 'bottom'>('top')
 // 预估弹窗高度（用于自动计算方向）
 const ESTIMATED_POPUP_HEIGHT = 200
 
-// 计算最佳弹出方向
-const calculateBestPlacement = (): 'top' | 'bottom' => {
-  if (!props.triggerRef) return 'top'
-
-  const rect = props.triggerRef.getBoundingClientRect()
-
+// 计算最佳弹出方向（复用调用方已取的 rect，避免重复 getBoundingClientRect 触发额外强制布局）
+const calculateBestPlacement = (rect: DOMRect): 'top' | 'bottom' => {
   // 计算上下可用空间
   const spaceAbove = rect.top
   const spaceBelow = window.innerHeight - rect.bottom
@@ -92,37 +88,44 @@ const calculateBestPlacement = (): 'top' | 'bottom' => {
   return 'top'
 }
 
-// 计算弹窗位置
+// 计算弹窗位置（性能 P1-4：隐藏时直接返回，避免关闭状态下也响应全局 scroll 做强制同步布局）
 const updatePopupPosition = () => {
-  if (props.triggerRef) {
-    const rect = props.triggerRef.getBoundingClientRect()
-
-    // 计算最佳弹出方向
-    actualPlacement.value = calculateBestPlacement()
-
-    // 根据弹出方向计算位置
-    if (actualPlacement.value === 'bottom') {
-      // 向下弹出：弹窗显示在触发器下方
-      popupPosition.value = {
-        top: rect.bottom + 8,
-        left: rect.left + rect.width / 2
-      }
-    } else {
-      // 向上弹出：弹窗显示在触发器上方
-      popupPosition.value = {
-        top: rect.top - 8,
-        left: rect.left + rect.width / 2
-      }
-    }
+  if (!props.visible || !props.triggerRef) {
+    return
   }
+  const rect = props.triggerRef.getBoundingClientRect()
+  actualPlacement.value = calculateBestPlacement(rect)
+  popupPosition.value = actualPlacement.value === 'bottom'
+    ? { top: rect.bottom + 8, left: rect.left + rect.width / 2 }
+    : { top: rect.top - 8, left: rect.left + rect.width / 2 }
 }
 
-// 监听弹窗显示状态，更新位置
+// scroll/resize 的重定位用 rAF 合帧，避免每个事件一次强制同步布局。
+let positionRaf: number | null = null
+const schedulePositionUpdate = () => {
+  if (!props.visible || positionRaf !== null) {
+    return
+  }
+  positionRaf = requestAnimationFrame(() => {
+    positionRaf = null
+    updatePopupPosition()
+  })
+}
+
+// 性能(P1-4)：scroll(capture)/resize 监听只在弹窗打开时挂载、关闭即卸载，
+// 避免每个 SelectPopup 实例(一页约 12 个)在关闭态也对每次滚动做 getBoundingClientRect。
 watch(() => props.visible, (newVal) => {
   if (newVal) {
-    nextTick(() => {
-      updatePopupPosition()
-    })
+    nextTick(() => updatePopupPosition())
+    window.addEventListener('resize', schedulePositionUpdate)
+    window.addEventListener('scroll', schedulePositionUpdate, true)
+  } else {
+    window.removeEventListener('resize', schedulePositionUpdate)
+    window.removeEventListener('scroll', schedulePositionUpdate, true)
+    if (positionRaf !== null) {
+      cancelAnimationFrame(positionRaf)
+      positionRaf = null
+    }
   }
 })
 
@@ -138,18 +141,20 @@ const handleClickOutside = (e: MouseEvent) => {
   }
 }
 
-// 挂载时添加全局事件监听
+// 挂载时只挂 click(点击外部关闭，廉价且自带 visible 守卫)；scroll/resize 改由 watch(visible) 按需挂载。
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
-  window.addEventListener('resize', updatePopupPosition)
-  window.addEventListener('scroll', updatePopupPosition, true)
 })
 
-// 卸载时移除事件监听
+// 卸载时移除全部监听 + 取消未决 rAF。
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('resize', updatePopupPosition)
-  window.removeEventListener('scroll', updatePopupPosition, true)
+  window.removeEventListener('resize', schedulePositionUpdate)
+  window.removeEventListener('scroll', schedulePositionUpdate, true)
+  if (positionRaf !== null) {
+    cancelAnimationFrame(positionRaf)
+    positionRaf = null
+  }
 })
 </script>
 

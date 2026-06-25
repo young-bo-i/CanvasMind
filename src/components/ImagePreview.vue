@@ -214,9 +214,8 @@
                 :class="{ 'selected-_OYWHD': index === internalIndex }"
                 @click="internalIndex = index"
               >
-                <!-- 性能(P0-4)：缩略条 loading=lazy 使非可见缩略图不下载/不解码，decoding=async 不阻塞主线程。
-                     原先打开灯箱即并发挂载整库(最多120张)4K 原图缩略图，瞬时冻结数百ms~秒。 -->
-                <img :src="image.src" :alt="image.id" loading="lazy" decoding="async">
+                <!-- 性能(P0-4 + 缩略图管线)：缩略条用 ?w=320 小图(后端按需 webp) + lazy/decoding；主图仍用原图。 -->
+                <img :src="buildThumbnailUrl(image.src, 320)" :alt="image.id" loading="lazy" decoding="async">
               </div>
             </div>
           </div>
@@ -494,6 +493,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { buildThumbnailUrl } from '@/api/http'
 
 interface ImageItem {
   id: string

@@ -182,7 +182,8 @@
                               <div class="user-avatar"><img
                                   :src="resolvedAuthorAvatarSrc"
                                   class="avatar-image"
-
+                                  loading="lazy"
+                                  decoding="async"
                                   :alt="authorName"
                                   :style="authorAvatarSrc ? undefined : fallbackAvatarStyle">
                               </div>

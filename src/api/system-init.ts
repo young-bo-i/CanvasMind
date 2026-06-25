@@ -18,8 +18,6 @@ export interface SystemInitPayload {
   email: string
   siteName: string
   siteDescription: string
-  siteLogoUrl: string
-  siteIconUrl: string
 }
 
 export interface SystemInitResult {

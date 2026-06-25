@@ -3,8 +3,9 @@
 // 包含自动（生成偏好）、灵感搜索、创意设计三个功能按钮
 // 支持弹出方向设置和纯图标模式
 
-import { ref, computed, watch, onMounted } from 'vue'
-import PreferencePanel from '../common/PreferencePanel.vue'
+import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
+// 性能(P1-2)：PreferencePanel(871 行)由 v-if="showAutoAction" 门控、默认不渲染 → 异步懒加载。
+const PreferencePanel = defineAsyncComponent(() => import('../common/PreferencePanel.vue'))
 import SelectPopup from '../common/SelectPopup.vue'
 import { getAllChatModels, getDefaultChatModelKey, loadPublicModelCatalog } from '@/config/models'
 import { listEnabledAgentSkills, loadPublicSkillCatalog } from '@/config/agentSkills'

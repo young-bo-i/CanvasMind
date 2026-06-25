@@ -84,8 +84,6 @@ const createDefaultSystemConfig = () => ({
   siteInfo: {
     siteName: 'Canana',
     siteDescription: '',
-    siteLogoUrl: '',
-    siteIconUrl: '',
     icpText: '',
     icpLink: '',
     copyrightText: '',
@@ -620,8 +618,6 @@ const normalizeSystemConfig = (input?: SystemConfigPayload | null) => {
     siteInfo: {
       siteName: String(siteInfo.siteName || defaults.siteInfo.siteName).trim(),
       siteDescription: String(siteInfo.siteDescription || '').trim(),
-      siteLogoUrl: String(siteInfo.siteLogoUrl || '').trim(),
-      siteIconUrl: String(siteInfo.siteIconUrl || '').trim(),
       icpText: String(siteInfo.icpText || '').trim(),
       icpLink: String(siteInfo.icpLink || '').trim(),
       copyrightText: String(siteInfo.copyrightText || '').trim(),

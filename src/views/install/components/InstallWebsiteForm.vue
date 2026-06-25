@@ -25,71 +25,10 @@
           />
         </el-form-item>
 
-        <el-collapse class="install-form-collapse">
-          <el-collapse-item name="brand-assets">
-            <template #title>
-              <div class="flex items-center gap-2">
-                <span class="text-sm font-medium text-[var(--text-primary)]">品牌素材</span>
-                <span class="text-xs text-[var(--text-tertiary)]">Logo / Icon</span>
-              </div>
-            </template>
-
-            <div class="grid grid-cols-2 gap-4 pt-2 max-md:grid-cols-1">
-              <div>
-                <div class="mb-2 text-sm text-[var(--text-secondary)]">网站 Logo</div>
-                <button
-                  class="install-upload-tile"
-                  type="button"
-                  :disabled="uploadingLogo"
-                  @click="$emit('pick-logo')"
-                >
-                  <img
-                    v-if="form.siteLogoUrl"
-                    :src="form.siteLogoUrl"
-                    alt="网站 Logo"
-                    class="h-full w-full object-cover"
-                  >
-                  <div v-else class="flex flex-col items-center gap-2 text-sm text-[var(--text-secondary)]">
-                    <span class="text-3xl leading-none text-[var(--brand-main-default)]">+</span>
-                    <span>{{ uploadingLogo ? '上传中...' : '点击上传 Logo' }}</span>
-                  </div>
-                </button>
-              </div>
-
-              <div>
-                <div class="mb-2 text-sm text-[var(--text-secondary)]">网站图标</div>
-                <button
-                  class="install-upload-tile"
-                  type="button"
-                  :disabled="uploadingIcon"
-                  @click="$emit('pick-icon')"
-                >
-                  <img
-                    v-if="form.siteIconUrl"
-                    :src="form.siteIconUrl"
-                    alt="网站图标"
-                    class="h-full w-full object-contain p-6"
-                  >
-                  <div v-else class="flex flex-col items-center gap-2 text-sm text-[var(--text-secondary)]">
-                    <span class="text-3xl leading-none text-[var(--brand-main-default)]">+</span>
-                    <span>{{ uploadingIcon ? '上传中...' : '点击上传图标' }}</span>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </el-collapse-item>
-        </el-collapse>
       </el-form>
 
       <div class="install-brand-preview">
-        <img
-          v-if="form.siteLogoUrl"
-          :src="form.siteLogoUrl"
-          alt="站点 Logo"
-          class="size-11 rounded-xl object-cover"
-        >
         <div
-          v-else
           class="flex size-11 items-center justify-center rounded-xl bg-[var(--brand-main-block-default)] text-lg font-bold text-[var(--text-primary)]"
         >
           {{ brandInitial }}
@@ -109,8 +48,6 @@
 export interface InstallWebsiteFormModel {
   siteName: string
   siteDescription: string
-  siteLogoUrl: string
-  siteIconUrl: string
 }
 
 defineProps<{
@@ -118,14 +55,10 @@ defineProps<{
   siteName: string
   brandInitial: string
   siteNameError: string
-  uploadingLogo: boolean
-  uploadingIcon: boolean
 }>()
 
 const emit = defineEmits<{
   'update-field': [field: keyof InstallWebsiteFormModel, value: string]
-  'pick-logo': []
-  'pick-icon': []
 }>()
 
 const updateField = (field: keyof InstallWebsiteFormModel, value: string | number) => {
