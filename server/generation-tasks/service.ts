@@ -291,27 +291,18 @@ const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: 
   await executeVideoTask(task, payload, videoContext)
 }
 
+// 产品策略：请求即扣费，生成失败/停止/超时一律【不自动退款】（图片、视频同）。
+// 保留函数签名以兼容调用点(handleFailed/handleStopped)，但只记日志、不退款。
+// 注：管理员仍可在营销后台手动补偿(refundGenerationPoints 原语未动)。
 const refundTaskPointsIfNeeded = async (task: RunningGenerationTask, reason: string) => {
   if (!task.billedPointCost || task.refundCommitted) {
     return
   }
-
-  task.refundCommitted = true
-  await refundGenerationPoints({
+  logGenerationTask('task_refund:disabled_by_policy', {
+    recordId: task.recordId,
     userId: task.userId,
-    pointCost: task.billedPointCost,
-    sourceId: task.associationNo,
-    associationNo: task.associationNo,
-    endpointType: task.billedEndpointType,
-    providerId: task.billedProviderId,
-    modelKey: task.billedModelKey,
-    modelName: task.billedModelName,
-    // DB 级幂等：同一任务退款至多一次（跨重启/恢复/孤儿 reap 都安全）。
-    dedupeKey: `gen-refund:${task.associationNo}`,
-    metaJson: {
-      refundReason: reason,
-      generationRecordId: task.recordId,
-    },
+    reason,
+    billedPointCost: task.billedPointCost,
   })
 }
 
@@ -482,23 +473,9 @@ const buildResumePayload = (rec: ResumeRecordRow, videoTask: SavedVideoTask): Ge
   requestBody: { providerId: videoTask.providerId },
 })
 
-// 回收不可续询的任务（未提交孤儿 / 续询超限 / image 孤儿）：退款一次（DB dedupeKey 幂等）+ 记录置失败。
+// 回收不可续询的任务（未提交孤儿 / 续询超限 / image 孤儿）：仅置失败。
+// 产品策略：请求即扣费、不自动退款，故重启回收也不退款（管理员可后台手动补偿）。
 const reapAbandonedTask = async (recordId: string, userId: string, reason: string) => {
-  const consume = await findConsumeByRecordId(recordId)
-  if (consume?.associationNo && consume.pointCost > 0) {
-    await refundGenerationPoints({
-      userId: consume.userId || userId,
-      pointCost: consume.pointCost,
-      sourceId: consume.associationNo,
-      associationNo: consume.associationNo,
-      endpointType: consume.endpointType,
-      providerId: consume.providerId,
-      modelKey: consume.modelKey,
-      modelName: consume.modelName,
-      dedupeKey: `gen-refund:${consume.associationNo}`,
-      metaJson: { refundReason: reason, generationRecordId: recordId },
-    })
-  }
   await markGenerationRecordFailed(recordId, userId, reason)
 }
 

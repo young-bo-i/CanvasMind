@@ -760,6 +760,8 @@ export const settleChatPointsByUsage = async (input: {
     ...real.breakdown,
   }
 
+  // 产品策略：不自动退款。按 token 计费(gpt-image-2)只做「少扣补扣」(delta>0)，
+  // 不做「多扣退差」(delta<0)——即预扣保底价即为下限，实际用量更高才补差。
   if (delta > 0) {
     await consumeGenerationPoints({
       userId: input.userId,
@@ -774,21 +776,6 @@ export const settleChatPointsByUsage = async (input: {
       remark: endpointType === 'image' ? '图片生成结算补扣' : '对话结算补扣',
       // 幂等：同一任务的结算补扣至多一次，避免重复结束/重投导致重复扣费。
       dedupeKey: `gen-settle-consume:${input.associationNo}`,
-      metaJson,
-    })
-  } else if (delta < 0) {
-    await refundGenerationPoints({
-      userId: input.userId,
-      pointCost: -delta,
-      sourceId: input.sourceId,
-      associationNo: input.associationNo,
-      endpointType,
-      providerId,
-      modelKey,
-      modelName: input.modelName,
-      remark: endpointType === 'image' ? '图片生成结算退差' : '对话结算退差',
-      // 幂等：同一任务的结算退差至多一次，避免重复结束/重投导致重复退差。
-      dedupeKey: `gen-settle-refund:${input.associationNo}`,
       metaJson,
     })
   }
