@@ -189,10 +189,10 @@ const CHENGMENG: BuiltinVendor = {
       defaultParams: {
         videoProtocol: 'chengmeng-async',
         groupId: '18',
-        // 参考素材上限（9图-满血：9图；视频/音频规格未在文档明示，暂按 3视频/1音频 保守设，待确认）。
+        // 参考素材上限（9图-满血：9图 / 3视频 / 3音频）。
         maxImages: 9,
         maxVideos: 3,
-        maxAudios: 1,
+        maxAudios: 3,
         videoFeatures: ['omni-reference'],
         membershipLevels: [],
         billingRule: {
