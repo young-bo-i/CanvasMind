@@ -154,101 +154,139 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="admin-vendor-settings" v-loading="loading">
-    <div class="page-head">
-      <h2>厂商密钥 / 定价</h2>
-      <p class="hint">图片走 CometAPI、视频走 chengmeng（厂商与模型已内置）。这里只需填各自的 API Key，并按需调价。价格默认按成本 60% 加价（1 积分 = 1 元）。</p>
+  <div class="avs" :aria-busy="loading">
+    <div class="avs-head">
+      <h2 class="avs-title">厂商密钥 / 定价</h2>
+      <p class="avs-desc">图片走 CometAPI、视频走 chengmeng（厂商与模型已内置）。这里只需填各自的 API Key，并按需调价。价格默认按成本 60% 加价（1 积分 = 1 元）。</p>
     </div>
 
-    <!-- 超管：选择要配置哪个管理员的作用域（全局 = 超管/平台直属；其余为各普通管理员，其名下用户走该管理员的 key）。 -->
-    <div v-if="isSuperAdmin && scopeOptions.length" class="scope-row">
-      <span class="scope-label">配置作用域</span>
-      <el-select v-model="selectedScope" class="scope-select" @change="onScopeChange">
-        <el-option v-for="opt in scopeOptions" :key="opt.value" :value="opt.value" :label="opt.label" />
-      </el-select>
-      <span class="scope-tip">超管可分别为每个管理员配置其密钥与定价；该管理员名下所有用户（含其本人）都走这套。</span>
+    <!-- 超管：选择配置哪个管理员的作用域（全局 = 超管/平台直属；其余为各普通管理员，其名下用户走该管理员的 key）。 -->
+    <div v-if="isSuperAdmin && scopeOptions.length" class="admin-card avs-scope">
+      <div class="admin-card__content avs-scope-inner">
+        <span class="avs-scope-label">配置作用域</span>
+        <select class="admin-input avs-scope-select" v-model="selectedScope" @change="onScopeChange">
+          <option v-for="opt in scopeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <span class="avs-scope-tip">超管可分别为每个管理员配置其密钥与定价；该管理员名下所有用户（含其本人）都走这套。</span>
+      </div>
     </div>
 
-    <el-card v-for="vendor in vendors" :key="vendor.vendorCode" class="vendor-card" shadow="never">
-      <div class="vendor-head">
-        <div class="vendor-title">
-          <span class="vendor-name">{{ vendor.name }}</span>
-          <span class="vendor-base">{{ vendor.baseUrl }}</span>
-          <el-tag v-for="t in vendor.supportedTypes" :key="t" size="small" class="type-tag">{{ t === 'IMAGE' ? '图片' : t === 'VIDEO' ? '视频' : t }}</el-tag>
+    <section v-for="vendor in vendors" :key="vendor.vendorCode" class="admin-card avs-vendor">
+      <div class="admin-card__header avs-vendor-head">
+        <div class="avs-vendor-title">
+          <span class="admin-card__title">{{ vendor.name }}</span>
+          <span class="avs-vendor-base">{{ vendor.baseUrl }}</span>
+          <span v-for="t in vendor.supportedTypes" :key="t" class="avs-type-tag">{{ t === 'IMAGE' ? '图片' : t === 'VIDEO' ? '视频' : t }}</span>
         </div>
-        <el-switch v-model="vendor.isEnabled" active-text="启用" inline-prompt />
+        <label class="admin-switch">
+          <input type="checkbox" v-model="vendor.isEnabled">
+          <span class="admin-switch__slider"></span>
+        </label>
       </div>
 
-      <div class="key-row">
-        <span class="key-label">API Key</span>
-        <el-input
-          v-model="vendor.apiKeyInput"
-          type="password"
-          show-password
-          clearable
-          :placeholder="vendor.hasApiKey ? `已配置（${vendor.apiKeyHint}）· 留空则不修改` : '未配置，请填写'"
-          class="key-input"
-        />
-      </div>
+      <div class="admin-card__content">
+        <div class="avs-key-row">
+          <span class="avs-key-label">API Key</span>
+          <input
+            class="admin-input avs-key-input"
+            type="password"
+            autocomplete="new-password"
+            v-model="vendor.apiKeyInput"
+            :placeholder="vendor.hasApiKey ? `已配置（${vendor.apiKeyHint}）· 留空则不修改` : '未配置，请填写'"
+          >
+        </div>
 
-      <el-table :data="vendor.models" size="small" class="model-table">
-        <el-table-column prop="name" label="模型" min-width="150" />
-        <el-table-column label="类目" width="70">
-          <template #default="{ row }">{{ row.category === 'IMAGE' ? '图片' : '视频' }}</template>
-        </el-table-column>
-        <el-table-column label="计费" width="110">
-          <template #default="{ row }">{{ row.mode }}</template>
-        </el-table-column>
-        <el-table-column label="单价（积分）" min-width="260">
-          <template #default="{ row }">
-            <div class="price-cell">
-              <template v-if="row.isToken">
-                <label>输入/1M</label><el-input-number v-model="row.tokenInput" :min="0" :step="1" :controls="false" size="small" class="pn" />
-                <label>输出/1M</label><el-input-number v-model="row.tokenOutput" :min="0" :step="1" :controls="false" size="small" class="pn" />
-              </template>
-              <template v-else-if="row.resolutionPrices.length">
-                <span v-for="p in row.resolutionPrices" :key="p.key" class="res-price">
-                  <label>{{ p.key }}</label><el-input-number v-model="p.value" :min="0" :step="0.01" :precision="2" :controls="false" size="small" class="pn" />
-                </span>
-              </template>
-              <template v-else>
-                <label>每次</label><el-input-number v-model="row.power" :min="0" :step="0.01" :precision="2" :controls="false" size="small" class="pn" />
-              </template>
+        <div class="avs-table-wrap">
+          <div class="avs-table">
+            <div class="avs-row avs-row--head">
+              <div class="avs-c-name">模型</div>
+              <div class="avs-c-cat">类目</div>
+              <div class="avs-c-mode">计费</div>
+              <div class="avs-c-price">单价（积分）</div>
+              <div class="avs-c-on">启用</div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="启用" width="70">
-          <template #default="{ row }"><el-switch v-model="row.enabled" size="small" /></template>
-        </el-table-column>
-      </el-table>
+            <div v-for="m in vendor.models" :key="m.modelKey" class="avs-row">
+              <div class="avs-c-name">{{ m.name }}</div>
+              <div class="avs-c-cat">{{ m.category === 'IMAGE' ? '图片' : '视频' }}</div>
+              <div class="avs-c-mode"><code class="avs-mode">{{ m.mode }}</code></div>
+              <div class="avs-c-price">
+                <template v-if="m.isToken">
+                  <span class="avs-price-item"><span class="avs-res">输入/1M</span><input class="admin-input avs-num" type="number" min="0" step="0.01" v-model.number="m.tokenInput"></span>
+                  <span class="avs-price-item"><span class="avs-res">输出/1M</span><input class="admin-input avs-num" type="number" min="0" step="0.01" v-model.number="m.tokenOutput"></span>
+                </template>
+                <template v-else-if="m.resolutionPrices.length">
+                  <span v-for="p in m.resolutionPrices" :key="p.key" class="avs-price-item"><span class="avs-res">{{ p.key }}</span><input class="admin-input avs-num" type="number" min="0" step="0.01" v-model.number="p.value"></span>
+                </template>
+                <template v-else>
+                  <span class="avs-price-item"><span class="avs-res">每次</span><input class="admin-input avs-num" type="number" min="0" step="0.01" v-model.number="m.power"></span>
+                </template>
+              </div>
+              <div class="avs-c-on">
+                <label class="admin-switch">
+                  <input type="checkbox" v-model="m.enabled">
+                  <span class="admin-switch__slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
 
-      <div class="vendor-foot">
-        <el-button type="primary" :loading="vendor.saving" @click="save(vendor, originals.find(o => o.vendorCode === vendor.vendorCode))">保存 {{ vendor.name }}</el-button>
+        <div class="avs-foot">
+          <button class="admin-button admin-button--primary" :disabled="vendor.saving" @click="save(vendor, originals.find(o => o.vendorCode === vendor.vendorCode))">
+            {{ vendor.saving ? '保存中…' : `保存 ${vendor.name}` }}
+          </button>
+        </div>
       </div>
-    </el-card>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.admin-vendor-settings { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-.page-head h2 { margin: 0 0 4px; font-size: 18px; }
-.page-head .hint { margin: 0; color: var(--text-secondary, #909399); font-size: 13px; }
-.scope-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; background: var(--background-secondary, #f5f7fa); border-radius: 8px; }
-.scope-label { font-weight: 600; font-size: 14px; }
-.scope-select { min-width: 260px; }
-.scope-tip { color: var(--text-secondary, #909399); font-size: 12px; }
-.vendor-card { border-radius: 10px; }
-.vendor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.vendor-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.vendor-name { font-weight: 600; font-size: 15px; }
-.vendor-base { color: var(--text-secondary, #909399); font-size: 12px; }
-.key-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.key-label { width: 64px; color: var(--text-secondary, #606266); font-size: 13px; }
-.key-input { max-width: 520px; }
-.price-cell { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.price-cell label, .res-price label { font-size: 12px; color: var(--text-secondary, #909399); margin-right: 4px; }
-.res-price { display: inline-flex; align-items: center; }
-.pn { width: 84px; }
-.vendor-foot { margin-top: 12px; display: flex; justify-content: flex-end; }
-.type-tag { margin-left: 2px; }
+.avs { display: flex; flex-direction: column; gap: 16px; }
+.avs-head .avs-title { margin: 0 0 6px; font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.avs-head .avs-desc { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 1.6; }
+
+.avs-scope .avs-scope-inner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.avs-scope-label { font-weight: 600; font-size: 14px; color: var(--text-primary); white-space: nowrap; }
+.avs-scope-select { width: auto; min-width: 260px; min-height: 40px; }
+.avs-scope-tip { color: var(--text-tertiary); font-size: 12px; }
+
+.avs-vendor-head { padding-bottom: 16px; }
+.avs-vendor-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.avs-vendor-base { color: var(--text-tertiary); font-size: 12px; }
+.avs-type-tag {
+  font-size: 12px; color: var(--brand-main-default);
+  border: 1px solid color-mix(in srgb, var(--brand-main-default) 40%, transparent);
+  border-radius: 6px; padding: 1px 8px;
+}
+
+.avs-key-row { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.avs-key-label { width: 64px; color: var(--text-secondary, var(--text-tertiary)); font-size: 13px; font-weight: 600; }
+.avs-key-input { max-width: 560px; }
+
+.avs-table-wrap { overflow-x: auto; }
+.avs-table { display: flex; flex-direction: column; min-width: 640px; }
+.avs-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) 60px 108px minmax(240px, 2fr) 56px;
+  align-items: center; gap: 12px; padding: 12px 4px;
+  border-top: 1px solid var(--line-divider, rgba(255, 255, 255, 0.08));
+}
+.avs-row--head { border-top: none; color: var(--text-tertiary); font-size: 12px; font-weight: 600; }
+.avs-c-name { color: var(--text-primary); font-weight: 500; }
+.avs-c-cat { color: var(--text-secondary, var(--text-tertiary)); font-size: 13px; }
+.avs-mode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  background: var(--bg-block-secondary-default); padding: 2px 7px; border-radius: 6px;
+  color: var(--text-secondary, var(--text-tertiary));
+}
+.avs-c-price { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.avs-price-item { display: inline-flex; align-items: center; gap: 6px; }
+.avs-res {
+  font-size: 12px; font-weight: 600; color: var(--text-primary);
+  background: var(--bg-block-secondary-default); border-radius: 6px;
+  padding: 3px 8px; min-width: 42px; text-align: center; line-height: 1.4;
+}
+.avs-num { width: 94px; min-height: 36px; padding: 0 10px; border-radius: 10px; text-align: right; }
+.avs-foot { margin-top: 18px; display: flex; justify-content: flex-end; }
 </style>

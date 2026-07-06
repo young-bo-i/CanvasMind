@@ -139,7 +139,10 @@ const CHENGMENG: BuiltinVendor = {
       defaultParams: {
         videoProtocol: 'chengmeng-async',
         groupId: '15',
+        // 参考素材上限（真实规格：支持 4图 / 3视频 / 1音频）；执行器与前端据此裁剪。
         maxImages: 4,
+        maxVideos: 3,
+        maxAudios: 1,
         // 新接口按「全能参考」下发，隐藏首尾帧/智能多帧选择。
         videoFeatures: ['omni-reference'],
         membershipLevels: [],
@@ -161,7 +164,10 @@ const CHENGMENG: BuiltinVendor = {
       defaultParams: {
         videoProtocol: 'chengmeng-async',
         groupId: '15',
+        // 参考素材上限（真实规格：支持 4图 / 3视频 / 1音频）。
         maxImages: 4,
+        maxVideos: 3,
+        maxAudios: 1,
         videoFeatures: ['omni-reference'],
         membershipLevels: [],
         // 成本 3.3 元/次 × 1.6 = 5.28 分/次（60% 加价）。
@@ -183,7 +189,10 @@ const CHENGMENG: BuiltinVendor = {
       defaultParams: {
         videoProtocol: 'chengmeng-async',
         groupId: '18',
+        // 参考素材上限（9图-满血：9图；视频/音频规格未在文档明示，暂按 3视频/1音频 保守设，待确认）。
         maxImages: 9,
+        maxVideos: 3,
+        maxAudios: 1,
         videoFeatures: ['omni-reference'],
         membershipLevels: [],
         billingRule: {

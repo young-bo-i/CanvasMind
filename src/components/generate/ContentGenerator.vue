@@ -637,7 +637,7 @@ const applyDraft = async (payload: GeneratorDraftPayload) => {
     } else {
       videoFirstFrameImage.value = ''
       videoLastFrameImage.value = ''
-      videoReferenceImages.value = refs.slice(0, VIDEO_REFERENCE_LIMIT)
+      videoReferenceImages.value = refs.slice(0, currentVideoReferenceLimit())
     }
   } else {
     imageReferenceImages.value = []
@@ -766,6 +766,15 @@ const readCurrentModelBillingRule = (): Record<string, any> => {
 
   const model = getModelByName(currentModelKey) as { defaultParams?: Record<string, any> } | null
   return (model?.defaultParams?.billingRule || {}) as Record<string, any>
+}
+
+// 视频参考素材的合并上限：按当前所选模型的真实规格(图 + 视频 + 音频之和)，未配置则回退全局默认。
+// 后端仍会按类型逐项精确裁剪(maxImages/maxVideos/maxAudios)，这里只防前端一次选超过该模型总量。
+const currentVideoReferenceLimit = () => {
+  const model = getModelByName(videoToolbarRef.value?.currentModelVersion || '') as { defaultParams?: Record<string, any> } | null
+  const dp = model?.defaultParams || {}
+  const sum = Number(dp.maxImages || 0) + Number(dp.maxVideos || 0) + Number(dp.maxAudios || 0)
+  return sum > 0 ? sum : VIDEO_REFERENCE_LIMIT
 }
 
 // 获取价格文本
@@ -1027,7 +1036,7 @@ const applyFilesToSlot = async (rawFiles: File[], slot: ReferenceSlot) => {
     } else if (slot === 'keyframe') {
       videoKeyframeImages.value = [...videoKeyframeImages.value, ...urls].slice(0, VIDEO_KEYFRAME_LIMIT)
     } else if (slot === 'omni') {
-      videoReferenceImages.value = [...videoReferenceImages.value, ...urls].slice(0, VIDEO_REFERENCE_LIMIT)
+      videoReferenceImages.value = [...videoReferenceImages.value, ...urls].slice(0, currentVideoReferenceLimit())
     }
   } finally {
     uploadingSlot.value = ''
@@ -1515,7 +1524,7 @@ onUnmounted(() => {
                     </button>
                   </div>
                 </div>
-                <div v-if="videoReferenceImages.length < VIDEO_REFERENCE_LIMIT"
+                <div v-if="videoReferenceImages.length < currentVideoReferenceLimit()"
                      class="reference-item-aI97LK expanded-fVSy9S" :data-index="videoReferenceImages.length"
                      :style="`--index-in-group:${videoReferenceImages.length};--rotate:8deg`">
                   <div class="reference-upload-h7tmnr light-Bis76t"
