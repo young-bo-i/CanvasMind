@@ -401,11 +401,9 @@ const submitVideoTask = async (
 
   if (protocol === 'chengmeng-async') {
     const submitPath = readStringExtra(extraJson, 'submitPath', '/api/tasks')
-    // group_id 文档为必填：优先 model/provider 配置(extraJson.groupId)，缺失则在提交前报清晰错误。
+    // group_id：新接口文档未在请求体要求（每个模型自带默认分组，省略即用默认）；
+    // 配置了就带上以兼容旧行为。缺失不再报错。
     const groupId = String(readExtra(extraJson, 'groupId') ?? '').trim()
-    if (!groupId) {
-      throw new Error('缺少 chengmeng group_id 配置（model 默认参数 JSON 或厂商 extraJson 的 groupId 必填）')
-    }
     // 比例：限定在文档允许集合内，不匹配则回落默认 16:9，避免 400。
     const allowedRatios = ['1:1', '3:4', '4:3', '9:16', '16:9', '21:9']
     const defaultAspectRatio = readStringExtra(extraJson, 'defaultAspectRatio', '16:9')
@@ -432,8 +430,8 @@ const submitVideoTask = async (
     const defaultResolution = readStringExtra(extraJson, 'resolution', allowedResolutions[0] || '720p').toLowerCase()
     const requestedResolution = params.resolution.trim().toLowerCase()
     const resolution = allowedResolutions.includes(requestedResolution) ? requestedResolution : defaultResolution
-    // 时长：1~15，默认 5。
-    const minDuration = readNumberExtra(extraJson, 'minDuration', 1)
+    // 时长：新接口 4~15，默认 5。
+    const minDuration = readNumberExtra(extraJson, 'minDuration', 4)
     const maxDuration = readNumberExtra(extraJson, 'maxDuration', 15)
     const defaultDuration = readNumberExtra(extraJson, 'defaultDuration', 5)
     const duration = clampNumber(params.durationSeconds || defaultDuration, minDuration, maxDuration)
@@ -441,49 +439,37 @@ const submitVideoTask = async (
     const maxPromptChars = readNumberExtra(extraJson, 'maxPromptChars', 1500)
     const prompt = params.prompt.length > maxPromptChars ? params.prompt.slice(0, maxPromptChars) : params.prompt
 
-    // mode 必填：首尾帧功能 → frames，其余(全能参考/智能多帧) → references。
-    const mode = params.feature === 'first-last-frame' ? 'frames' : 'references'
+    // 新版 chengmeng 接口：aspect_ratio / duration / resolution 提到顶层；
+    // values 只承载 videos / audioUrls；参考图走顶层 images[]。
+    // 首尾帧(mode/first_frame/last_frame)已在新接口移除，统一按「全能参考」下发。
+    const maxImages = readNumberExtra(extraJson, 'maxImages', 9)
+    const maxVideos = readNumberExtra(extraJson, 'maxVideos', 3)
+    const maxAudios = readNumberExtra(extraJson, 'maxAudios', 3)
+    const images: string[] = []
+    const videos: string[] = []
+    const audioUrls: string[] = []
+    for (const url of upstreamRefs) {
+      const kind = detectRefKind(url)
+      if (kind === 'video') videos.push(url)
+      else if (kind === 'audio') audioUrls.push(url)
+      else images.push(url)
+    }
 
-    const values: Record<string, unknown> = {
-      mode,
+    const values: Record<string, unknown> = {}
+    if (videos.length) values.videos = videos.slice(0, maxVideos)
+    if (audioUrls.length) values.audioUrls = audioUrls.slice(0, maxAudios)
+
+    const body: Record<string, unknown> = {
+      model_id: params.modelKey,
+      prompt,
       aspect_ratio: aspectRatio,
       duration,
       resolution,
     }
-    const body: Record<string, unknown> = {
-      model_id: params.modelKey,
-      prompt,
-      values,
-    }
-    body.group_id = groupId
-
-    if (mode === 'frames') {
-      // 首尾帧模式：仅发 values.first_frame / last_frame，禁止 images/videos/audioUrls。
-      // first_frame 文档为必填，缺图时提交前报清晰错误，避免上游返回含糊的 Field required。
-      const frameImages = upstreamRefs.filter(url => detectRefKind(url) === 'image')
-      if (!frameImages[0]) {
-        throw new Error('首尾帧模式需要至少提供首帧图片（first_frame）')
-      }
-      values.first_frame = frameImages[0]
-      if (frameImages[1]) values.last_frame = frameImages[1]
-    } else {
-      // references 模式：按类型拆顶层 images / values.videos / values.audioUrls，按文档限额裁剪。
-      const maxImages = readNumberExtra(extraJson, 'maxImages', 9)
-      const maxVideos = readNumberExtra(extraJson, 'maxVideos', 3)
-      const maxAudios = readNumberExtra(extraJson, 'maxAudios', 3)
-      const images: string[] = []
-      const videos: string[] = []
-      const audioUrls: string[] = []
-      for (const url of upstreamRefs) {
-        const kind = detectRefKind(url)
-        if (kind === 'video') videos.push(url)
-        else if (kind === 'audio') audioUrls.push(url)
-        else images.push(url)
-      }
-      if (images.length) body.images = images.slice(0, maxImages)
-      if (videos.length) values.videos = videos.slice(0, maxVideos)
-      if (audioUrls.length) values.audioUrls = audioUrls.slice(0, maxAudios)
-    }
+    if (images.length) body.images = images.slice(0, maxImages)
+    if (Object.keys(values).length) body.values = values
+    // 模型自带默认分组；配置了 groupId 就带上（新接口省略时用模型默认分组）。
+    if (groupId) body.group_id = groupId
 
     const submitUrl = `${trimmedBase}/${submitPath.replace(/^\/+/, '')}`
     // 记录实际下发的完整请求体(不含 apiKey)，便于对照文档字段定位 mode/aspect_ratio 等问题。
@@ -496,10 +482,9 @@ const submitVideoTask = async (
     context.logGenerationTask('video_task:submit_body', {
       url: submitUrl,
       protocol: 'chengmeng-async',
-      mode,
       refCount: upstreamRefs.length,
       feature: params.feature || '(none)',
-      groupId: groupId || '(missing!)',
+      groupId: groupId || '(default)',
       assetBaseUrl: assetBaseUrl || '(none)',
       isRelativeRef: upstreamRefs.some(url => url.startsWith('/')),
       bodyKeys: Object.keys(body),

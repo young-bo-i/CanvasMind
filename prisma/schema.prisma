@@ -58,6 +58,8 @@ model AppUser {
   ownedUsers         AppUser[]              @relation("AdminOwnedUsers")
   // 我（管理员）配置的 AI 厂商；删除管理员时级联删除其厂商（连同密钥），不残留为全局。
   ownedProviders     AiProvider[]           @relation("AdminOwnedProviders")
+  // 我（管理员）配置的内置厂商密钥/定价；删除管理员时级联删除。
+  vendorSettings     VendorSetting[]        @relation("AdminOwnedVendorSettings")
 
   @@index([ownerAdminId], map: "idx_app_users_owner_admin_id")
   @@map("app_users")
@@ -503,6 +505,30 @@ model ObjectStorageConfig {
   @@index([scene, isDefault], map: "idx_object_storage_configs_scene_default")
   @@index([scene, isEnabled, sortOrder], map: "idx_object_storage_configs_scene_enabled_sort")
   @@map("object_storage_configs")
+}
+
+/// 内置厂商的按管理员配置（密钥 + 定价覆盖）。
+/// 取代原 AiProvider/AiModel：厂商与模型清单写死在 server/vendor/builtin-catalog.ts，
+/// 此表只承载「每个管理员作用域各自的」API 密钥与每模型定价/启停。
+/// ownerAdminId = 归属管理员；NULL = 超管/平台直属的全局桶（沿用 resolveProviderOwnerScope 语义）。
+model VendorSetting {
+  id              String   @id @default(cuid()) @db.VarChar(36)
+  ownerAdminId    String?  @map("owner_admin_id") @db.VarChar(36)
+  vendorCode      String   @map("vendor_code") @db.VarChar(50)
+  apiKeyEncrypted String?  @map("api_key_encrypted") @db.LongText
+  apiKeyHint      String?  @map("api_key_hint") @db.VarChar(64)
+  isEnabled       Boolean  @default(true) @map("is_enabled")
+  // 每模型定价/启停/会员门槛覆盖：{ [modelKey]: { enabled?, billingRule?, membershipLevels? } }。
+  // 缺省回退到 builtin-catalog 的内置默认值。
+  pricingJson     Json?    @map("pricing_json")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  ownerAdmin      AppUser? @relation("AdminOwnedVendorSettings", fields: [ownerAdminId], references: [id], onDelete: Cascade)
+
+  // 同一作用域内每个厂商一行；NULL 全局桶的唯一性由应用层保证（MySQL 复合唯一里 NULL 互不相等）。
+  @@unique([ownerAdminId, vendorCode], map: "uk_vendor_settings_owner_vendor")
+  @@index([ownerAdminId], map: "idx_vendor_settings_owner_admin_id")
+  @@map("vendor_settings")
 }
 
 /// 生成会话表。

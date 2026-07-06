@@ -42,6 +42,8 @@ import { getLocalRunningTaskCount, getTaskStreamSubscriberTotal } from './genera
 import { getReplayStoreStats } from './generation-tasks/task-event-replay'
 import { PROVIDER_CONFIG_MATCH_PATHS } from './provider-config/constants'
 import { handleProviderConfigRequest } from './provider-config/request-handler'
+import { VENDOR_MATCH_PATHS } from './vendor/constants'
+import { handleVendorRequest } from './vendor/request-handler'
 import { isStorageConfigsPath } from './storage-config/constants'
 import { handleStorageConfigRequest } from './storage-config/request-handler'
 import { isStorageUploadPath } from './storage/constants'
@@ -135,6 +137,11 @@ const isAiGatewayPath = (requestPath: string) => {
 const isProviderConfigPath = (requestPath: string) => {
   // runtime 走精确匹配，models 兼容带 id 的子路径。
   return PROVIDER_CONFIG_MATCH_PATHS.some((path) => requestPath === path || requestPath.startsWith(path + '/'))
+}
+
+// 判断当前路径是否命中内置厂商接口（目录 + 后台 key/定价）。
+const isVendorPath = (requestPath: string) => {
+  return VENDOR_MATCH_PATHS.some((path) => requestPath === path || requestPath.startsWith(path + '/'))
 }
 
 // 处理上传目录中的公开文件访问。
@@ -541,6 +548,14 @@ const REQUEST_ROUTE_STRATEGIES: RequestRouteStrategy[] = [
     match: isProviderConfigPath,
     handle: async (req, res) => {
       await handleProviderConfigRequest(req, res)
+      return true
+    },
+  },
+  {
+    key: 'vendor',
+    match: isVendorPath,
+    handle: async (req, res) => {
+      await handleVendorRequest(req, res)
       return true
     },
   },

@@ -2501,6 +2501,10 @@ const handleGenerationTaskStreamEvent = (recordId: string, streamEvent: Generati
     targetRecord.progressStage = 'completed'
     targetRecord.progressMessage = resolveTaskStageLabel('completed', event.message || (isResearchTaskRecord ? '研究报告已完成' : '图片生成完成'))
     targetRecord.progressPercent = 100
+    // 兜底：终态直接落 done，不把「退出 loading」全押在 event.record 是否存在上
+    // （断线重放的精简事件可能不带 record，否则卡片会永久转圈且无终态）。
+    targetRecord.done = true
+    targetRecord.stopped = false
     if (targetRecord.thinkingStartedAt && !targetRecord.thinkingEndedAt) {
       targetRecord.thinkingEndedAt = Date.now()
     }
@@ -2525,6 +2529,9 @@ const handleGenerationTaskStreamEvent = (recordId: string, streamEvent: Generati
     targetRecord.progressStage = 'failed'
     targetRecord.progressMessage = resolveTaskStageLabel('failed', event.message || '任务执行失败')
     targetRecord.progressPercent = 100
+    // 兜底：失败态直接落 done + error，避免 event.record 缺失时卡片永久转圈且不显示错误。
+    targetRecord.done = true
+    if (!targetRecord.error) targetRecord.error = event.message || '任务执行失败'
     if (isImageTaskRecord) {
       stageConversationChanged = upsertRecordStageConversation(
           targetRecord,
@@ -2546,6 +2553,9 @@ const handleGenerationTaskStreamEvent = (recordId: string, streamEvent: Generati
     targetRecord.progressStage = 'stopped'
     targetRecord.progressMessage = resolveTaskStageLabel('stopped', event.message || '任务已停止')
     targetRecord.progressPercent = 100
+    // 兜底：停止态直接落 done + stopped，避免 event.record 缺失时卡片永久转圈。
+    targetRecord.done = true
+    targetRecord.stopped = true
     if (isImageTaskRecord) {
       stageConversationChanged = upsertRecordStageConversation(
           targetRecord,
@@ -3472,6 +3482,7 @@ onUnmounted(() => {
                     :reference-images="record.referenceImages || []"
                     :progress="record.progressPercent || 0"
                     :progress-text="record.progressMessage || ''"
+                    :started-at-ms="record.createdAtMs || 0"
                     :done="record.done"
                     :stopped="Boolean(record.stopped)"
                     :videos="record.videos || []"

@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { safeFetch } from '../shared/safe-fetch'
-import { getPublicModelCatalog, resolveGatewayProviderUpstream, resolveProviderOwnerScope } from '../provider-config/service'
+import { resolveGatewayProviderUpstream } from '../vendor/service'
+import { getPublicModelCatalog, resolveProviderOwnerScope } from '../provider-config/service'
 import { getUploadsDir } from '../storage/service'
 import { buildAgentChatMessages } from '../../src/shared/agent-skills-core'
 import { normalizeGenerationErrorMessage } from '../../src/shared/generation-error'
@@ -82,6 +83,8 @@ type RequestImageGenerationInput = {
   signal: AbortSignal
   providerId: string
   modelKey: string
+  // 请求者 userId：内置厂商按其所属管理员作用域取 key（否则全落全局桶，租户串号）。
+  userId?: string | null
   requestBody: Record<string, unknown>
   onRetry?: (retryState: RetryState) => Promise<void> | void
   fetchWithBurstRateRetry: (input: Omit<FetchWithBurstRateRetryInput, 'logGenerationTask'>) => Promise<Response>
@@ -91,6 +94,7 @@ type RequestImageEditInput = {
   signal: AbortSignal
   providerId: string
   modelKey: string
+  userId?: string | null
   prompt: string
   size?: string
   count?: number
@@ -1001,6 +1005,7 @@ export const requestImageGeneration = async (input: RequestImageGenerationInput)
     providerId: input.providerId,
     endpointType: 'image',
     modelKey: input.modelKey,
+    userId: input.userId,
   })
   const adapter = resolveImageVendorAdapter(input.modelKey, upstream.modelCapabilityJson)
   const body = (input.requestBody || {}) as Record<string, unknown>
@@ -1024,6 +1029,7 @@ export const requestImageEdit = async (input: RequestImageEditInput) => {
     providerId: input.providerId,
     endpointType: 'image-edit',
     modelKey: input.modelKey,
+    userId: input.userId,
   })
   const adapter = resolveImageVendorAdapter(input.modelKey, upstream.modelCapabilityJson)
   return adapter.edit({

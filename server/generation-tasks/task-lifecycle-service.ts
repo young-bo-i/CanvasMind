@@ -507,6 +507,7 @@ export const startGenerationTask = async (
         providerId,
         modelKey,
         endpointType: 'video',
+        userId: currentUserId,
         durationSeconds,
         resolution: payload.resolution,
         membershipMultiplier,
@@ -596,6 +597,7 @@ export const startGenerationTask = async (
       providerId,
       modelKey,
       endpointType: 'image',
+      userId: currentUserId,
       imageCount,
       // 按分辨率计价(nano)需要本次分辨率;按 token(gpt-image-2)此处仅取 power 保底,生成后按 usage 结算。
       resolution: payload.resolution,

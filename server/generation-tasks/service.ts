@@ -5,8 +5,12 @@ import { prisma } from '../db/prisma'
 import { acquireRedisLock, releaseRedisLock } from '../redis/lock'
 import { REDIS_CONFIG, isRedisEnabled } from '../redis/config'
 import { redisKeys } from '../redis/keys'
-import { assertProviderInScope, resolveGatewayProviderUpstream, resolveVideoProviderUpstream } from '../provider-config/service'
-import { resolveImageModelMaxImagesPerRequest } from '../provider-config/model-service'
+import {
+  assertProviderInScope,
+  resolveGatewayProviderUpstream,
+  resolveVideoProviderUpstream,
+  resolveImageModelMaxImagesPerRequest,
+} from '../vendor/service'
 import {
   attachGenerationPointRecordId,
   consumeGenerationPoints,
@@ -214,6 +218,8 @@ const executeImageGenerationTask = async (task: RunningGenerationTask, payload: 
     requestImageGeneration: async (input) => {
       const result = await requestImageGeneration({
         ...input,
+        // 贯通请求者 userId：内置厂商按其管理员作用域取 key（图片同视频，避免租户串号）。
+        userId: task.userId,
         fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
       })
       // 把内联 base64(gpt-image-2 4K 等)落存储换 URL，避免写库超 max_allowed_packet。
@@ -222,6 +228,7 @@ const executeImageGenerationTask = async (task: RunningGenerationTask, payload: 
     requestImageEdit: async (input) => {
       const result = await requestImageEdit({
         ...input,
+        userId: task.userId,
         fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
       })
       return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
@@ -300,7 +307,9 @@ const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: 
     ensureTaskNotAborted: (runningTask: RunningGenerationTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
     emitTaskProgressEvent: (recordId: string, input: { stage: string; stopped?: boolean; message?: string; progressPercent?: number }) => emitTaskProgressEvent(recordId, { ...input, message: input.message || '' }, taskEventEmitterContext),
     sleepWithAbortSignal,
-    resolveVideoProviderUpstream,
+    // 贯通请求者 userId：内置厂商按其所属管理员作用域取 key 与定价（否则全落全局桶，普管租户串号）。
+    resolveVideoProviderUpstream: (input: { providerId: string; modelKey: string }) =>
+      resolveVideoProviderUpstream({ ...input, userId: task.userId }),
     fetchUpstreamJson: fetchVideoUpstreamJson,
     fetchUpstreamForm: fetchVideoUpstreamForm,
     resolveReferenceBlob: resolveServerReferenceImageBlob,

@@ -2,7 +2,6 @@ import { invalidateRedisCachePatterns, invalidateRedisCaches } from '../redis/ca
 import { getOrSetJsonCache } from '../redis/json-cache'
 import { redisKeys } from '../redis/keys'
 import { prisma } from '../db/prisma'
-import { getDefaultProviderOverview, resolveProviderOwnerScope } from '../provider-config/service'
 
 const ADMIN_DASHBOARD_OVERVIEW_SCOPE = 'admin-dashboard-overview'
 const ADMIN_DASHBOARD_OVERVIEW_CACHE_PATTERN = redisKeys.cache(ADMIN_DASHBOARD_OVERVIEW_SCOPE, '*')
@@ -66,7 +65,6 @@ export const getAdminDashboardOverview = async (currentUserId: string) => {
         todayGenerationRecords,
         enabledStorageConfig,
         totalStorageConfigs,
-        providerOverview,
       ] = await Promise.all([
         prisma.assetItem.count({
           where: {
@@ -132,7 +130,6 @@ export const getAdminDashboardOverview = async (currentUserId: string) => {
             scene: 'global',
           },
         }),
-        getDefaultProviderOverview(await resolveProviderOwnerScope(normalizedUserId)),
       ])
 
       const [generationTrend, assetTrend] = await Promise.all([
@@ -181,8 +178,9 @@ export const getAdminDashboardOverview = async (currentUserId: string) => {
           enabledStorageName: enabledStorageConfig?.name || '',
           enabledStorageCode: enabledStorageConfig?.code || '',
           totalStorageConfigs,
-          providerBaseUrl: providerOverview?.baseUrl || '',
-          providerName: providerOverview?.name || '默认生成厂商',
+          // 厂商已内置（CometAPI 生图 / chengmeng 生视频），不再有可配置的"默认厂商"。
+          providerBaseUrl: '',
+          providerName: '内置厂商（CometAPI / chengmeng）',
         },
       }
     },

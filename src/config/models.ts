@@ -96,7 +96,8 @@ export interface PublicModelCatalogResult {
   }
 }
 
-const MODEL_CATALOG_API_PATH = '/api/provider-config/catalog'
+// 内置厂商目录（内置模型 ⊕ 该管理员定价覆盖）。providerId 现为厂商 code（cometapi/chengmeng）。
+const MODEL_CATALOG_API_PATH = '/api/vendor/catalog'
 
 // 豆包图片尺寸选项
 export const SEEDREAM_SIZE_OPTIONS: SizeOption[] = [

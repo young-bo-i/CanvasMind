@@ -368,18 +368,19 @@ const resolveStageTone = (stageKey: string) => {
   }
 }
 
-// 当父级已经通过 SSE 提供明确进度时，当前卡片不再使用本地假进度动画。
-const hasControlledProgress = () => Number(props.progress) > 0 || Boolean(String(props.progressText || '').trim())
-
+// 图片进度是「粗粒度阶段映射」而非上游真实细粒度进度：仅靠 SSE 阶段事件驱动，会在
+// 最耗时的 requesting_upstream 阶段（4K 出图 30~90s、期间无新事件）长时间静止，被误判为卡死。
+// 因此本地定时器始终在「当前阶段目标之上」留一段软带宽平滑爬升，填补阶段间静止空档（封顶 99）。
 const startTimer = () => {
-  if (hasControlledProgress()) {
-    return
-  }
+  if (timer) return
   timer = setInterval(() => {
-    if (currentProgress.value < 99) {
-      const remaining = 99 - currentProgress.value
+    if (props.done || props.error || props.stopped) { stopTimer(); return }
+    const target = Number.isFinite(Number(props.progress)) ? Number(props.progress) : 0
+    const ceiling = Math.min(99, Math.max(target, currentProgress.value, 1) + 18)
+    if (currentProgress.value < ceiling) {
+      const remaining = ceiling - currentProgress.value
       const step = Math.max(1, Math.floor(remaining * 0.08))
-      currentProgress.value = Math.min(99, currentProgress.value + step)
+      currentProgress.value = Math.min(ceiling, currentProgress.value + step)
     }
   }, 800)
 }
@@ -455,19 +456,17 @@ watch(() => props.stopped, (val) => {
 })
 
 watch(() => props.progress, (val) => {
-  currentProgress.value = Number.isFinite(Number(val)) ? Number(val) : 0
-  if (hasControlledProgress()) {
-    stopTimer()
-  } else if (!props.done && !props.error && !props.stopped && !timer) {
+  // 阶段推进只前进不后退：跳到新的阶段目标，本地爬升继续在其之上填充空档。
+  const next = Number.isFinite(Number(val)) ? Number(val) : 0
+  currentProgress.value = Math.max(currentProgress.value, next)
+  if (!props.done && !props.error && !props.stopped && !timer) {
     startTimer()
   }
 })
 
 watch(() => props.progressText, (val) => {
   currentProgressText.value = val || ''
-  if (hasControlledProgress()) {
-    stopTimer()
-  } else if (!props.done && !props.error && !props.stopped && !timer) {
+  if (!props.done && !props.error && !props.stopped && !timer) {
     startTimer()
   }
 })

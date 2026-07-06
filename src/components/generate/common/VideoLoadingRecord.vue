@@ -96,6 +96,8 @@ const props = defineProps({
   referenceImages: { type: Array as PropType<string[]>, default: () => [] },
   progress: { type: Number, default: 0 },
   progressText: { type: String, default: '' },
+  /** 记录的服务端创建时间(ms)，作为匀速进度的基准，避免刷新后从 0% 重爬。 */
+  startedAtMs: { type: Number, default: 0 },
   done: { type: Boolean, default: false },
   stopped: { type: Boolean, default: false },
   /** 生成的视频 URL 列表 */
@@ -144,7 +146,10 @@ const tickByElapsed = () => {
 
 const startTimer = () => {
   stopTimer()
-  startAt = Date.now()
+  // 以记录的服务端创建时间为基准计算已用时长：刷新/重挂后进度从「真实已跑时长」接续，
+  // 而不是从 0% 重爬。仅接受过去的合理时间戳，否则回退到当前时刻。
+  const started = Number(props.startedAtMs)
+  startAt = Number.isFinite(started) && started > 0 && started <= Date.now() ? started : Date.now()
   currentProgress.value = 0
   tickByElapsed()
   timer = setInterval(tickByElapsed, 1000)

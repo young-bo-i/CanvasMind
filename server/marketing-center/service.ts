@@ -7,6 +7,8 @@ import {
   type ModelCapabilityFlags,
   type ModelCapabilitySpec,
 } from '../../src/shared/provider-capability'
+import { resolveMergedModel, resolveVendorScope } from '../vendor/service'
+import { isVendorCode } from '../vendor/builtin-catalog'
 
 const MARKETING_CENTER_OVERVIEW_SCOPE = 'marketing-center-overview'
 const MARKETING_CENTER_GUEST_OVERVIEW_CACHE_KEY = redisKeys.cache(MARKETING_CENTER_OVERVIEW_SCOPE, 'guest')
@@ -402,11 +404,11 @@ export const checkUserModelMembershipAccess = async (input: {
   const category = String(input.endpointType || '').trim().toUpperCase()
   if (!providerId || !modelKey) return { allowed: true, requiredLevelNames: [] }
 
-  const model = await prisma.aiModel.findFirst({
-    where: { providerId, modelKey, category: category as any, isEnabled: true },
-    select: { defaultParamsJson: true },
-  })
-  const raw = (model?.defaultParamsJson as Record<string, unknown> | null)?.membershipLevels
+  const scope = await resolveVendorScope(input.userId)
+  const merged = (category === 'IMAGE' || category === 'VIDEO')
+    ? await resolveMergedModel({ vendorCode: providerId, modelKey, category, scope })
+    : null
+  const raw = (merged?.defaultParamsJson as Record<string, unknown> | null)?.membershipLevels
   const requiredLevelNames = Array.isArray(raw)
     ? raw.map((v) => String(v || '').trim()).filter(Boolean)
     : []
@@ -428,6 +430,8 @@ export const resolveGenerationPointCost = async (input: {
   providerId: string
   modelKey: string
   endpointType: 'chat' | 'image' | 'video'
+  // 请求者：用于解析所属管理员作用域，取该租户的定价覆盖（内置默认 ⊕ 覆盖）。
+  userId?: string | null
   capabilityFlags?: ModelCapabilityFlags | null
   // 视频按秒计费：传入时长秒数，power 视为「每秒积分」并乘以秒数。
   // 不传 / 非视频时按次（乘数为 1），与图片、对话行为一致。
@@ -451,22 +455,17 @@ export const resolveGenerationPointCost = async (input: {
     }
   }
 
-  const model = await prisma.aiModel.findFirst({
-    where: {
-      providerId,
-      modelKey,
-      category: category as any,
-      isEnabled: true,
-    },
-    select: {
-      id: true,
-      name: true,
-      defaultParamsJson: true,
-      capabilityJson: true,
-    },
-  })
-
-  if (!model) {
+  // 从内置目录 ⊕ 该管理员定价覆盖取模型配置（取代旧的 prisma.aiModel 查询）。
+  // providerId 现为厂商 code（cometapi/chengmeng）。
+  // fail-safe：已知厂商但模型查不到/被停用 → 报错而非静默计 0，杜绝「查不到→免费出图」。
+  const scope = await resolveVendorScope(input.userId)
+  const merged = (category === 'IMAGE' || category === 'VIDEO')
+    ? await resolveMergedModel({ vendorCode: providerId, modelKey, category, scope })
+    : null
+  if (!merged || !merged.isEnabled) {
+    if (isVendorCode(providerId) && (category === 'IMAGE' || category === 'VIDEO')) {
+      throw new Error('模型不存在或未启用，无法计费')
+    }
     return {
       pointCost: 0,
       modelId: '',
@@ -475,7 +474,7 @@ export const resolveGenerationPointCost = async (input: {
   }
 
   // 基础点数 + 计费规则(含视频按秒/按次模式 + 视频分辨率单价)。
-  const billingRule = readModelBillingRule(model.defaultParamsJson)
+  const billingRule = readModelBillingRule(merged.defaultParamsJson)
   // 视频:按本次分辨率取单价(模型可只支持部分分辨率)。
   // - 已配置某分辨率 → 用其单价;
   // - 配置了分辨率表但请求的分辨率不在表里(异常) → 取已配置中的最高价,避免少扣;
@@ -508,7 +507,7 @@ export const resolveGenerationPointCost = async (input: {
 
   // 应用能力开关倍率（联网/深度思考通常更贵），未配置或不支持则倍率为 1。
   const capabilitySpec = (() => {
-    const value = model.capabilityJson
+    const value = merged.capabilityJson
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
     return value as ModelCapabilitySpec
   })()
@@ -527,7 +526,7 @@ export const resolveGenerationPointCost = async (input: {
   // 图片按张计费：power 为「每张积分」，乘以本次出图张数。
   // 张数服务端 clamp 到 [1, maxImagesPerRequest]（不信任前端），未配置上限按 1（即按次）。
   const maxImagesPerRequest = (() => {
-    const value = (model.capabilityJson as Record<string, unknown> | null)?.maxImagesPerRequest
+    const value = (merged.capabilityJson as Record<string, unknown> | null)?.maxImagesPerRequest
     const num = Number(value)
     return Number.isFinite(num) && num >= 1 ? Math.floor(num) : 1
   })()
@@ -544,8 +543,8 @@ export const resolveGenerationPointCost = async (input: {
 
   return {
     pointCost: finalPointCost,
-    modelId: model.id,
-    modelName: model.name,
+    modelId: merged.modelId,
+    modelName: merged.name,
   }
 }
 
@@ -725,13 +724,13 @@ export const settleChatPointsByUsage = async (input: {
   }
 
   const endpointType: 'chat' | 'image' = input.endpointType === 'image' ? 'image' : 'chat'
-  const modelCategory = endpointType === 'image' ? 'IMAGE' : 'CHAT'
 
-  const model = await prisma.aiModel.findFirst({
-    where: { providerId, modelKey, category: modelCategory as any, isEnabled: true },
-    select: { defaultParamsJson: true },
-  })
-  const billingRule = readModelBillingRule(model?.defaultParamsJson)
+  // 结算只对图片 token 制(gpt-image-2)生效；chat 已随 agent 移除，内置无 chat 模型 → merged=null。
+  const scope = await resolveVendorScope(input.userId)
+  const merged = endpointType === 'image'
+    ? await resolveMergedModel({ vendorCode: providerId, modelKey, category: 'IMAGE', scope })
+    : null
+  const billingRule = readModelBillingRule(merged?.defaultParamsJson)
 
   // 三档单价全为 0（未配置分档计费）→ 不做按量结算，沿用保底预扣。
   // 图片走 per-1M(imageXxxPricePer1M)、对话走 per-1k(xxxPricePer1k)。
