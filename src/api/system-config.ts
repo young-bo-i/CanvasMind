@@ -127,11 +127,8 @@ export interface ConversationSettingsConfig {
 }
 
 const DEFAULT_CREATION_MODE_OPTIONS: ConversationModeOptionConfig[] = [
-  { value: 'agent', label: 'Agent 模式' },
   { value: 'image', label: '图片生成' },
   { value: 'video', label: '视频生成' },
-  { value: 'digital-human', label: '数字人' },
-  { value: 'motion', label: '动作模仿' },
 ]
 
 const DEFAULT_ASSISTANT_ALLOWLIST = [

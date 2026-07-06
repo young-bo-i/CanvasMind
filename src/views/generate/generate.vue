@@ -3494,7 +3494,7 @@ onUnmounted(() => {
                     @requery="handleRequeryVideoRecord(record)"
                 />
                 <ImageLoadingRecord
-                    v-else
+                    v-else-if="record.type === 'image'"
                     :time="shouldShowRecordDate(index) ? record.time : ''"
                     :prompt="record.prompt"
                     :model="record.model"

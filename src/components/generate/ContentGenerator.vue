@@ -149,7 +149,8 @@ const readStoredCreationType = (): CreationType | null => {
   if (typeof window === 'undefined') return null
 
   const rawValue = String(window.localStorage.getItem(GENERATOR_CREATION_TYPE_STORAGE_KEY) || '').trim()
-  return ['agent', 'image', 'video', 'digital-human', 'motion'].includes(rawValue)
+  // 只保留图片/视频（agent/数字人/动作模仿已下线）；旧的 localStorage 残留值一律回落默认。
+  return ['image', 'video'].includes(rawValue)
     ? rawValue as CreationType
     : null
 }
@@ -168,20 +169,24 @@ const availableModeOptions = computed(() => {
       value: String(item.value || '').trim() as CreationType,
       label: String(item.label || '').trim(),
     }))
-    .filter(item => ['agent', 'image', 'video', 'digital-human', 'motion'].includes(item.value) && item.label)
+    // 只保留图片/视频（agent/数字人/动作模仿/研究已下线）。
+    .filter(item => ['image', 'video'].includes(item.value) && item.label)
 
   return nextOptions.length
     ? nextOptions
-    : [{ value: 'agent' as CreationType, label: 'Agent 模式' }]
+    : [
+        { value: 'image' as CreationType, label: '图片生成' },
+        { value: 'video' as CreationType, label: '视频生成' },
+      ]
 })
 
 const readDefaultCreationType = () => {
   const configuredMode = String(conversationEntrySettings.value?.mode?.defaultMode || '').trim()
-  if (['agent', 'image', 'video', 'digital-human', 'motion'].includes(configuredMode)) {
+  if (['image', 'video'].includes(configuredMode)) {
     return configuredMode as CreationType
   }
 
-  return 'agent' as CreationType
+  return 'image' as CreationType
 }
 
 const storedCreationType = readStoredCreationType()
@@ -239,7 +244,7 @@ watch(
   availableModeOptions,
   (options) => {
     if (!options.some(item => item.value === currentType.value)) {
-      currentType.value = options[0]?.value || 'agent'
+      currentType.value = options[0]?.value || 'image'
     }
   },
   { immediate: true },
