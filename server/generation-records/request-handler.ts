@@ -1,4 +1,4 @@
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import { requireCurrentSessionUser } from '../auth/session'
 import { isPrismaConfigured } from '../db/prisma'
 import { createGenerationRecord, deleteGenerationRecord, getGenerationRecordById, listGenerationRecords, updateGenerationRecord } from './service'

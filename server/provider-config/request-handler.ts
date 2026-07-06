@@ -1,4 +1,4 @@
-import { sendJson, readJsonBody } from '../ai-gateway/shared'
+import { sendJson, readJsonBody } from '../shared/http'
 import { isPrismaConfigured } from '../db/prisma'
 import { readCurrentSessionUser, requireAdminSessionUser } from '../auth/session'
 import { REDIS_CONFIG, consumeFixedWindowRateLimit, getRedisRuntimeSettings } from '../redis'

@@ -1,4 +1,4 @@
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 
 export const sendProviderRuntimeError = (res: any, statusCode: number, message: string) => {
   sendJson(res, statusCode, {

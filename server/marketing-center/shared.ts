@@ -1,4 +1,4 @@
-import { readJsonBody, sendJson } from '../ai-gateway/shared'
+import { readJsonBody, sendJson } from '../shared/http'
 
 export interface MarketingCenterCardRedeemPayload {
   code?: string

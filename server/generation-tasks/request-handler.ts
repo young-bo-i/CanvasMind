@@ -1,5 +1,5 @@
 import { requireCurrentSessionUser } from '../auth/session'
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import { isPrismaConfigured } from '../db/prisma'
 import { writeScopedLog } from '../shared/logging'
 import { GENERATION_TASKS_BASE_PATH } from './constants'

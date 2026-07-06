@@ -1,4 +1,4 @@
-import { readJsonBody, sendJson } from '../ai-gateway/shared'
+import { readJsonBody, sendJson } from '../shared/http'
 import type { GenerationTaskStreamEventBase } from '../../src/shared/generation-task-stream'
 import type { ResearchTaskConfig } from '../../src/shared/research/research-types'
 

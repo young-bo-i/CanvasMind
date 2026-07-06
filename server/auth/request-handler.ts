@@ -1,5 +1,5 @@
 import type { AuthMethodType } from '@prisma/client'
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import { isPrismaConfigured } from '../db/prisma'
 import { REDIS_CONFIG, consumeFixedWindowRateLimit, getRedisRuntimeSettings } from '../redis'
 import {

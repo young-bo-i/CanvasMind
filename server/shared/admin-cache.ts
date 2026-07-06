@@ -7,7 +7,6 @@ import { invalidateMarketingCenterOverviewCache } from '../marketing-center/serv
 import { invalidateProviderDiscoverModelsCache } from '../provider-config/model-service'
 import { invalidatePublicModelCatalogCache } from '../provider-config/service'
 import { clearRedisRuntimeSettingsCache } from '../redis'
-import { invalidateSkillRuntimeCache } from '../skill-config/service'
 import { invalidateSystemConfigCaches } from '../system-config/service'
 
 type CacheScopeValue = boolean | string | null | undefined
@@ -19,7 +18,6 @@ export interface InvalidateAdminCachesOptions {
   modelCatalog?: boolean
   providerDiscover?: CacheScopeValue
   marketing?: CacheScopeValue
-  skills?: CacheScopeValue
   systemConfig?: boolean
   redisRuntimeSettings?: boolean
   generationSessions?: CacheScopeValue
@@ -50,9 +48,6 @@ export const invalidateAdminCaches = async (options: InvalidateAdminCachesOption
   }
   if (options.marketing) {
     tasks.push(invalidateMarketingCenterOverviewCache(resolveScopedId(options.marketing)))
-  }
-  if (options.skills) {
-    tasks.push(invalidateSkillRuntimeCache(resolveScopedId(options.skills)))
   }
   if (options.systemConfig) {
     tasks.push(invalidateSystemConfigCaches())

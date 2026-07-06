@@ -1,4 +1,4 @@
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import { readPaginationQuery } from '../shared/pagination'
 
 export type AdminGenerationRecordStatusFilter = 'ALL' | 'COMPLETED' | 'FAILED' | 'RUNNING'

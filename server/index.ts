@@ -5,8 +5,6 @@ import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { promisify } from 'node:util'
 import sharp from 'sharp'
-import { AI_GATEWAY_MATCH_PATHS } from './ai-gateway/constants'
-import { handleAiGatewayRequest } from './ai-gateway/request-handler'
 import { isAuthPath } from './auth/constants'
 import { handleAuthRequest } from './auth/request-handler'
 import { isAssetItemsPath } from './asset-items/constants'
@@ -49,8 +47,6 @@ import { handleStorageConfigRequest } from './storage-config/request-handler'
 import { isStorageUploadPath } from './storage/constants'
 import { handleStorageUploadRequest } from './storage/request-handler'
 import { getUploadsDir } from './storage/service'
-import { isSkillConfigPath } from './skill-config/constants'
-import { handleSkillConfigRequest } from './skill-config/request-handler'
 import { REDIS_CONFIG, isRedisEnabled } from './redis'
 import { writeScopedLog } from './shared/logging'
 
@@ -125,12 +121,6 @@ const injectRuntimeClientConfig = (html: string) => {
   }
 
   return `${runtimeConfigScript}${html}`
-}
-
-// 判断当前路径是否命中 AI 网关。
-const isAiGatewayPath = (requestPath: string) => {
-  // 复用现有路径常量统一判断。
-  return AI_GATEWAY_MATCH_PATHS.includes(requestPath as (typeof AI_GATEWAY_MATCH_PATHS)[number])
 }
 
 // 判断当前路径是否命中厂商配置接口。
@@ -528,14 +518,6 @@ const REQUEST_ROUTE_STRATEGIES: RequestRouteStrategy[] = [
     },
   },
   {
-    key: 'ai-gateway',
-    match: isAiGatewayPath,
-    handle: async (req, res) => {
-      await handleAiGatewayRequest(req, res)
-      return true
-    },
-  },
-  {
     key: 'auth',
     match: isAuthPath,
     handle: async (req, res) => {
@@ -556,14 +538,6 @@ const REQUEST_ROUTE_STRATEGIES: RequestRouteStrategy[] = [
     match: isVendorPath,
     handle: async (req, res) => {
       await handleVendorRequest(req, res)
-      return true
-    },
-  },
-  {
-    key: 'skill-config',
-    match: isSkillConfigPath,
-    handle: async (req, res) => {
-      await handleSkillConfigRequest(req, res)
       return true
     },
   },

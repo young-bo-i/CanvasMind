@@ -1,5 +1,5 @@
 import type { AuthMethodCategory, AuthMethodType } from '@prisma/client'
-import { readRawBody, sendJson } from '../ai-gateway/shared'
+import { readRawBody, sendJson } from '../shared/http'
 import type { AuthMethodConfigPayload } from './types'
 
 // 通用验证码请求体。

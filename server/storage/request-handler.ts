@@ -1,4 +1,4 @@
-import { readRawBuffer, sendJson } from '../ai-gateway/shared'
+import { readRawBuffer, sendJson } from '../shared/http'
 import { requireCurrentSessionUser } from '../auth/session'
 import { saveUploadedBuffer } from './service'
 

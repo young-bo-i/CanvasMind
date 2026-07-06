@@ -1,4 +1,4 @@
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import { requireAdminSessionUser } from '../auth/session'
 import { isPrismaConfigured } from '../db/prisma'
 import { ADMIN_GENERATION_SESSIONS_BASE_PATH } from './constants'

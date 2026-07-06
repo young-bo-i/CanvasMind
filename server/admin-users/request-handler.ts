@@ -1,5 +1,5 @@
 import type { PointActionType, UserRole, UserStatus } from '@prisma/client'
-import { sendJson, readRawBody } from '../ai-gateway/shared'
+import { sendJson, readRawBody } from '../shared/http'
 import { isPrismaConfigured } from '../db/prisma'
 import { requireAdminSessionUser } from '../auth/session'
 import { readPaginationQuery } from '../shared/pagination'

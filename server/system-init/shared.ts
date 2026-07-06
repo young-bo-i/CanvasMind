@@ -1,4 +1,4 @@
-import { readRawBody, sendJson } from '../ai-gateway/shared'
+import { readRawBody, sendJson } from '../shared/http'
 
 export interface SystemInitPayload {
   username?: string

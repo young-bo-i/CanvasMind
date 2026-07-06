@@ -1,5 +1,5 @@
 import { readCurrentSessionUser, requireCurrentSessionUser } from '../auth/session'
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import {
   MARKETING_CENTER_CARD_REDEEM_PATH,
   MARKETING_CENTER_OVERVIEW_PATH,

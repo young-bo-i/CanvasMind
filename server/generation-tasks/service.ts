@@ -23,23 +23,6 @@ import {
   findConsumeByRecordId,
 } from '../marketing-center/service'
 import { resolveGenerationTaskStrategy, type GenerationTaskStrategyKey } from './strategy'
-import {
-  AgentWorkspaceStoppedError,
-  getAgentWorkspaceSkillMeta,
-  buildWorkspaceCompletionSummary,
-  getWorkspaceRandomDelay,
-  planAgentWorkspace,
-  sleepWithWorkspaceAbort,
-  workspaceTimingProfile,
-} from './agent-workspace-runtime'
-import {
-  applyAgentWorkspaceEvent,
-  buildAgentErrorRun,
-  buildAgentPendingRun,
-  buildAgentStoppedRun,
-  type AgentWorkspaceEvent,
-} from '../../src/shared/agent-workspace'
-import type { AgentImageResult, AgentRunState } from '../../src/types/agent'
 import { normalizeGenerationErrorMessage } from '../../src/shared/generation-error'
 import {
   deleteLocalRunningTask,
@@ -66,13 +49,7 @@ import { getGenerationTaskExecutionStrategy, type TaskAbortReason } from './exec
 import { executeImageTask } from './image-task-executor'
 import { persistDataUriImagesToStorage } from '../storage/service'
 import { executeVideoTask, resumeVideoTask, type SavedVideoTask } from './video-task-executor'
-import { executeAgentChatTaskFlow } from './agent-chat-task-executor'
-import { executeAgentWorkspaceTaskFlow } from './agent-workspace-task-executor'
-import { executeResearchTaskFlow } from '../research/executor'
 import {
-  emitTaskAgentEvent,
-  emitTaskContentDeltaEvent,
-  emitTaskThinkingDeltaEvent,
   emitTaskFailedEvent,
   emitTaskProgressEvent,
   emitTaskStreamEvent,
@@ -97,17 +74,8 @@ import {
 import {
   fetchWithBurstRateRetry,
   sleepWithAbortSignal,
-  extractChatTextFromNonStreamResponse,
-  extractChatTextFromJsonPayload,
-  extractChatReasoningFromJsonPayload,
-  parseChatChunkText,
-  parseChatChunkReasoning,
-  parseChatChunkError,
-  parseChatChunkUsage,
   requestImageGeneration,
   requestImageEdit,
-  resolveWorkspaceImageModel,
-  requestAgentWorkspaceModelPlan,
   resolveServerReferenceImageBlob,
 } from './upstream-helpers'
 import { writeScopedLog } from '../shared/logging'
@@ -118,23 +86,14 @@ type RunningGenerationTask = LocalRunningGenerationTask & {
 
 const GENERATION_TASK_STAGE_LABELS: Record<string, string> = {
   task_created: '任务已创建',
-  'agent_task:request_start': '智能体对话任务开始请求',
-  'agent_task:response_headers': '智能体对话任务收到响应头',
-  'agent_task:request_success': '智能体对话任务请求成功',
   'image_task:request_start': '图片任务开始请求',
   'image_task:request_upstream': '图片任务请求上游',
   'image_task:request_success': '图片任务请求成功',
   'image_task:stopped': '图片任务已停止',
   'image_task:failed': '图片任务执行失败',
-  'agent_task:failed': '智能体对话任务执行失败',
-  'agent_workspace_task:failed': '智能体工作台任务执行失败',
-  'research_task:completed': '研究任务执行完成',
-  'research_task:failed': '研究任务执行失败',
   task_execution_lock_renew_failed: '任务执行锁续约失败',
   task_snapshot_cache_failed: '任务快照缓存失败',
   task_recent_event_cache_failed: '最近事件缓存失败',
-  'agent_workspace:model_plan_success': '工作台模型规划成功',
-  'agent_workspace:model_plan_failed': '工作台模型规划失败',
 }
 
 const translateGenerationTaskStage = (stage: string) => {
@@ -179,9 +138,6 @@ const buildGatewayAssociationNo = () => {
 const buildTaskExecutionStrategyContext = () => ({
   executeImageGenerationTask,
   executeVideoGenerationTask,
-  executeAgentChatTask,
-  executeAgentWorkspaceTask,
-  executeResearchReportTask,
   refundTaskPointsIfNeeded,
   markTaskExecutionState,
   emitTaskProgressEvent: (recordId: string, input: {
@@ -200,8 +156,6 @@ const buildTaskExecutionStrategyContext = () => ({
   updateGenerationRecord,
   getGenerationRecordById,
   syncSharedTaskRuntime,
-  buildAgentStoppedRun,
-  buildAgentErrorRun,
   normalizeGenerationErrorMessage,
   logGenerationTask,
   logGenerationTaskError,
@@ -337,190 +291,6 @@ const executeVideoGenerationTask = async (task: RunningGenerationTask, payload: 
   await executeVideoTask(task, payload, videoContext)
 }
 
-const persistAgentTaskContentIfNeeded = async (input: {
-  task: RunningGenerationTask
-  payload: GenerationTaskStartPayload
-  content: string
-  thinkingContent?: string
-  force?: boolean
-}, state: {
-  lastPersistAt: number
-  lastPersistContentLength: number
-}) => {
-  const now = Date.now()
-  const shouldPersist = Boolean(input.force)
-    || (input.content.length - state.lastPersistContentLength >= 24)
-    || (now - state.lastPersistAt >= 400)
-
-  if (!shouldPersist) {
-    return
-  }
-
-  await updateGenerationRecord(input.task.recordId, {
-    ...buildInitialRecordPayload(input.payload),
-    content: input.content,
-    ...(typeof input.thinkingContent === 'string' ? { thinkingContent: input.thinkingContent } : {}),
-    done: false,
-    stopped: false,
-  }, input.task.userId)
-
-  state.lastPersistAt = now
-  state.lastPersistContentLength = input.content.length
-}
-
-const executeAgentChatTask = async (task: RunningGenerationTask, payload: GenerationTaskStartPayload) => {
-  await executeAgentChatTaskFlow(task, payload, {
-    syncSharedTaskRuntime,
-    ensureTaskNotAborted: (runningTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
-    resolveGatewayProviderUpstream,
-    emitTaskProgressEvent: (recordId, input) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
-    fetchWithBurstRateRetry: (input) => fetchWithBurstRateRetry({
-      ...input,
-      logGenerationTask,
-    }),
-    markTaskRetryState,
-    extractChatTextFromNonStreamResponse,
-    parseChatChunkError,
-    parseChatChunkText,
-    parseChatChunkReasoning,
-    parseChatChunkUsage,
-    settleChatPointsByUsage,
-    extractChatTextFromJsonPayload,
-    extractChatReasoningFromJsonPayload,
-    emitTaskContentDeltaEvent: (recordId, input) => emitTaskContentDeltaEvent(recordId, input, taskEventEmitterContext),
-    emitTaskThinkingDeltaEvent: (recordId, input) => emitTaskThinkingDeltaEvent(recordId, input, taskEventEmitterContext),
-    persistAgentTaskContentIfNeeded,
-    buildInitialRecordPayload,
-    updateGenerationRecord,
-    getGenerationRecordById,
-    emitTaskStreamEvent: (recordId, event) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
-    logGenerationTask,
-  })
-}
-
-const persistAgentWorkspaceRecord = async (input: {
-  task: RunningGenerationTask
-  payload: GenerationTaskStartPayload
-  agentRun: AgentRunState
-  done?: boolean
-  stopped?: boolean
-  error?: string
-}) => {
-  const agentRunImages: AgentImageResult[] = Array.isArray(input.agentRun.result?.images)
-    ? input.agentRun.result.images
-    : []
-  const currentRecord = await getGenerationRecordById(input.task.recordId, input.task.userId)
-  const existingImageOutputs = Array.isArray(currentRecord.outputs)
-    ? currentRecord.outputs.filter(output => output.outputType === 'image')
-    : []
-
-  // 已转存到本地的输出地址优先复用，避免工作台中间态与完成态反复下载同一张远程图。
-  const resolvePersistedImageUrl = (image: AgentImageResult, index: number) => {
-    const rawImageUrl = String(image.imageSrc || '').trim()
-    if (!rawImageUrl) {
-      return ''
-    }
-
-    const matchedByOriginalUrl = existingImageOutputs.find((output) => (
-      String((output.metaJson as Record<string, unknown> | null)?.originalUrl || '').trim() === rawImageUrl
-    ))
-    if (String(matchedByOriginalUrl?.url || '').trim()) {
-      return String(matchedByOriginalUrl?.url || '').trim()
-    }
-
-    const sameIndexOutput = existingImageOutputs[index]
-    const sameIndexUrl = String(sameIndexOutput?.url || '').trim()
-    const sameIndexPromptText = String((sameIndexOutput?.metaJson as Record<string, unknown> | null)?.promptText || '').trim()
-    const currentPromptText = String(image.promptText || '').trim()
-    if (sameIndexUrl.startsWith('/uploads/') && sameIndexPromptText === currentPromptText) {
-      return sameIndexUrl
-    }
-
-    return rawImageUrl
-  }
-
-  await updateGenerationRecord(input.task.recordId, {
-    ...buildInitialRecordPayload(input.payload),
-    content: '',
-    agentRun: input.agentRun,
-    referenceImages: undefined,
-    outputs: agentRunImages
-      .filter((image) => String(image?.imageSrc || '').trim())
-      .map((image, index) => ({
-        outputType: 'image' as const,
-        url: resolvePersistedImageUrl(image, index),
-        sortOrder: index,
-        metaJson: {
-          promptText: String(image.promptText || '').trim(),
-        },
-      })),
-    done: Boolean(input.done),
-    stopped: Boolean(input.stopped),
-    error: input.error || '',
-  }, input.task.userId)
-
-  return getGenerationRecordById(input.task.recordId, input.task.userId)
-}
-
-const executeAgentWorkspaceTask = async (task: RunningGenerationTask, payload: GenerationTaskStartPayload) => {
-  await executeAgentWorkspaceTaskFlow(task, payload, {
-    syncSharedTaskRuntime,
-    ensureTaskNotAborted: (runningTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
-    getAgentWorkspaceSkillMeta,
-    buildAgentPendingRun,
-    applyAgentWorkspaceEvent: (currentRun, agentEvent) => applyAgentWorkspaceEvent(currentRun as AgentRunState, agentEvent),
-    persistAgentWorkspaceRecord,
-    emitTaskProgressEvent: (recordId, input) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
-    emitTaskAgentEvent: (recordId, input) => emitTaskAgentEvent(recordId, input, taskEventEmitterContext),
-    sleepWithWorkspaceAbort,
-    getWorkspaceRandomDelay,
-    workspaceTimingProfile,
-    planAgentWorkspace,
-    requestAgentWorkspaceModelPlan: (input) => requestAgentWorkspaceModelPlan({
-      ...input,
-      fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({
-        ...retryInput,
-        logGenerationTask,
-      }),
-    }),
-    logGenerationTask,
-    logGenerationTaskError,
-    resolveWorkspaceImageModel,
-    requestImageEdit: async (input) => {
-      const result = await requestImageEdit({
-        ...input,
-        fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
-      })
-      return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
-    },
-    requestImageGeneration: async (input) => {
-      const result = await requestImageGeneration({
-        ...input,
-        fetchWithBurstRateRetry: (retryInput) => fetchWithBurstRateRetry({ ...retryInput, logGenerationTask }),
-      })
-      return { ...result, imageUrls: await persistDataUriImagesToStorage(result.imageUrls) }
-    },
-    markTaskRetryState,
-    refundTaskPointsIfNeeded,
-    normalizeGenerationErrorMessage,
-    buildWorkspaceCompletionSummary,
-    AgentWorkspaceStoppedError,
-  })
-}
-
-  const executeResearchReportTask = async (task: RunningGenerationTask, payload: GenerationTaskStartPayload) => {
-  await executeResearchTaskFlow(task, payload, {
-    syncSharedTaskRuntime,
-    ensureTaskNotAborted: (runningTask) => ensureTaskNotAborted(runningTask, { abortTaskWithReason }),
-    buildInitialRecordPayload,
-    updateGenerationRecord,
-    getGenerationRecordById,
-    emitTaskStreamEvent: (recordId, event) => emitTaskStreamEvent(recordId, event, taskEventEmitterContext),
-    emitTaskProgressEvent: (recordId, input) => emitTaskProgressEvent(recordId, input, taskEventEmitterContext),
-    logGenerationTask,
-  })
-}
-
 const refundTaskPointsIfNeeded = async (task: RunningGenerationTask, reason: string) => {
   if (!task.billedPointCost || task.refundCommitted) {
     return
@@ -650,7 +420,6 @@ const buildTaskLifecycleContext = () => ({
     return acquiredSlots
   },
   releaseTaskConcurrencySlots,
-  buildAgentPendingRun,
   buildGatewayAssociationNo,
   setLocalRunningTask,
   syncSharedTaskRuntime,

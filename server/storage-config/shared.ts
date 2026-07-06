@@ -1,4 +1,4 @@
-import { readJsonBody, sendJson } from '../ai-gateway/shared'
+import { readJsonBody, sendJson } from '../shared/http'
 
 // 前端提交的对象存储配置结构。
 export interface ObjectStorageConfigPayload {

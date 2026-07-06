@@ -1,4 +1,4 @@
-import { sendJson } from '../ai-gateway/shared'
+import { sendJson } from '../shared/http'
 import { isPrismaConfigured } from '../db/prisma'
 import { SYSTEM_INIT_INITIALIZE_PATH, SYSTEM_INIT_STATUS_PATH } from './constants'
 import { buildSystemInitSessionCookie, getSystemInitStatus, initializeSystem } from './service'

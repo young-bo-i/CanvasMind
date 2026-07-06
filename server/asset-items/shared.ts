@@ -1,4 +1,4 @@
-import { readJsonBody, sendJson } from '../ai-gateway/shared'
+import { readJsonBody, sendJson } from '../shared/http'
 
 export type AssetScope = 'feed' | 'mine' | 'all'
 export type AssetKind = 'image' | 'video'
