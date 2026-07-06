@@ -36,7 +36,6 @@ model AppUser {
   authIdentities     AppUserAuthIdentity[]
   sessions           AppSession[]
   authMethodConfigs  AuthMethodConfig[]
-  providerConfigs    AiProviderConfig[]
   storageConfigs     ObjectStorageConfig[]
   generationSessions GenerationSession[]
   generationRecords  GenerationRecord[]
@@ -51,13 +50,10 @@ model AppUser {
   checkinRecords     UserCheckinRecord[]
   usedCardCodes      CardCode[]             @relation("CardCodeUsedByUser")
   cardRedeemRecords  CardRedeemRecord[]
-  workflowDefinitions        WorkflowDefinition[]
-  workflowDefinitionVersions WorkflowDefinitionVersion[]
   // 归属自关联：ownerAdmin = 创建我的管理员；ownedUsers = 我创建的用户。
   ownerAdmin         AppUser?               @relation("AdminOwnedUsers", fields: [ownerAdminId], references: [id], onDelete: SetNull)
   ownedUsers         AppUser[]              @relation("AdminOwnedUsers")
   // 我（管理员）配置的 AI 厂商；删除管理员时级联删除其厂商（连同密钥），不残留为全局。
-  ownedProviders     AiProvider[]           @relation("AdminOwnedProviders")
   // 我（管理员）配置的内置厂商密钥/定价；删除管理员时级联删除。
   vendorSettings     VendorSetting[]        @relation("AdminOwnedVendorSettings")
 
@@ -180,303 +176,6 @@ model AppSession {
   @@map("app_sessions")
 }
 
-/// 用户自定义厂商配置。
-/// 用于替代当前 localStorage 中的 baseUrl / apiKey / endpoint / 默认模型配置。
-model AiProviderConfig {
-  id                String                  @id @default(cuid()) @db.VarChar(36)
-  userId            String?                 @map("user_id") @db.VarChar(36)
-  scene             String                  @default("generate") @db.VarChar(50)
-  name              String                  @db.VarChar(100)
-  providerType      ProviderType            @default(OPENAI_COMPATIBLE) @map("provider_type")
-  baseUrl           String                  @map("base_url") @db.Text
-  apiKeyEncrypted   String?                 @map("api_key_encrypted") @db.LongText
-  apiKeyHint        String?                 @map("api_key_hint") @db.VarChar(64)
-  chatEndpoint      String                  @default("/chat/completions") @map("chat_endpoint") @db.VarChar(255)
-  imageEndpoint     String                  @default("/images/generations") @map("image_endpoint") @db.VarChar(255)
-  videoEndpoint     String                  @default("/videos") @map("video_endpoint") @db.VarChar(255)
-  defaultChatModel  String?                 @map("default_chat_model") @db.VarChar(191)
-  defaultImageModel String?                 @map("default_image_model") @db.VarChar(191)
-  defaultVideoModel String?                 @map("default_video_model") @db.VarChar(191)
-  isDefault         Boolean                 @default(false) @map("is_default")
-  isEnabled         Boolean                 @default(true) @map("is_enabled")
-  extraJson         Json?                   @map("extra_json")
-  createdAt         DateTime                @default(now()) @map("created_at")
-  updatedAt         DateTime                @updatedAt @map("updated_at")
-  user              AppUser?                @relation(fields: [userId], references: [id], onDelete: SetNull)
-  customModels      AiProviderCustomModel[]
-  generationRecords GenerationRecord[]
-
-  @@index([userId, scene], map: "idx_ai_provider_configs_user_scene")
-  @@index([userId, isDefault], map: "idx_ai_provider_configs_user_default")
-  @@map("ai_provider_configs")
-}
-
-/// 用户新增的自定义模型。
-/// 当前前端分为 image / video / chat 三类，这里拆成独立表方便管理与过滤。
-model AiProviderCustomModel {
-  id                String           @id @default(cuid()) @db.VarChar(36)
-  providerConfigId  String           @map("provider_config_id") @db.VarChar(36)
-  category          ModelCategory
-  label             String           @db.VarChar(100)
-  modelKey          String           @map("model_key") @db.VarChar(191)
-  capabilityJson    Json?            @map("capability_json")
-  defaultParamsJson Json?            @map("default_params_json")
-  sortOrder         Int              @default(0) @map("sort_order")
-  isEnabled         Boolean          @default(true) @map("is_enabled")
-  createdAt         DateTime         @default(now()) @map("created_at")
-  updatedAt         DateTime         @updatedAt @map("updated_at")
-  providerConfig    AiProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-
-  @@unique([providerConfigId, category, modelKey], map: "uk_ai_provider_custom_models_config_category_key")
-  @@index([providerConfigId, category, sortOrder], map: "idx_ai_provider_custom_models_config_category_sort")
-  @@map("ai_provider_custom_models")
-}
-
-/// 正式 AI 厂商实体。
-/// 对齐 BuildingAI 的 provider / model 双实体思路，后续后台与运行时都基于这里派生。
-model AiProvider {
-  id                 String    @id @default(cuid()) @db.VarChar(36)
-  // code 唯一性按归属隔离：同一管理员(或全局桶)内唯一；不同管理员可复用相同 code。见 @@unique 下。
-  code               String    @db.VarChar(50)
-  name               String    @db.VarChar(100)
-  description        String?   @db.VarChar(255)
-  iconUrl            String?   @map("icon_url") @db.Text
-  baseUrl            String    @map("base_url") @db.Text
-  apiKeyEncrypted    String?   @map("api_key_encrypted") @db.LongText
-  apiKeyHint         String?   @map("api_key_hint") @db.VarChar(64)
-  chatEndpoint       String    @default("/chat/completions") @map("chat_endpoint") @db.VarChar(255)
-  imageEndpoint      String    @default("/images/generations") @map("image_endpoint") @db.VarChar(255)
-  imageEditEndpoint  String    @default("/images/edits") @map("image_edit_endpoint") @db.VarChar(255)
-  videoEndpoint      String    @default("/videos") @map("video_endpoint") @db.VarChar(255)
-  defaultChatModel   String?   @map("default_chat_model") @db.VarChar(191)
-  supportedTypesJson Json?     @map("supported_types_json")
-  isEnabled          Boolean   @default(true) @map("is_enabled")
-  isBuiltIn          Boolean   @default(false) @map("is_built_in")
-  sortOrder          Int       @default(0) @map("sort_order")
-  extraJson          Json?     @map("extra_json")
-  // 归属管理员：该厂商由哪个管理员配置。NULL = 超管/平台全局（所有平台直属用户共用，含既有数据）。
-  // 非空 = 该普通管理员私有；其名下用户的生成请求只走该管理员的厂商，实现租户级隔离。
-  ownerAdminId       String?   @map("owner_admin_id") @db.VarChar(36)
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-  models             AiModel[]
-  skills             AiSkill[]
-  ownerAdmin         AppUser?  @relation("AdminOwnedProviders", fields: [ownerAdminId], references: [id], onDelete: Cascade)
-
-  // 厂商标识按归属隔离唯一：同一管理员(或 NULL 全局桶)内 code 唯一；不同管理员可复用相同 code。
-  // 注：MySQL 复合唯一里 NULL 视作彼此不同，全局桶(ownerAdminId=NULL)的 code 唯一性由应用层 + 受控的 seed 保证。
-  @@unique([ownerAdminId, code], map: "uk_ai_providers_owner_code")
-  @@index([isEnabled, sortOrder], map: "idx_ai_providers_enabled_sort")
-  @@index([ownerAdminId], map: "idx_ai_providers_owner_admin_id")
-  @@map("ai_providers")
-}
-
-/// 正式 AI 模型实体。
-/// 与厂商拆表后，模型具备独立的启停、排序、能力和默认参数配置。
-model AiModel {
-  id                String        @id @default(cuid()) @db.VarChar(36)
-  providerId        String        @map("provider_id") @db.VarChar(36)
-  category          ModelCategory
-  name              String        @db.VarChar(100)
-  modelKey          String        @map("model_key") @db.VarChar(191)
-  description       String?       @db.VarChar(255)
-  capabilityJson    Json?         @map("capability_json")
-  defaultParamsJson Json?         @map("default_params_json")
-  sortOrder         Int           @default(0) @map("sort_order")
-  isEnabled         Boolean       @default(true) @map("is_enabled")
-  isBuiltIn         Boolean       @default(false) @map("is_built_in")
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
-  provider          AiProvider    @relation(fields: [providerId], references: [id], onDelete: Cascade)
-
-  @@unique([providerId, category, modelKey], map: "uk_ai_models_provider_category_key")
-  @@index([providerId, category, sortOrder], map: "idx_ai_models_provider_category_sort")
-  @@index([isEnabled, category], map: "idx_ai_models_enabled_category")
-  @@map("ai_models")
-}
-
-/// 技能配置主表。
-/// 用于统一管理前台技能、工作台模式、执行模式和规划器行为。
-model AiSkill {
-  id                   String                      @id @default(cuid()) @db.VarChar(36)
-  providerId           String?                     @map("provider_id") @db.VarChar(36)
-  skillKey             String                      @unique(map: "uk_ai_skills_skill_key") @map("skill_key") @db.VarChar(100)
-  label                String                      @db.VarChar(100)
-  description          String?                     @db.VarChar(255)
-  iconType             String?                     @map("icon_type") @db.VarChar(50)
-  category             String?                     @db.VarChar(50)
-  uiMode               AiSkillUiMode               @default(WORKSPACE) @map("ui_mode")
-  executionMode        AiSkillExecutionMode        @default(PLANNER_THEN_GENERATE) @map("execution_mode")
-  workflowType         String?                     @map("workflow_type") @db.VarChar(50)
-  plannerModelCategory AiSkillPlannerModelCategory @default(CHAT) @map("planner_model_category")
-  expectedImageCount   Int                         @default(4) @map("expected_image_count")
-  isEnabled            Boolean                     @default(true) @map("is_enabled")
-  isBuiltIn            Boolean                     @default(false) @map("is_built_in")
-  sortOrder            Int                         @default(0) @map("sort_order")
-  configJson           Json?                       @map("config_json")
-  createdAt            DateTime                    @default(now()) @map("created_at")
-  updatedAt            DateTime                    @updatedAt @map("updated_at")
-  provider             AiProvider?                 @relation(fields: [providerId], references: [id], onDelete: SetNull)
-  prompts              AiSkillPromptTemplate[]
-  dependencies         AiSkillDependency[]         @relation("AiSkillDependencies")
-  dependedBy           AiSkillDependency[]         @relation("AiSkillDependents")
-  workflowTemplates    AiSkillWorkflowTemplate[]
-  planTemplates        AiSkillPlanTemplate[]
-  stageTemplates       AiSkillStageTemplate[]
-
-  @@index([providerId], map: "idx_ai_skills_provider_id")
-  @@index([isEnabled, sortOrder], map: "idx_ai_skills_enabled_sort")
-  @@map("ai_skills")
-}
-
-/// 技能依赖关系表。
-/// 用于定义主技能运行前必须先加载的依赖技能链。
-model AiSkillDependency {
-  id                String   @id @default(cuid()) @db.VarChar(36)
-  skillId           String   @map("skill_id") @db.VarChar(36)
-  dependencySkillId String   @map("dependency_skill_id") @db.VarChar(36)
-  sortOrder         Int      @default(0) @map("sort_order")
-  createdAt         DateTime @default(now()) @map("created_at")
-  skill             AiSkill  @relation("AiSkillDependencies", fields: [skillId], references: [id], onDelete: Cascade)
-  dependencySkill   AiSkill  @relation("AiSkillDependents", fields: [dependencySkillId], references: [id], onDelete: Cascade)
-
-  @@unique([skillId, dependencySkillId], map: "uk_ai_skill_dependencies_skill_dependency")
-  @@index([skillId, sortOrder], map: "idx_ai_skill_dependencies_skill_sort")
-  @@map("ai_skill_dependencies")
-}
-
-/// 技能提示词模板表。
-/// 区分通用对话提示词与规划器提示词，便于后台独立配置。
-model AiSkillPromptTemplate {
-  id                 String             @id @default(cuid()) @db.VarChar(36)
-  skillId            String             @map("skill_id") @db.VarChar(36)
-  scene              AiSkillPromptScene
-  systemPrompt       String             @map("system_prompt") @db.LongText
-  userPromptTemplate String             @map("user_prompt_template") @db.LongText
-  isEnabled          Boolean            @default(true) @map("is_enabled")
-  createdAt          DateTime           @default(now()) @map("created_at")
-  updatedAt          DateTime           @updatedAt @map("updated_at")
-  skill              AiSkill            @relation(fields: [skillId], references: [id], onDelete: Cascade)
-
-  @@unique([skillId, scene], map: "uk_ai_skill_prompt_templates_skill_scene")
-  @@map("ai_skill_prompt_templates")
-}
-
-/// 技能工作流模板表。
-/// 用于保存默认工作流标签、类型和工作流参数模板。
-model AiSkillWorkflowTemplate {
-  id                         String   @id @default(cuid()) @db.VarChar(36)
-  skillId                    String   @map("skill_id") @db.VarChar(36)
-  workflowLabel              String   @map("workflow_label") @db.VarChar(100)
-  workflowType               String   @map("workflow_type") @db.VarChar(50)
-  expectedImageCount         Int      @default(4) @map("expected_image_count")
-  workflowParamsTemplateJson Json?    @map("workflow_params_template_json")
-  isEnabled                  Boolean  @default(true) @map("is_enabled")
-  createdAt                  DateTime @default(now()) @map("created_at")
-  updatedAt                  DateTime @updatedAt @map("updated_at")
-  skill                      AiSkill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
-
-  @@index([skillId], map: "idx_ai_skill_workflow_templates_skill")
-  @@map("ai_skill_workflow_templates")
-}
-
-/// 技能计划项模板表。
-/// 每一个计划项同时提供展示标题和对应的提示词模板。
-model AiSkillPlanTemplate {
-  id             String   @id @default(cuid()) @db.VarChar(36)
-  skillId        String   @map("skill_id") @db.VarChar(36)
-  itemKey        String   @map("item_key") @db.VarChar(100)
-  titleTemplate  String   @map("title_template") @db.VarChar(255)
-  promptTemplate String   @map("prompt_template") @db.LongText
-  sortOrder      Int      @default(0) @map("sort_order")
-  isEnabled      Boolean  @default(true) @map("is_enabled")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  skill          AiSkill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
-
-  @@unique([skillId, itemKey], map: "uk_ai_skill_plan_templates_skill_item_key")
-  @@index([skillId, sortOrder], map: "idx_ai_skill_plan_templates_skill_sort")
-  @@map("ai_skill_plan_templates")
-}
-
-/// 技能阶段文案模板表。
-/// 用于后台配置不同阶段的标题、标签和指示器说明文案。
-model AiSkillStageTemplate {
-  id                           String   @id @default(cuid()) @db.VarChar(36)
-  skillId                      String   @map("skill_id") @db.VarChar(36)
-  stageKey                     String   @map("stage_key") @db.VarChar(100)
-  stageLabel                   String   @map("stage_label") @db.VarChar(100)
-  indicatorTitle               String?  @map("indicator_title") @db.VarChar(100)
-  indicatorDescriptionTemplate String?  @map("indicator_description_template") @db.LongText
-  sortOrder                    Int      @default(0) @map("sort_order")
-  isEnabled                    Boolean  @default(true) @map("is_enabled")
-  createdAt                    DateTime @default(now()) @map("created_at")
-  updatedAt                    DateTime @updatedAt @map("updated_at")
-  skill                        AiSkill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
-
-  @@unique([skillId, stageKey], map: "uk_ai_skill_stage_templates_skill_stage_key")
-  @@index([skillId, sortOrder], map: "idx_ai_skill_stage_templates_skill_sort")
-  @@map("ai_skill_stage_templates")
-}
-
-/// 工作流定义主表。
-/// 用于保存可视化工作流的基础信息、当前版本与归属信息。
-model WorkflowDefinition {
-  id              String                    @id @default(cuid()) @db.VarChar(36)
-  userId          String?                   @map("user_id") @db.VarChar(36)
-  code            String                    @unique(map: "uk_workflow_definitions_code") @db.VarChar(100)
-  name            String                    @db.VarChar(100)
-  description     String?                   @db.VarChar(255)
-  category        String?                   @db.VarChar(50)
-  scene           WorkflowScene             @default(WORKFLOW_CANVAS)
-  sourceType      WorkflowSourceType        @default(VISUAL) @map("source_type")
-  status          WorkflowDefinitionStatus  @default(DRAFT)
-  currentVersionId String?                  @map("current_version_id") @db.VarChar(36)
-  latestVersionNo Int                       @default(0) @map("latest_version_no")
-  isBuiltIn       Boolean                   @default(false) @map("is_built_in")
-  isEnabled       Boolean                   @default(true) @map("is_enabled")
-  sortOrder       Int                       @default(0) @map("sort_order")
-  tagsJson        Json?                     @map("tags_json")
-  createdAt       DateTime                  @default(now()) @map("created_at")
-  updatedAt       DateTime                  @updatedAt @map("updated_at")
-  user            AppUser?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
-  currentVersion  WorkflowDefinitionVersion? @relation("WorkflowDefinitionCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  versions        WorkflowDefinitionVersion[] @relation("WorkflowDefinitionVersions")
-
-  @@index([userId, scene, status], map: "idx_workflow_definitions_user_scene_status")
-  @@index([isEnabled, sortOrder], map: "idx_workflow_definitions_enabled_sort")
-  @@map("workflow_definitions")
-}
-
-/// 工作流版本表。
-/// 每次保存工作流时生成一个完整快照，为执行与发布提供稳定输入。
-model WorkflowDefinitionVersion {
-  id                String                @id @default(cuid()) @db.VarChar(36)
-  workflowId        String                @map("workflow_id") @db.VarChar(36)
-  createdBy         String?               @map("created_by") @db.VarChar(36)
-  versionNo         Int                   @map("version_no")
-  versionName       String?               @map("version_name") @db.VarChar(100)
-  changeSummary     String?               @map("change_summary") @db.VarChar(255)
-  status            WorkflowVersionStatus @default(DRAFT)
-  definitionJson    Json?                 @map("definition_json")
-  nodesJson         Json?                 @map("nodes_json")
-  edgesJson         Json?                 @map("edges_json")
-  viewportJson      Json?                 @map("viewport_json")
-  inputSchemaJson   Json?                 @map("input_schema_json")
-  outputSchemaJson  Json?                 @map("output_schema_json")
-  runtimeConfigJson Json?                 @map("runtime_config_json")
-  publishedAt       DateTime?             @map("published_at")
-  createdAt         DateTime              @default(now()) @map("created_at")
-  updatedAt         DateTime              @updatedAt @map("updated_at")
-  workflow          WorkflowDefinition    @relation("WorkflowDefinitionVersions", fields: [workflowId], references: [id], onDelete: Cascade)
-  creator           AppUser?              @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  currentOf         WorkflowDefinition[]  @relation("WorkflowDefinitionCurrentVersion")
-
-  @@unique([workflowId, versionNo], map: "uk_workflow_definition_versions_workflow_version")
-  @@index([workflowId, status, createdAt], map: "idx_workflow_definition_versions_workflow_status_created_at")
-  @@map("workflow_definition_versions")
-}
-
 /// 对象存储配置表。
 /// 用于保存 S3 兼容存储的接入参数，支持后端统一切换上传目标。
 model ObjectStorageConfig {
@@ -556,7 +255,6 @@ model GenerationRecord {
   id               String             @id @default(cuid()) @db.VarChar(36)
   userId           String             @map("user_id") @db.VarChar(36)
   sessionId        String             @map("session_id") @db.VarChar(36)
-  providerConfigId String?            @map("provider_config_id") @db.VarChar(36)
   clientRecordId   Int?               @map("client_record_id")
   type             GenerationType
   status           GenerationStatus   @default(PENDING)
@@ -578,7 +276,6 @@ model GenerationRecord {
   updatedAt        DateTime           @updatedAt @map("updated_at")
   user             AppUser            @relation(fields: [userId], references: [id], onDelete: Cascade)
   session          GenerationSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  providerConfig   AiProviderConfig?  @relation(fields: [providerConfigId], references: [id], onDelete: SetNull)
   outputs          GenerationOutput[]
   assets           AssetItem[]
   agentRun         AgentRun?
@@ -586,7 +283,6 @@ model GenerationRecord {
   @@index([userId, createdAt], map: "idx_generation_records_user_created_at")
   @@index([sessionId, createdAt], map: "idx_generation_records_session_created_at")
   @@index([type, status, createdAt], map: "idx_generation_records_type_status_created_at")
-  @@index([providerConfigId, createdAt], map: "idx_generation_records_provider_created_at")
   @@map("generation_records")
 }
 
@@ -1127,71 +823,9 @@ enum VerificationChannel {
   EMAIL
 }
 
-enum ProviderType {
-  OPENAI_COMPATIBLE
-  CUSTOM
-}
-
 /// 对象存储供应商类型。
 enum StorageProviderType {
   S3_COMPATIBLE
-}
-
-enum ModelCategory {
-  CHAT
-  IMAGE
-  VIDEO
-}
-
-/// 技能前端交互模式。
-enum AiSkillUiMode {
-  PLAIN_CHAT
-  WORKSPACE
-}
-
-/// 技能执行模式。
-enum AiSkillExecutionMode {
-  CHAT_ONLY
-  PLANNER_THEN_GENERATE
-  PLANNER_THEN_STORYBOARD
-  DIRECT_GENERATE
-}
-
-/// 技能规划器优先使用的模型分类。
-enum AiSkillPlannerModelCategory {
-  CHAT
-  IMAGE
-  VIDEO
-}
-
-/// 技能提示词模板使用场景。
-enum AiSkillPromptScene {
-  CHAT
-  PLANNER
-}
-
-enum WorkflowScene {
-  WORKFLOW_CANVAS
-  AGENT_WORKSPACE
-  GENERATION_PIPELINE
-}
-
-enum WorkflowSourceType {
-  VISUAL
-  SKILL_TEMPLATE
-  SYSTEM_BUILTIN
-}
-
-enum WorkflowDefinitionStatus {
-  DRAFT
-  ACTIVE
-  ARCHIVED
-}
-
-enum WorkflowVersionStatus {
-  DRAFT
-  PUBLISHED
-  DEPRECATED
 }
 
 enum GenerationType {
