@@ -4,8 +4,6 @@ import { invalidateAssetItemsCaches } from '../asset-items/service'
 import { invalidateGenerationRecordsCache } from '../generation-records/service'
 import { invalidateGenerationSessionsCache } from '../generation-sessions/service'
 import { invalidateMarketingCenterOverviewCache } from '../marketing-center/service'
-import { invalidateProviderDiscoverModelsCache } from '../provider-config/model-service'
-import { invalidatePublicModelCatalogCache } from '../provider-config/service'
 import { clearRedisRuntimeSettingsCache } from '../redis'
 import { invalidateSystemConfigCaches } from '../system-config/service'
 
@@ -15,8 +13,6 @@ export interface InvalidateAdminCachesOptions {
   dashboard?: CacheScopeValue
   users?: CacheScopeValue
   assets?: boolean
-  modelCatalog?: boolean
-  providerDiscover?: CacheScopeValue
   marketing?: CacheScopeValue
   systemConfig?: boolean
   redisRuntimeSettings?: boolean
@@ -39,12 +35,6 @@ export const invalidateAdminCaches = async (options: InvalidateAdminCachesOption
   }
   if (options.assets) {
     tasks.push(invalidateAssetItemsCaches())
-  }
-  if (options.modelCatalog) {
-    tasks.push(invalidatePublicModelCatalogCache())
-  }
-  if (options.providerDiscover) {
-    tasks.push(invalidateProviderDiscoverModelsCache(resolveScopedId(options.providerDiscover)))
   }
   if (options.marketing) {
     tasks.push(invalidateMarketingCenterOverviewCache(resolveScopedId(options.marketing)))

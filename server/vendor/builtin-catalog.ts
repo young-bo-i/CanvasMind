@@ -72,9 +72,10 @@ const COMETAPI: BuiltinVendor = {
       capabilityJson: { maxImagesPerRequest: 1, imageAdapter: 'gemini-generatecontent' },
       defaultParams: {
         membershipLevels: [],
+        // 成本(CometAPI)：1K/2K=$0.1072、4K=$0.192；×7.2 元 ×1.6 = ×11.52 → 60% 加价。
         billingRule: {
           imageBillingMode: 'per_resolution',
-          imageResolutionPrices: { '1K': 0.58, '2K': 0.58, '4K': 1.04 },
+          imageResolutionPrices: { '1K': 1.23, '2K': 1.23, '4K': 2.21 },
         },
       },
     },

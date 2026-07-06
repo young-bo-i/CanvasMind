@@ -18,8 +18,7 @@ const AdminConversations = () => import('../views/admin/conversations/AdminConve
 const AdminConversationSettings = () => import('../views/admin/conversations/AdminConversationSettings.vue')
 const AdminGenerations = () => import('../views/admin/generations/AdminGenerations.vue')
 const AdminMarketing = () => import('../views/admin/marketing/AdminMarketing.vue')
-const AdminSkills = () => import('../views/admin/skills/AdminSkills.vue')
-const AdminProviders = () => import('../views/admin/providers/AdminProviders.vue')
+const AdminVendorSettings = () => import('../views/admin/vendors/AdminVendorSettings.vue')
 const AdminStorage = () => import('../views/admin/storage/AdminStorage.vue')
 const AdminSystem = () => import('../views/admin/system/AdminSystem.vue')
 const AdminRedis = () => import('../views/admin/redis/AdminRedis.vue')
@@ -159,27 +158,18 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
-        path: 'skills',
-        name: 'AdminSkills',
-        component: AdminSkills,
+        path: 'vendors',
+        name: 'AdminVendorSettings',
+        component: AdminVendorSettings,
         meta: {
           requiresAuth: true,
           requiresAdmin: true,
         },
       },
-      {
-        path: 'providers',
-        name: 'AdminProviders',
-        component: AdminProviders,
-        meta: {
-          requiresAuth: true,
-          requiresAdmin: true,
-        },
-      },
-      {
-        path: 'models',
-        redirect: '/admin/providers',
-      },
+      // 旧路径重定向到新的「厂商密钥/定价」页。
+      { path: 'providers', redirect: '/admin/vendors' },
+      { path: 'skills', redirect: '/admin/vendors' },
+      { path: 'models', redirect: '/admin/vendors' },
       {
         path: 'storage',
         name: 'AdminStorage',

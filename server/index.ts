@@ -38,8 +38,6 @@ import { handleGenerationTasksRequest } from './generation-tasks/request-handler
 import { bootstrapTaskResume } from './generation-tasks/service'
 import { getLocalRunningTaskCount, getTaskStreamSubscriberTotal } from './generation-tasks/local-runtime'
 import { getReplayStoreStats } from './generation-tasks/task-event-replay'
-import { PROVIDER_CONFIG_MATCH_PATHS } from './provider-config/constants'
-import { handleProviderConfigRequest } from './provider-config/request-handler'
 import { VENDOR_MATCH_PATHS } from './vendor/constants'
 import { handleVendorRequest } from './vendor/request-handler'
 import { isStorageConfigsPath } from './storage-config/constants'
@@ -123,11 +121,6 @@ const injectRuntimeClientConfig = (html: string) => {
   return `${runtimeConfigScript}${html}`
 }
 
-// 判断当前路径是否命中厂商配置接口。
-const isProviderConfigPath = (requestPath: string) => {
-  // runtime 走精确匹配，models 兼容带 id 的子路径。
-  return PROVIDER_CONFIG_MATCH_PATHS.some((path) => requestPath === path || requestPath.startsWith(path + '/'))
-}
 
 // 判断当前路径是否命中内置厂商接口（目录 + 后台 key/定价）。
 const isVendorPath = (requestPath: string) => {
@@ -522,14 +515,6 @@ const REQUEST_ROUTE_STRATEGIES: RequestRouteStrategy[] = [
     match: isAuthPath,
     handle: async (req, res) => {
       await handleAuthRequest(req, res)
-      return true
-    },
-  },
-  {
-    key: 'provider-config',
-    match: isProviderConfigPath,
-    handle: async (req, res) => {
-      await handleProviderConfigRequest(req, res)
       return true
     },
   },
