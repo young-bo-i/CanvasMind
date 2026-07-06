@@ -41,7 +41,20 @@ export interface VendorSettingUpdatePayload {
   pricing?: Record<string, { enabled?: boolean; billingRule?: VendorModelBillingRule } | null>
 }
 
-export const listVendorSettings = () => adminGet<VendorSettingItem[]>('/api/vendor/settings')
+export interface VendorScopeOption {
+  scopeId: string | null
+  label: string
+}
 
-export const updateVendorSetting = (vendorCode: string, payload: VendorSettingUpdatePayload) =>
-  adminPut<VendorSettingItem[]>(`/api/vendor/settings/${encodeURIComponent(vendorCode)}`, payload)
+// 超管可管理的作用域清单（全局 + 各普通管理员）；普管返回空。
+export const listVendorScopes = () => adminGet<VendorScopeOption[]>('/api/vendor/settings/scopes')
+
+// scope: 'global' 或 管理员 id（超管代配时用）；普管传不传都锁定自己。
+export const listVendorSettings = (scope?: string) =>
+  adminGet<VendorSettingItem[]>('/api/vendor/settings', scope ? { query: { scope } } : {})
+
+export const updateVendorSetting = (vendorCode: string, payload: VendorSettingUpdatePayload, scope?: string) =>
+  adminPut<VendorSettingItem[]>(
+    `/api/vendor/settings/${encodeURIComponent(vendorCode)}`,
+    scope ? { ...payload, scope } : payload,
+  )

@@ -5,6 +5,8 @@ import { recordAdminAuditLog } from '../shared/admin-audit'
 import {
   getAdminVendorSettings,
   getPublicVendorCatalog,
+  listConfigurableScopes,
+  resolveManageScope,
   resolveVendorScope,
   upsertVendorSetting,
   type VendorSettingUpdatePayload,
@@ -35,23 +37,35 @@ export const handleVendorRequest = async (req: any, res: any) => {
       return
     }
 
-    // 后台：读取当前管理员作用域的厂商 key 掩码 + 定价。
+    const query = new URL(req.url || '', 'http://localhost').searchParams
+
+    // 后台：超管可管理的作用域清单（全局 + 各普通管理员）。普管拿到的是空清单(用不到选择器)。
+    if (req.method === 'GET' && requestPath === `${VENDOR_SETTINGS_PATH}/scopes`) {
+      const currentUser = await requireAdminSessionUser(req, res)
+      if (!currentUser) return
+      const data = currentUser.role === 'SUPER_ADMIN' ? await listConfigurableScopes() : []
+      sendJson(res, 200, { data })
+      return
+    }
+
+    // 后台：读取作用域的厂商 key 掩码 + 定价。
+    // 超管可用 ?scope=<管理员id|global> 查看某个管理员的配置；普管锁定自己。
     if (req.method === 'GET' && requestPath === VENDOR_SETTINGS_PATH) {
       const currentUser = await requireAdminSessionUser(req, res)
       if (!currentUser) return
-      const scope = await resolveVendorScope(currentUser.id)
+      const scope = await resolveManageScope(currentUser, query.get('scope'))
       const data = await getAdminVendorSettings(scope)
       sendJson(res, 200, { data })
       return
     }
 
-    // 后台：写入当前管理员作用域某厂商的 key/启停/定价。
+    // 后台：写入某作用域某厂商的 key/启停/定价（超管可带 body.scope 指定管理员；普管锁定自己）。
     const detail = matchSettingDetail(requestPath)
     if (req.method === 'PUT' && detail) {
       const currentUser = await requireAdminSessionUser(req, res)
       if (!currentUser) return
-      const scope = await resolveVendorScope(currentUser.id)
-      const payload = (await readJsonBody(req)) as VendorSettingUpdatePayload | null
+      const payload = (await readJsonBody(req)) as (VendorSettingUpdatePayload & { scope?: string | null }) | null
+      const scope = await resolveManageScope(currentUser, payload?.scope)
 
       await upsertVendorSetting(scope, detail.vendorCode, payload || {})
 
@@ -62,7 +76,8 @@ export const handleVendorRequest = async (req: any, res: any) => {
         targetType: 'vendor',
         targetId: detail.vendorCode,
         afterJson: {
-          // 明文 key 不入审计，只记「是否变更了 key」。
+          // 明文 key 不入审计，只记「是否变更了 key」+ 目标作用域（超管代配时可追溯）。
+          scope: scope || 'global',
           apiKeyChanged: payload?.apiKey !== undefined,
           isEnabled: payload?.isEnabled,
           pricingModels: payload?.pricing ? Object.keys(payload.pricing) : undefined,

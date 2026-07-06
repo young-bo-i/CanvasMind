@@ -370,6 +370,40 @@ const buildPublicVendorCatalog = async (scope: string | null): Promise<PublicMod
   }
 }
 
+// ── 超管可管理的作用域清单：全局桶 + 各普通管理员（供后台作用域下拉）──────────
+export const listConfigurableScopes = async (): Promise<Array<{ scopeId: string | null; label: string }>> => {
+  const globalOption = { scopeId: null as string | null, label: '全局（超管 / 平台直属用户）' }
+  if (!isPrismaConfigured()) return [globalOption]
+  const admins = await prisma.appUser.findMany({
+    where: { role: 'ADMIN' },
+    select: { id: true, username: true, name: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  return [
+    globalOption,
+    ...admins.map((a) => ({ scopeId: a.id as string | null, label: a.name || a.username || a.id })),
+  ]
+}
+
+// 解析后台「填 key / 调价」要操作的作用域：
+//  - 超管：可指定任意作用域（scope 空/‘global’→全局桶 null；scope=管理员 id→校验为 ADMIN 后用之）；
+//  - 普通管理员：锁定到自己的作用域，忽略任何 scope 参数（杜绝越权改他人 key）。
+export const resolveManageScope = async (
+  currentUser: { id: string; role: string },
+  requestedScopeRaw?: string | null,
+): Promise<string | null> => {
+  if (currentUser.role === 'SUPER_ADMIN') {
+    const requested = String(requestedScopeRaw ?? '').trim()
+    if (!requested || requested === 'global') return null
+    const target = await prisma.appUser.findUnique({ where: { id: requested }, select: { role: true } })
+    if (!target || target.role !== 'ADMIN') {
+      throw new Error('目标管理员无效')
+    }
+    return requested
+  }
+  return resolveVendorScope(currentUser.id)
+}
+
 // ── 后台：读取某作用域的厂商配置（供「填 key + 调价」页面）─────────────────────
 // 返回内置厂商/模型清单 + 该作用域的 key 掩码/启停/定价覆盖（不回传明文 key）。
 export const getAdminVendorSettings = async (scope: string | null) => {
