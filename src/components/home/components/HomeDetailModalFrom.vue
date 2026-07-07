@@ -69,7 +69,7 @@
                                           fetchpriority="high"
                                           loading="eager"
                                           class="image-eTuIBd noAnimation home-work-detail-main-img"
-                                          :src="imageSrc"
+                                          :src="buildThumbnailUrl(imageSrc, 2560)"
                                           @load="onDetailImageLoad"
                                           @error="onDetailImageError">
                                     </Transition>
@@ -407,6 +407,7 @@
 import ContentGenerator from '@components/generate/ContentGenerator.vue'
 import { computed, nextTick, onBeforeUnmount, ref, unref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { buildThumbnailUrl } from '@/api/http'
 
 const BODY_SCROLL_LOCK = 'home-work-detail-modal-scroll-lock'
 

@@ -121,7 +121,8 @@
 
                                    draggable="false"
                                    loading="lazy"
-                                   :src="url"
+                                   decoding="async"
+                                   :src="buildThumbnailUrl(url, 960)"
                                    @click.stop="handlePreview(i)" />
                             </div>
                           </div>
@@ -239,6 +240,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
 import RecordPromptReferenceHeader from './RecordPromptReferenceHeader.vue'
+import { buildThumbnailUrl } from '@/api/http'
 
 /**
  * 图片生成阶段对话节点。
@@ -514,20 +516,27 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* 纯 CSS 流光占位（替代 2.2MB 加载动画 MP4） */
+/* 纯 CSS 流光占位（替代 2.2MB 加载动画 MP4）。
+   关键：用 transform 平移一张预模糊的宽渐变层，而不是 animate background-position。
+   后者每帧都要对 blur(28px) 图层整块重绘（paint），出图区常达 800×500、生成 30-90s，
+   多卡并发时是持续掉帧税；改成 translateX 后该层只绘制一次，逐帧仅在合成器平移(GPU)。
+   父级 .animation-wrapper 已 overflow:hidden，200% 宽超出部分被裁剪。 */
 .loading-shimmer {
-  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200%;
   height: 100%;
   background: linear-gradient(120deg, #6a5cff, #c86dd7, #5b8def, #38c6c6, #6a5cff);
-  background-size: 300% 300%;
   filter: blur(28px);
+  will-change: transform;
   animation: loading-shimmer-move 6s ease-in-out infinite;
 }
 
 @keyframes loading-shimmer-move {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% { transform: translateX(0); }
+  50% { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
 }
 
 /* 网格分割线 */

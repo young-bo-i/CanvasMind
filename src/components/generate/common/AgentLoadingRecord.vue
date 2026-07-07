@@ -21,9 +21,10 @@
                   <div class="user-reference-stack__card" :style="buildReferenceCardStyle(index)">
                     <img
                       class="user-reference-stack__image"
-                      :src="imageSrc"
+                      :src="buildThumbnailUrl(imageSrc, 160)"
                       alt="参考图"
                       loading="lazy"
+                      decoding="async"
                     >
                   </div>
                 </div>
@@ -72,6 +73,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import AgentLoadingIcon from './AgentLoadingIcon.vue'
+import { buildThumbnailUrl } from '@/api/http'
 
 const props = defineProps<{
   prompt: string

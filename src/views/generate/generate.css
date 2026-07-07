@@ -3683,8 +3683,10 @@ div.normal-button-mS74ha {
 }
 
 .dimension-layout-FUl4Nj {
-    -webkit-backdrop-filter: blur(80px);
-    backdrop-filter: blur(80px);
+    /* 输入面板常驻叠在滚动 feed 之上，blur 半径越大每帧对背后区域重采样越贵。
+       80px 下背景早已糊成一片纯色，16px 视觉无差却大幅降低合成开销。 */
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
     background: var(--component-input-bg);
     border-radius: 24px;
     flex-direction: column;
@@ -3760,8 +3762,9 @@ div.normal-button-mS74ha {
 }
 
 .task-indicator-container-flqXza .task-indicator-srBESV {
-    -webkit-backdrop-filter: blur(64px);
-    backdrop-filter: blur(64px);
+    /* 同上：任务指示器同样悬浮在 feed 上，64px→16px 视觉无差、降合成开销。 */
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
     background-color: var(--component-float-block-default);
     border-radius: 18px;
     bottom: 0;

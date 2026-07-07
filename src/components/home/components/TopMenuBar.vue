@@ -230,6 +230,10 @@ onMounted(() => {
   if (marketingModalVisible.value) {
     return
   }
+  // 概览需要登录（含积分余额）；匿名访客不拉，避免每次导航一发 401 触发自动登录弹窗。
+  if (!isLoggedIn.value) {
+    return
+  }
   void marketingCenterStore.loadOverview()
 })
 </script>

@@ -9,7 +9,7 @@
                 <img
                   v-if="currentImage"
                   class="image-player-image"
-                  :src="currentImage.src"
+                  :src="buildThumbnailUrl(currentImage.src, 2560)"
                   :alt="currentImage.id"
                   decoding="async"
                 >

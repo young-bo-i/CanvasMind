@@ -139,6 +139,9 @@ export const listGenerationSessions = async (currentUserId: string) => {
           { lastRecordAt: 'desc' },
           { updatedAt: 'desc' },
         ],
+        // 会话数只增不减，侧栏「最近」本就只需近段；上限住避免全量会话 × 封面子查询
+        // 无界增长（前端侧栏无分页，早期会话极少回访）。
+        take: 60,
       })
 
       return sessions.map(serializeGenerationSession)

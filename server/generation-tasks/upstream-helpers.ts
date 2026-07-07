@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import sharp from 'sharp'
 import { safeFetch } from '../shared/safe-fetch'
 import { resolveGatewayProviderUpstream } from '../vendor/service'
 import { getUploadsDir } from '../storage/service'
@@ -101,38 +102,67 @@ type RequestImageEditInput = {
   fetchWithBurstRateRetry: (input: Omit<FetchWithBurstRateRetryInput, 'logGenerationTask'>) => Promise<Response>
 }
 
+// 参考图归一化上限：手机原图常达 40MP+（如实测 7952×5304）、带 EXIF 旋转，
+// 上游（gpt-image-2 等）会直接判「Invalid image file or mode for image N」而整单失败。
+// 统一 EXIF 旋正 + 压到该边长内 + 重编码（去 EXIF/ICC/异常色彩模式），兼容各上游且顺带削 base64 体积。
+const MAX_REFERENCE_IMAGE_DIM = 2048
+
+// 用 sharp 归一化参考图字节：旋正、限尺寸、重编码为 PNG(含透明) 或 JPEG(不含透明)。
+// 解码失败时返回 null，由调用方回退原始字节，避免归一化本身造成新失败。
+const normalizeReferenceImageBuffer = async (
+  buffer: Buffer,
+): Promise<{ data: Buffer; mimeType: string } | null> => {
+  try {
+    const meta = await sharp(buffer, { failOn: 'none' }).metadata()
+    const hasAlpha = Boolean(meta.hasAlpha) || Number(meta.channels || 3) >= 4
+    const pipeline = sharp(buffer, { failOn: 'none' })
+      .rotate() // 依据 EXIF 方向旋正（原图 orientation=8 等）
+      .resize(MAX_REFERENCE_IMAGE_DIM, MAX_REFERENCE_IMAGE_DIM, { fit: 'inside', withoutEnlargement: true })
+    const data = hasAlpha ? await pipeline.png().toBuffer() : await pipeline.jpeg({ quality: 90 }).toBuffer()
+    return { data, mimeType: hasAlpha ? 'image/png' : 'image/jpeg' }
+  } catch {
+    return null
+  }
+}
+
+// 猜测原始 mime（仅在归一化失败、回退原始字节时用）。
+const guessReferenceImageMime = (value: string): string => {
+  const lower = value.toLowerCase()
+  if (lower.includes('.webp')) return 'image/webp'
+  if (lower.includes('.gif')) return 'image/gif'
+  if (lower.includes('.bmp')) return 'image/bmp'
+  if (lower.includes('.svg')) return 'image/svg+xml'
+  if (lower.includes('.jpg') || lower.includes('.jpeg')) return 'image/jpeg'
+  return 'image/png'
+}
+
 export const resolveServerReferenceImageBlob = async (imageValue: string) => {
   const normalizedValue = String(imageValue || '').trim()
+  let sourceBuffer: Buffer
   if (normalizedValue.startsWith(UPLOADS_PUBLIC_PATH_PREFIX)) {
     const uploadsDir = getUploadsDir()
-    const relativePath = decodeURIComponent(normalizedValue.slice(UPLOADS_PUBLIC_PATH_PREFIX.length))
+    // 去掉可能的 ?w= 查询串，避免误当文件名的一部分。
+    const relativePath = decodeURIComponent(normalizedValue.slice(UPLOADS_PUBLIC_PATH_PREFIX.length).split('?')[0])
     const filePath = path.resolve(uploadsDir, relativePath)
     if (!filePath.startsWith(uploadsDir)) {
       throw new Error('参考图路径非法')
     }
-
-    const fileBuffer = await fs.readFile(filePath)
-    const mimeType = normalizedValue.toLowerCase().includes('.webp')
-      ? 'image/webp'
-      : normalizedValue.toLowerCase().includes('.gif')
-        ? 'image/gif'
-        : normalizedValue.toLowerCase().includes('.bmp')
-          ? 'image/bmp'
-          : normalizedValue.toLowerCase().includes('.svg')
-            ? 'image/svg+xml'
-            : normalizedValue.toLowerCase().includes('.jpg') || normalizedValue.toLowerCase().includes('.jpeg')
-              ? 'image/jpeg'
-              : 'image/png'
-    return new Blob([fileBuffer], { type: mimeType })
+    sourceBuffer = await fs.readFile(filePath)
+  } else {
+    // 参考图地址来自用户/模型输入(任意公网 URL)：禁止私网目标，防 SSRF。
+    const response = await safeFetch(normalizedValue, {}, { allowPrivateHosts: false })
+    if (!response.ok) {
+      throw new Error(`参考图读取失败 (${response.status})`)
+    }
+    sourceBuffer = Buffer.from(await response.arrayBuffer())
   }
 
-  // 参考图地址来自用户/模型输入(任意公网 URL)：禁止私网目标，防 SSRF。
-  const response = await safeFetch(normalizedValue, {}, { allowPrivateHosts: false })
-  if (!response.ok) {
-    throw new Error(`参考图读取失败 (${response.status})`)
+  const normalized = await normalizeReferenceImageBuffer(sourceBuffer)
+  if (normalized) {
+    return new Blob([normalized.data], { type: normalized.mimeType })
   }
-
-  return response.blob()
+  // 归一化失败（非位图/解码失败）：回退原始字节 + 猜测 mime。
+  return new Blob([sourceBuffer], { type: guessReferenceImageMime(normalizedValue) })
 }
 
 export interface AgentWorkspaceModelPlanResult {
@@ -671,6 +701,8 @@ const performGeminiImageRequest = async (input: {
   }
 
   const numToken = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
+  // requestBody 含 base64 参考图(可达数 MB)且各次尝试不变，序列化一次即可，别在重试循环内重复 stringify。
+  const requestBodyJson = JSON.stringify(requestBody)
   // nano-banana-pro 是 thinking 图片模型,会偶发返回"无图"(安全软拦截 / 仅思考文本 / 空 candidate)。
   // 对这类瞬时空响应重试一次兜底;显式安全/内容拦截则不重试(重试也会被拦,避免无谓扣费)。
   const maxAttempts = 2
@@ -690,7 +722,7 @@ const performGeminiImageRequest = async (input: {
         attempt,
       },
       onRetry: input.onRetry,
-      init: { method: 'POST', headers, body: JSON.stringify(requestBody) },
+      init: { method: 'POST', headers, body: requestBodyJson },
     })
 
     if (!response.ok) {

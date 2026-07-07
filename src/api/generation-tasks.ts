@@ -126,8 +126,12 @@ export const stopGenerationTask = async (taskId: string, options: RequestOptions
   })
 }
 
-// 视频超时/失败后手动「重新查询」：再查一次上游(可能只是排队慢)，复用续询机制继续轮询。
-export const requeryVideoGenerationTask = async (taskId: string, options: RequestOptions = {}) => {
+// 视频超时/失败后「重新查询」：再查一次上游(可能只是排队慢)，复用续询机制继续轮询。
+// manual=true 表示用户手动点按钮（后端放宽续询上限）；页面加载时的自动重查不带该标志，受自动上限约束。
+export const requeryVideoGenerationTask = async (
+  taskId: string,
+  options: RequestOptions & { manual?: boolean } = {},
+) => {
   const response = await fetch(buildApiUrl(`${GENERATION_TASKS_API_PATH}/${encodeURIComponent(taskId)}/requery`), {
     method: 'POST',
     credentials: 'include',
@@ -135,6 +139,7 @@ export const requeryVideoGenerationTask = async (taskId: string, options: Reques
     headers: {
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ manual: Boolean(options.manual) }),
   })
 
   notifyMarketingPointsUpdated(response)

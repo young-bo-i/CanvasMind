@@ -197,6 +197,31 @@ const executeImageGenerationTask = async (task: RunningGenerationTask, payload: 
   })
 }
 
+// 视频上游 per-request 超时：状态轮询 GET 30s、提交 POST（可能上传最多 9 张参考图）120s。
+// 图片链路有 600s headers 超时，视频链路此前完全没有——上游 TCP 挂死时整条任务只能
+// 等 undici 默认 300s 兜底，连续容错后最坏可假死 ~30 分钟。
+const VIDEO_UPSTREAM_GET_TIMEOUT_MS = 30_000
+const VIDEO_UPSTREAM_SUBMIT_TIMEOUT_MS = 120_000
+
+// 包一层 per-request 超时：外部任务 signal 仍转发（用户停止/锁丢失触发），
+// 另起内层 AbortController 到点主动 abort。超时抛错计入执行器的 consecutivePollErrors 重试路径。
+const fetchWithRequestTimeout = async (url: string, init: RequestInit, externalSignal: AbortSignal, timeoutMs: number) => {
+  const controller = new AbortController()
+  const abortFromExternal = () => controller.abort((externalSignal as any).reason)
+  if (externalSignal.aborted) {
+    controller.abort((externalSignal as any).reason)
+  } else {
+    externalSignal.addEventListener('abort', abortFromExternal, { once: true })
+  }
+  const timer = setTimeout(() => controller.abort(new Error(`上游请求超时（${timeoutMs}ms）`)), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+    externalSignal.removeEventListener('abort', abortFromExternal)
+  }
+}
+
 // 统一的视频上游 JSON 请求（带 Bearer、外部 signal 转发、JSON 解析）。
 const fetchVideoUpstreamJson = async (input: {
   url: string
@@ -212,12 +237,11 @@ const fetchVideoUpstreamJson = async (input: {
   if (input.method === 'POST') {
     headers['Content-Type'] = 'application/json'
   }
-  const response = await fetch(input.url, {
+  const response = await fetchWithRequestTimeout(input.url, {
     method: input.method,
     headers,
     body: input.method === 'POST' && input.body ? JSON.stringify(input.body) : undefined,
-    signal: input.signal,
-  })
+  }, input.signal, input.method === 'POST' ? VIDEO_UPSTREAM_SUBMIT_TIMEOUT_MS : VIDEO_UPSTREAM_GET_TIMEOUT_MS)
   const rawText = await response.text().catch(() => '')
   let data: any = null
   try {
@@ -239,12 +263,11 @@ const fetchVideoUpstreamForm = async (input: {
   if (input.apiKey) {
     headers.Authorization = `Bearer ${input.apiKey}`
   }
-  const response = await fetch(input.url, {
+  const response = await fetchWithRequestTimeout(input.url, {
     method: 'POST',
     headers,
     body: input.formData,
-    signal: input.signal,
-  })
+  }, input.signal, VIDEO_UPSTREAM_SUBMIT_TIMEOUT_MS)
   const rawText = await response.text().catch(() => '')
   let data: any = null
   try {
@@ -441,6 +464,11 @@ export const stopGenerationTask = async (recordId: string, currentUserId: string
 // ===== 断点续询：服务重启后恢复在途视频任务 / 回收不可续询的孤儿 =====
 
 const MAX_VIDEO_RESUME_COUNT = 3
+// 自动重查（前端进页面对超时记录自动触发）的续询上限：超过后不再拉起，避免上游永久
+// processing 的坏任务形成永动闭环。手动点按钮（manual=true）不受此限。
+const MAX_VIDEO_AUTO_REQUERY_COUNT = 2
+// 重查只为取回上游其实已完成、只是当时没查到的结果，15 分钟足够，不必再陪跑满 60 分钟。
+const REQUERY_POLL_TIMEOUT_MS = 15 * 60 * 1000
 
 const readVideoTaskMeta = (metaJson: unknown): SavedVideoTask | null => {
   if (!metaJson || typeof metaJson !== 'object' || Array.isArray(metaJson)) return null
@@ -549,7 +577,11 @@ const resumeInflightVideoTasks = async () => {
 // 手动「重新查询」：超时/失败后的视频记录，用户点按钮主动再查一次上游（可能只是排队慢）。
 // 复用续询(resumeVideoTask)机制：复位记录为进行中 + 重新挂轮询，前端重订阅 SSE 看进度。
 // 计费：超时已退款时，续询完成默认不二次扣费（属边界情况）；如需二次扣费另行处理。
-export const requeryVideoGenerationTask = async (recordId: string, userId: string) => {
+export const requeryVideoGenerationTask = async (
+  recordId: string,
+  userId: string,
+  options: { manual?: boolean } = {},
+) => {
   const id = String(recordId || '').trim()
   if (!id) {
     throw new GenerationTaskRequestError(400, '缺少记录 ID')
@@ -576,6 +608,13 @@ export const requeryVideoGenerationTask = async (recordId: string, userId: strin
     throw new GenerationTaskRequestError(400, '该任务没有可查询的上游任务号，无法重新查询')
   }
 
+  // 自动重查（非手动）超过上限：不再拉起轮询，直接返回当前记录（保持失败/超时态）。
+  // 否则上游永久 processing 的坏任务会「进页面→重查→60/15分钟轮询→再超时」无限循环。
+  if (!options.manual && (videoTask.resumeCount || 0) >= MAX_VIDEO_AUTO_REQUERY_COUNT) {
+    logGenerationTask('task_requery:auto_cap_skip', { recordId: rec.id, resumeCount: videoTask.resumeCount })
+    return getGenerationRecordById(id, userId)
+  }
+
   // 补全计费字段（沿用原 CONSUME 流水；缺失时按记录反查）。
   // 金额=0 也算缺失（否则后续真实失败退款/补扣按 0 处理变空操作 → 漏退/白嫖），
   // 与 resumeInflightVideoTasks 的反查条件保持一致。
@@ -589,9 +628,11 @@ export const requeryVideoGenerationTask = async (recordId: string, userId: strin
 
   const nextVideoTask: SavedVideoTask = {
     ...videoTask,
-    // 手动重新查询给全新的轮询时间预算：否则沿用旧 startedAt 会因早已超时而立刻再抛"超时"，
-    // 拿不到上游其实已完成的结果。
+    // 重新查询给全新的轮询起点：否则沿用旧 startedAt 会因早已超时而立刻再抛"超时"，
+    // 拿不到上游其实已完成的结果。但预算收敛到 15 分钟（重查只为取回已完成结果，
+    // 不必再陪跑满 60 分钟，也避免坏任务长时间占轮询资源）。
     startedAt: Date.now(),
+    pollTimeoutMs: REQUERY_POLL_TIMEOUT_MS,
     resumeCount: (videoTask.resumeCount || 0) + 1,
     associationNo: associationNo || undefined,
     billedPointCost: billedPointCost || undefined,

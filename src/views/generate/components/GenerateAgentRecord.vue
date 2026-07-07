@@ -19,9 +19,10 @@
                   <div class="user-reference-stack__card" :style="buildReferenceCardStyle(index)">
                     <img
                       class="user-reference-stack__image"
-                      :src="item.src"
+                      :src="buildThumbnailUrl(item.src, 160)"
                       alt="参考图"
                       loading="lazy"
+                      decoding="async"
                     >
                   </div>
                 </div>
@@ -231,12 +232,12 @@
                                   <div style="transition:opacity 300ms;opacity:1">
                                     <img
                                       class="image-TLmgkP"
-                                      :src="slot.image!.imageSrc"
+                                      :src="buildThumbnailUrl(slot.image!.imageSrc, 960)"
                                       :alt="slot.image!.promptText || slot.image!.id"
                                       data-apm-action="ai-generated-image-record-card"
                                       draggable="false"
-                                      fetchpriority="high"
                                       loading="lazy"
+                                      decoding="async"
                                     >
                                   </div>
                                 </div>
@@ -324,6 +325,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { buildThumbnailUrl } from '@/api/http'
 import type { AgentImageResult, AgentRunState, AgentProcessSection, AgentProcessTaskItem } from '@/types/agent'
 import { getAgentSkillConfig } from '@/config/agentSkills'
 import './generate-agent-record.css'

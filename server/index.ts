@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import fs from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import crypto from 'node:crypto'
@@ -149,13 +150,24 @@ const handleUploadsRequest = async (req: any, res: any, requestPath: string) => 
   const filePath = path.resolve(uploadsDir, relativePath)
 
   // 防止目录穿越到上传目录之外：必须带分隔符边界，避免 /data/uploads-evil 被误判命中 /data/uploads。
+  // 命中即 404（同样不落 SPA 兜底，避免被 CF 按扩展名缓存）。
   if (filePath !== uploadsDir && !filePath.startsWith(uploadsDir + path.sep)) {
-    return false
+    res.statusCode = 404
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(JSON.stringify({ error: '文件不存在' }))
+    return true
   }
 
-  // 文件不存在则返回未处理。
+  // 文件不存在：直接 404 JSON（no-store），不再落到 SPA index.html 兜底。
+  // 否则失效图片 URL 会拿到 200 + HTML，且 Cloudflare 会按 .png/.jpg 扩展名把这份 HTML
+  // 缓存数小时（edge TTL），期间即使文件补回也持续吐 HTML，<img> onerror 也收不到错误无法降级。
   if (!(await isFileExists(filePath))) {
-    return false
+    res.statusCode = 404
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(JSON.stringify({ error: '文件不存在' }))
+    return true
   }
 
   const stat = await fs.stat(filePath)
@@ -180,34 +192,98 @@ const handleUploadsRequest = async (req: any, res: any, requestPath: string) => 
     return true
   }
 
-  let body: Buffer
-  let contentType = getContentTypeByFilePath(filePath)
+  // 缩略图分支：产物是小体积 webp，直接整块回（无需 Range）。
   if (targetWidth > 0) {
     const thumb = await readOrCreateThumbnail(filePath, relativePath, stat.mtimeMs, targetWidth, uploadsDir)
     if (thumb) {
-      body = thumb
-      contentType = 'image/webp'
-    } else {
-      body = await fs.readFile(filePath) // 解码失败兜底原图
+      res.statusCode = 200
+      res.setHeader('Content-Type', 'image/webp')
+      res.end(thumb)
+      return true
     }
-  } else {
-    body = await fs.readFile(filePath)
+    // 解码失败 → 落到下面的原图流式分支兜底。
   }
 
-  res.statusCode = 200
+  // 原图/视频/音频：流式下发 + Range 支持。
+  // - iOS Safari 播放媒体强制要求 byte-range；无 Accept-Ranges/206 则视频不可播、拖进度全量重下。
+  // - createReadStream 分块推送，几十 MB 的 mp4 不再整块 readFile 进内存（并发播放不再堆峰值）。
+  const contentType = getContentTypeByFilePath(filePath)
   res.setHeader('Content-Type', contentType)
-  res.end(body)
+  res.setHeader('Accept-Ranges', 'bytes')
+
+  const total = stat.size
+  const range = parseByteRange(req.headers['range'], total)
+
+  if (range === 'unsatisfiable') {
+    res.statusCode = 416
+    res.setHeader('Content-Range', `bytes */${total}`)
+    res.end()
+    return true
+  }
+
+  const streamFile = (start: number, end: number, statusCode: number) => {
+    res.statusCode = statusCode
+    res.setHeader('Content-Length', String(end - start + 1))
+    const stream = createReadStream(filePath, { start, end })
+    stream.on('error', () => {
+      // 读流中途失败（文件被删等）：头已发出无法改状态码，直接断开。
+      try { res.destroy() } catch { /* 已断开 */ }
+    })
+    stream.pipe(res)
+  }
+
+  if (range) {
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${total}`)
+    streamFile(range.start, range.end, 206)
+  } else {
+    streamFile(0, Math.max(0, total - 1), 200)
+  }
   return true
 }
 
+// 解析单段 Range 头（bytes=start-end / start- / -suffix）。
+// 返回 null = 无法解析或无 Range（按 200 全量处理）；'unsatisfiable' = 越界（返回 416）。
+const parseByteRange = (
+  header: unknown,
+  size: number,
+): { start: number; end: number } | 'unsatisfiable' | null => {
+  const matched = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim())
+  if (!matched) return null
+  const startStr = matched[1]
+  const endStr = matched[2]
+  if (startStr === '' && endStr === '') return null
+
+  let start: number
+  let end: number
+  if (startStr === '') {
+    // 末尾 N 字节
+    const suffix = Number(endStr)
+    if (!Number.isFinite(suffix) || suffix <= 0) return null
+    if (size === 0) return 'unsatisfiable'
+    start = Math.max(0, size - suffix)
+    end = size - 1
+  } else {
+    start = Number(startStr)
+    end = endStr === '' ? size - 1 : Number(endStr)
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0) return null
+  if (start > end || start >= size) return 'unsatisfiable'
+  end = Math.min(end, size - 1)
+  return { start, end }
+}
+
 // 允许的缩略图宽度白名单：限制磁盘缓存条目数，防止 ?w= 任意取值刷爆缓存盘。
-const THUMBNAIL_WIDTH_STEPS = [320, 640, 960, 1280]
+// 320-1280 用于网格/卡片缩略；1920/2560 用于全屏预览大图（省 90% 传输又不糊，
+// 绝大多数屏幕 ≤2560px；下载按钮仍走原图）。sharp withoutEnlargement 保证小图不被放大。
+const THUMBNAIL_WIDTH_STEPS = [320, 640, 960, 1280, 1920, 2560]
 const snapThumbnailWidth = (width: number) => {
   for (const step of THUMBNAIL_WIDTH_STEPS) {
     if (width <= step) return step
   }
   return THUMBNAIL_WIDTH_STEPS[THUMBNAIL_WIDTH_STEPS.length - 1]
 }
+// 全屏预览档（≥1920）用更高 webp 质量，避免大图肉眼可见的压缩痕。
+const thumbnailWebpQuality = (width: number) => (width >= 1920 ? 82 : 72)
 
 const isResizableImagePath = (filePath: string) => /\.(png|jpe?g|webp|avif)$/i.test(filePath)
 
@@ -244,7 +320,7 @@ const readOrCreateThumbnail = async (
     const output = await sharp(source)
       .rotate() // 依据 EXIF 方向自动旋正
       .resize(width, null, { fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 72 })
+      .webp({ quality: thumbnailWebpQuality(width) })
       .toBuffer()
     await fs.mkdir(cacheDir, { recursive: true })
     await fs.writeFile(cachePath, output).catch(() => {})
@@ -278,10 +354,29 @@ const getContentTypeByFilePath = (filePath: string) => {
       return 'image/jpeg'
     case '.webp':
       return 'image/webp'
+    case '.avif':
+      return 'image/avif'
     case '.gif':
       return 'image/gif'
     case '.ico':
       return 'image/x-icon'
+    // 视频/音频：生成的成品已物化到 /uploads，需正确 MIME 才能在 iOS Safari/WebView 内联播放
+    // （此前一律 application/octet-stream + nosniff → 拒播/强制下载）。
+    case '.mp4':
+    case '.m4v':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mov':
+      return 'video/quicktime'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.m4a':
+      return 'audio/mp4'
+    case '.wav':
+      return 'audio/wav'
+    case '.ogg':
+      return 'audio/ogg'
     case '.woff':
       return 'font/woff'
     case '.woff2':

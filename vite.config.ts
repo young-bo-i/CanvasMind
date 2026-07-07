@@ -20,15 +20,20 @@ export default defineConfig({
     Components({
       resolvers: [ElementPlusResolver()],
     }),
-    // 构建产物体积可视化分析：每次 build 后生成 dist/stats.html，
-    // 通过 ANALYZE=1 时自动打开浏览器，便于排查重复/超大依赖。
-    visualizer({
-      filename: 'dist/stats.html',
-      gzipSize: true,
-      brotliSize: true,
-      open: process.env.ANALYZE === '1',
-      template: 'treemap',
-    }),
+    // 构建产物体积可视化分析：仅在 ANALYZE=1 时启用。
+    // 该插件会对全部模块计算 gzip+brotli（实测独占约 26s / 全程 43s 的构建时长），
+    // 常规构建（CI/发版）无需分析，去掉后构建大幅提速；需要排查依赖时 `ANALYZE=1 npm run build`。
+    ...(process.env.ANALYZE === '1'
+      ? [
+          visualizer({
+            filename: 'dist/stats.html',
+            gzipSize: true,
+            brotliSize: true,
+            open: true,
+            template: 'treemap',
+          }),
+        ]
+      : []),
   ],
 
   // 开发服务器配置
@@ -89,14 +94,11 @@ export default defineConfig({
           if (!id.includes('node_modules')) {
             return
           }
-          // Element Plus 图标
-          if (id.includes('@element-plus/icons-vue')) {
-            return 'el-icons'
-          }
-          // Element Plus 主体
-          if (id.includes('element-plus')) {
-            return 'element-plus'
-          }
+          // 只手动分离 vue / vue-router 两个稳定核心；其余（含 element-plus）交给
+          // Rollup 默认分包。关键：绝不能用 id.includes('element-plus') 这类泛匹配把
+          // 整个 element-plus 收进一个 chunk —— 那会破坏对其 barrel(es/index.mjs) 的
+          // tree-shaking，把 174 个组件全量打进首屏（实测 gzip 227KB，占首屏 62%）。
+          // 交给默认分包后按需摇树，首屏仅保留真正用到的 ~16 个组件。
           // Vue Router 单独
           if (id.includes('vue-router')) {
             return 'vue-router'
@@ -105,8 +107,6 @@ export default defineConfig({
           if (/[\\/]node_modules[\\/]@?vue[\\/]/.test(id) && !id.includes('vue-flow')) {
             return 'vue'
           }
-          // 其余第三方依赖统一进 vendor
-          return 'vendor'
         },
       },
     },

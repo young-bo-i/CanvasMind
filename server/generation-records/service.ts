@@ -247,11 +247,13 @@ const parseDataUrl = (value: string) => {
   }
 }
 
-// 远程资源下载超时与体积上限（防止挂死连接占内存、超大文件 arrayBuffer 全量入内存致 OOM）。
+// 远程资源下载超时与体积上限（防止挂死连接占内存、超大文件全量入内存致 OOM）。
+// 上限从 500MB 收到 150MB：本站成品图/视频一般 5-50MB，150MB 已很宽松；过宽的上限意味着
+// 一次异常响应就能吃掉小容器大半内存。仍可用 ASSET_DOWNLOAD_MAX_BYTES 覆盖。
 const ASSET_DOWNLOAD_TIMEOUT_MS = Number.parseInt(process.env.ASSET_DOWNLOAD_TIMEOUT_MS || '120000', 10)
-const ASSET_DOWNLOAD_MAX_BYTES = Number.parseInt(process.env.ASSET_DOWNLOAD_MAX_BYTES || String(500 * 1024 * 1024), 10)
+const ASSET_DOWNLOAD_MAX_BYTES = Number.parseInt(process.env.ASSET_DOWNLOAD_MAX_BYTES || String(150 * 1024 * 1024), 10)
 
-// 下载远程资源，转换为可上传的缓冲区。带超时中止 + Content-Length 体积拦截。
+// 下载远程资源，转换为可上传的缓冲区。带超时中止 + Content-Length 预拦截 + 流式字节守卫。
 const downloadRemoteAsset = async (url: string) => {
   logGenerationRecord('download_remote_asset:start', {
     url,
@@ -270,28 +272,54 @@ const downloadRemoteAsset = async (url: string) => {
       throw new Error(`下载远程资源失败：${response.status}`)
     }
 
-    // 提前用 Content-Length 拦截超大文件，避免 arrayBuffer 全量入内存造成 OOM。
+    // 提前用 Content-Length 拦截超大文件（有声明时最快路径）。
     const declaredSize = Number(response.headers.get('content-length') || 0)
     if (declaredSize && declaredSize > ASSET_DOWNLOAD_MAX_BYTES) {
       logGenerationRecord('download_remote_asset:too_large', { url, declaredSize, limit: ASSET_DOWNLOAD_MAX_BYTES })
       throw new Error(`远程资源过大（${declaredSize} 字节），超过上限 ${ASSET_DOWNLOAD_MAX_BYTES}`)
     }
 
-    const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > ASSET_DOWNLOAD_MAX_BYTES) {
-      logGenerationRecord('download_remote_asset:too_large', { url, size: arrayBuffer.byteLength, limit: ASSET_DOWNLOAD_MAX_BYTES })
-      throw new Error(`远程资源过大（${arrayBuffer.byteLength} 字节），超过上限 ${ASSET_DOWNLOAD_MAX_BYTES}`)
+    // 流式读取 + 字节守卫：chunked 响应无 Content-Length 时，arrayBuffer() 会把整个响应
+    // 读满才后置检查（可先吃满内存才报错）；这里逐块累计，一旦越过上限立即 abort 中止下载，
+    // 把峰值内存钳在上限内。
+    let buffer: Buffer
+    if (response.body) {
+      const reader = (response.body as any).getReader()
+      const chunks: Uint8Array[] = []
+      let total = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          total += value.byteLength
+          if (total > ASSET_DOWNLOAD_MAX_BYTES) {
+            controller.abort()
+            logGenerationRecord('download_remote_asset:too_large', { url, size: total, limit: ASSET_DOWNLOAD_MAX_BYTES })
+            throw new Error(`远程资源过大（>${ASSET_DOWNLOAD_MAX_BYTES} 字节），已中止下载`)
+          }
+          chunks.push(value)
+        }
+      }
+      buffer = Buffer.concat(chunks)
+    } else {
+      // 无可读流兜底：退回 arrayBuffer + 后置检查。
+      const arrayBuffer = await response.arrayBuffer()
+      if (arrayBuffer.byteLength > ASSET_DOWNLOAD_MAX_BYTES) {
+        logGenerationRecord('download_remote_asset:too_large', { url, size: arrayBuffer.byteLength, limit: ASSET_DOWNLOAD_MAX_BYTES })
+        throw new Error(`远程资源过大（${arrayBuffer.byteLength} 字节），超过上限 ${ASSET_DOWNLOAD_MAX_BYTES}`)
+      }
+      buffer = Buffer.from(arrayBuffer)
     }
 
     logGenerationRecord('download_remote_asset:success', {
       url,
       mimeType: String(response.headers.get('content-type') || '').trim() || undefined,
-      size: arrayBuffer.byteLength,
+      size: buffer.byteLength,
     })
 
     return {
       mimeType: String(response.headers.get('content-type') || '').trim() || undefined,
-      buffer: Buffer.from(arrayBuffer),
+      buffer,
     }
   } finally {
     clearTimeout(timeoutTimer)

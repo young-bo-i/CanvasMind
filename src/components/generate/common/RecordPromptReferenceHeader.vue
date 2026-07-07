@@ -24,9 +24,10 @@
               >
                 <img
                   class="image-iZ3_fA"
-                  :src="item.src"
+                  :src="buildThumbnailUrl(item.src, 160)"
                   alt="参考图"
                   loading="lazy"
+                  decoding="async"
                   @error="handleReferenceImageError(item.src, index)"
                 >
               </div>
@@ -112,6 +113,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { buildThumbnailUrl } from '@/api/http'
 
 // 点击「引用」(参考图/提示词头部) → 复用该记录内容回填到输入框（对齐即梦）。
 const emit = defineEmits<{ (e: 'reuse'): void }>()

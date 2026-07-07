@@ -33,8 +33,24 @@ const RESOLUTION_TARGET_LONG_EDGE: Record<string, number> = {
 const MAX_UPSTREAM_LONG_EDGE = 3840
 const MAX_UPSTREAM_PIXELS = 3840 * 2160
 
+// 上游最小「像素预算」:实测 gpt-image-2 接受 1024x1024(1.05M)、拒绝 576x1024(0.59M) 报
+// "Requested resolution is below the current minimum pixel budget"。低于该预算的尺寸(0.5K 档、
+// 1K 档非正方比例)会整单失败且按不退款策略仍扣费,故下发前等比放大到该预算之上。
+const MIN_UPSTREAM_PIXELS = 1024 * 1024
+
 // 向下取整到 16 的倍数(夹取场景必须 floor 而非 round,否则可能回弹越过上限)。下限 16。
 const floorTo16 = (value: number): number => Math.max(16, Math.floor(value / 16) * 16)
+// 向上取整到 16 的倍数(放大场景必须 ceil,否则四舍五入可能回落到预算之下)。
+const ceilTo16 = (value: number): number => Math.max(16, Math.ceil(value / 16) * 16)
+
+// 若总像素低于最小预算,等比放大到预算之上(保持比例 + 16 整除);已达标则原样返回。
+const raiseToMinPixelBudget = (w: number, h: number): { w: number; h: number } => {
+  if (w * h >= MIN_UPSTREAM_PIXELS) {
+    return { w, h }
+  }
+  const scale = Math.sqrt(MIN_UPSTREAM_PIXELS / (w * h))
+  return { w: ceilTo16(w * scale), h: ceilTo16(h * scale) }
+}
 
 // 等比缩小 (w,h) 直到同时满足最长边与总像素上限;已在范围内则原样返回。
 const clampToUpstreamLimits = (w: number, h: number): { w: number; h: number } => {
@@ -179,10 +195,12 @@ export const coerceImageSizeToPixels = (size: unknown): string => {
   const w = Number(matched[1])
   const h = Number(matched[2])
   if (w >= 256 && h >= 256 && w % 16 === 0 && h % 16 === 0) {
-    // 已是合规像素；但若超出上游硬上限(最长边 3840 / 总像素 8.29M)则等比缩回范围内，
-    // 避免被 "longest edge must be ≤ 3840" 或 "exceeds pixel budget" 之类 400 拒绝
+    // 已是合规像素；先按最小像素预算放大(修 576x1024 等 <1M 被上游拒的低档尺寸)，
+    // 再按上游硬上限(最长边 3840 / 总像素 8.29M)缩回范围内，
+    // 避免被 "below minimum pixel budget" / "longest edge must be ≤ 3840" / "exceeds pixel budget" 拒绝
     //（兜住旧前端缓存 / 后台默认 size / 伪造请求体）。
-    const clamped = clampToUpstreamLimits(w, h)
+    const raised = raiseToMinPixelBudget(w, h)
+    const clamped = clampToUpstreamLimits(raised.w, raised.h)
     return `${clamped.w}x${clamped.h}`
   }
   return resolveImagePixelSize({ ratio: `${w}:${h}` }) || raw

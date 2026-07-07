@@ -1,5 +1,5 @@
 import { requireCurrentSessionUser } from '../auth/session'
-import { sendJson } from '../shared/http'
+import { sendJson, readJsonBody } from '../shared/http'
 import { isPrismaConfigured } from '../db/prisma'
 import { writeScopedLog } from '../shared/logging'
 import { GENERATION_TASKS_BASE_PATH } from './constants'
@@ -82,9 +82,13 @@ export const handleGenerationTasksRequest = async (req: any, res: any) => {
       return
     }
 
-    // 视频超时/失败后手动「重新查询」：复用续询机制再查一次上游。
+    // 视频超时/失败后「重新查询」：复用续询机制再查一次上游。
+    // body.manual=true 表示用户手动点按钮（放宽续询上限）；前端页面加载时的自动重查不带该标志，
+    // 受自动续询上限约束，避免上游永久 processing 的坏任务形成「进页面→重查→再超时」永动闭环。
     if (req.method === 'POST' && requestUrl === `${GENERATION_TASKS_BASE_PATH}/${encodeURIComponent(taskId)}/requery`) {
-      const data = await requeryVideoGenerationTask(taskId, currentUser.id)
+      const body = await readJsonBody(req).catch(() => null)
+      const manual = Boolean((body as any)?.manual)
+      const data = await requeryVideoGenerationTask(taskId, currentUser.id, { manual })
       // 续询可能触发退款/补扣：提示前端刷新积分余额。
       res.setHeader('x-marketing-points-updated', '1')
       sendJson(res, 200, { data })

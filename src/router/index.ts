@@ -3,7 +3,9 @@ import { useAuthStore } from '../stores/auth'
 import { useSystemInitStore } from '../stores/system-init'
 import { useLoadingStore } from '../stores/loading'
 
-// 核心页面懒加载，避免全部进入主 bundle 拖慢首屏
+// 核心页面懒加载，避免全部进入主 bundle 拖慢首屏。
+// 注：首页 home.vue 静态内嵌 ContentGenerator 等重组件，若改静态 import 会把它们一并卷入
+// entry（实测 entry 38→106KB gzip、首屏 98→187KB），得不偿失，故维持懒加载。
 const Home = () => import('../views/home/home.vue')
 const Generate = () => import('../views/generate/generate.vue')
 const AccountManagement = () => import('../views/account/AccountManagement.vue')

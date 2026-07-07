@@ -1109,7 +1109,7 @@ const handleMakeSameRecord = async (record: GeneratingRecord) => {
 }
 
 // 视频超时/失败后手动「重新查询」：让后端再查一次上游并复用续询机制继续轮询，前端复位为进行中并重新订阅 SSE。
-const handleRequeryVideoRecord = async (record: GeneratingRecord) => {
+const handleRequeryVideoRecord = async (record: GeneratingRecord, manual = false) => {
   if (!record.dbId) {
     ElMessage.warning('该记录尚未持久化，无法重新查询')
     return
@@ -1117,7 +1117,7 @@ const handleRequeryVideoRecord = async (record: GeneratingRecord) => {
   if (record.requerying) return
   record.requerying = true
   try {
-    const saved = await requeryVideoGenerationTask(record.dbId)
+    const saved = await requeryVideoGenerationTask(record.dbId, { manual })
     // 后端已复位为进行中并重新挂轮询：本地同步 + 复位状态 + 重新订阅事件流。
     syncRecordWithPersisted(record, saved)
     record.done = false
@@ -3491,7 +3491,7 @@ onUnmounted(() => {
                     @make-same="handleMakeSameRecord(record)"
                     @download="handleDownloadResult($event, 'video')"
                     @delete="handleDeleteRecord(record)"
-                    @requery="handleRequeryVideoRecord(record)"
+                    @requery="handleRequeryVideoRecord(record, true)"
                 />
                 <ImageLoadingRecord
                     v-else-if="record.type === 'image'"

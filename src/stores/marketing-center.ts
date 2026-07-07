@@ -13,6 +13,10 @@ const loading = ref(false)
 const submitting = ref(false)
 let loadPromise: Promise<MarketingCenterOverviewResponse | null> | null = null
 let authEventBound = false
+// 内存 TTL：概览随每次路由切换被 TopMenuBar/BottomMenu 重挂载重拉，加 60s TTL 去重；
+// 积分变更 / 登录走 force=true 绕过（见 ensureAuthRefreshListener），不会读到陈旧余额。
+let overviewLoadedAt = 0
+const OVERVIEW_TTL_MS = 60_000
 
 // 全局营销数据单例，统一承接积分余额与卡密兑换视图。
 export const useMarketingCenterStore = () => {
@@ -34,6 +38,7 @@ export const useMarketingCenterStore = () => {
 
   const clearOverview = () => {
     overview.value = null
+    overviewLoadedAt = 0 // 登出后清时间戳，下次登录立即真实重拉
   }
 
   const loadOverview = async (force = false) => {
@@ -42,11 +47,16 @@ export const useMarketingCenterStore = () => {
     if (loadPromise && !force) {
       return loadPromise
     }
+    // TTL 命中：未过期直接复用内存概览。
+    if (!force && overviewLoadedAt && Date.now() - overviewLoadedAt < OVERVIEW_TTL_MS) {
+      return overview.value
+    }
 
     loading.value = true
     loadPromise = getMarketingCenterOverview()
       .then((result) => {
         overview.value = result
+        overviewLoadedAt = Date.now()
         return result
       })
       .finally(() => {

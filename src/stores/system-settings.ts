@@ -59,6 +59,9 @@ const createDefaultSettings = (): SystemConfigPayload => ({
 const publicSystemSettings = ref<SystemConfigPayload>(createDefaultSettings())
 const settingsLoading = ref(false)
 let loadSettingsPromise: Promise<SystemConfigPayload> | null = null
+// 内存 TTL：站点公共配置随导航被反复请求，60s 内非 force 复用内存值。
+let settingsLoadedAt = 0
+const SETTINGS_TTL_MS = 60_000
 
 const syncSiteRuntime = (settings: SystemConfigPayload) => {
   if (typeof document === 'undefined') {
@@ -112,10 +115,17 @@ export const useSystemSettingsStore = () => {
     if (loadSettingsPromise && !force) {
       return loadSettingsPromise
     }
+    // TTL 命中：未过期直接复用内存配置。
+    if (!force && settingsLoadedAt && Date.now() - settingsLoadedAt < SETTINGS_TTL_MS) {
+      return publicSystemSettings.value
+    }
 
     settingsLoading.value = true
     loadSettingsPromise = getPublicSystemConfig()
-      .then(result => applyPublicSystemSettings(result || createDefaultSettings()))
+      .then((result) => {
+        settingsLoadedAt = Date.now()
+        return applyPublicSystemSettings(result || createDefaultSettings())
+      })
       .catch(() => applyPublicSystemSettings(createDefaultSettings()))
       .finally(() => {
         settingsLoading.value = false

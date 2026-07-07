@@ -83,8 +83,15 @@ export const subscribeGenerationTaskStream = async (
     res.flushHeaders()
   }
 
-  addTaskStreamSubscriber(recordId, res, currentUserId)
-  await ensureDistributedTaskSubscription(recordId)
+  // 关键：只有「运行中」记录才登记订阅者。已完成记录下面会在 record.done 早退分支
+  // 直接 res.end() 返回，而 cleanup 是挂在末尾 res.on('close') 上的——若在此无条件登记，
+  // done 分支就会漏过 cleanup，导致订阅者永久泄漏；累积触发用户级 SSE 上限
+  // （SSE_PER_USER_LIMIT=20）后，该用户所有新任务实时订阅统统 429，需重启进程才恢复。
+  // done 记录后续不会再有事件、重放也仅在 !record.done 时执行，本就不需要进订阅表。
+  if (!record.done) {
+    addTaskStreamSubscriber(recordId, res, currentUserId)
+    await ensureDistributedTaskSubscription(recordId)
+  }
 
   res.write(`event: connected\ndata: ${JSON.stringify({
     type: 'connected',

@@ -716,6 +716,8 @@ model PointAccountLog {
   @@index([userId, createdAt], map: "idx_point_account_logs_user_created_at")
   @@index([sourceType, sourceId], map: "idx_point_account_logs_source_type_source_id")
   @@index([generationRecordId, createdAt], map: "idx_point_account_logs_generation_record_id")
+  // association_no 在任务创建绑定/续询补扣/后台补偿三条路径按其过滤，此前无索引走全表扫。
+  @@index([associationNo], map: "idx_point_account_logs_association_no")
   @@map("point_account_logs")
 }
 

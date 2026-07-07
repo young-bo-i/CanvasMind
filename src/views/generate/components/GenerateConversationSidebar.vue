@@ -42,7 +42,7 @@
         >
           <div class="item-media">
             <div v-if="defaultSession.imageUrl" class="item-media-img">
-              <img :src="defaultSession.imageUrl" :alt="defaultSession.title" >
+              <img :src="buildThumbnailUrl(defaultSession.imageUrl, 160)" :alt="defaultSession.title" loading="lazy" decoding="async" >
             </div>
             <div v-else class="item-media-icon">
               <svg class="media-icon-svg" width="16" height="16" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" fill="none" role="presentation" xmlns="http://www.w3.org/2000/svg">
@@ -85,7 +85,7 @@
         >
           <div class="item-media">
             <div v-if="session.imageUrl" class="item-media-img">
-              <img :src="session.imageUrl" :alt="session.title" >
+              <img :src="buildThumbnailUrl(session.imageUrl, 160)" :alt="session.title" loading="lazy" decoding="async" >
             </div>
             <div v-else class="item-media-icon">
               <svg class="media-icon-svg" width="16" height="16" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" fill="none" role="presentation" xmlns="http://www.w3.org/2000/svg">
@@ -165,6 +165,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { buildThumbnailUrl } from '@/api/http'
 
 export interface GenerateConversationSidebarItem {
   id: string

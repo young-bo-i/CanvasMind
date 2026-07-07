@@ -178,6 +178,10 @@ const emptyCatalog: PublicModelCatalogResult = {
 
 const modelCatalogRef = ref<PublicModelCatalogResult>(emptyCatalog)
 let modelCatalogPromise: Promise<PublicModelCatalogResult> | null = null
+// 内存 TTL：与后端 60s Redis 缓存对齐。命中期内非 force 调用直接返回内存数据，
+// 避免每次进生成页 / 切图片↔视频工具栏 / 路由切换都重复拉同一份目录（响应无浏览器缓存头）。
+let modelCatalogLoadedAt = 0
+const MODEL_CATALOG_TTL_MS = 60_000
 
 const toImageModel = (item: PublicModelCatalogItem): ImageModel => {
   const defaultParams = item.defaultParamsJson || {}
@@ -266,6 +270,10 @@ export const loadPublicModelCatalog = async (force = false) => {
   if (!force && modelCatalogPromise) {
     return modelCatalogPromise
   }
+  // TTL 命中：未过期直接复用内存目录。
+  if (!force && modelCatalogLoadedAt && Date.now() - modelCatalogLoadedAt < MODEL_CATALOG_TTL_MS) {
+    return modelCatalogRef.value
+  }
 
   modelCatalogPromise = fetch(buildApiUrl(MODEL_CATALOG_API_PATH), {
     method: 'GET',
@@ -273,7 +281,10 @@ export const loadPublicModelCatalog = async (force = false) => {
     cache: 'no-store',
   })
     .then(response => readApiData<PublicModelCatalogResult>(response))
-    .then(data => applyModelCatalog(data))
+    .then((data) => {
+      modelCatalogLoadedAt = Date.now() // 仅成功时打时间戳，失败不抑制后续重试
+      return applyModelCatalog(data)
+    })
     .catch(() => applyModelCatalog(emptyCatalog))
     .finally(() => {
       modelCatalogPromise = null
@@ -284,9 +295,13 @@ export const loadPublicModelCatalog = async (force = false) => {
 
 // 模型目录现按"用户所属管理员"的厂商作用域返回（每个普管的用户只看到该管理员的模型）。
 // 登录 / 登出 / 切换账号时强制重载，避免沿用上一个作用域的旧目录。
+// 仅在 id 真正变化时 force：避免 currentUser 对象被替换但 id 未变（如资料刷新）时的无谓重拉。
+let lastCatalogUserId = ''
 watch(
   () => useAuthStore().currentUser.value?.id || '',
-  () => {
+  (userId) => {
+    if (userId === lastCatalogUserId) return
+    lastCatalogUserId = userId
     void loadPublicModelCatalog(true)
   },
 )
