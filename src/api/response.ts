@@ -63,7 +63,7 @@ export const readApiErrorMessage = async (
       payload?.error?.message
       || payload?.message
       || normalizedFallback,
-    ).trim(), normalizedFallback),
+    ).trim(), normalizedFallback, { source: 'api' }),
   }
 }
 
@@ -96,7 +96,7 @@ export const readApiData = async <T>(
       payload?.error?.message
       || payload?.message
       || normalizedFallback,
-    ).trim(), normalizedFallback)
+    ).trim(), normalizedFallback, { source: 'api' })
 
     if (options.showErrorMessage !== false) {
       ElMessage.error(errorMessage)
