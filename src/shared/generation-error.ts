@@ -145,6 +145,10 @@ const buildContentPolicyViolationMessage = () => {
   return '图片生成请求触发内容安全限制，请避免使用具体影视或动漫 IP、角色名、官方海报描述，或高度可识别的受版权保护形象后重试。'
 }
 
+const buildModerationBlockedMessage = () => {
+  return '图片生成请求未通过上游内容安全审核，请调整提示词或更换参考图后重试。若内容本身合规，可能是上游误判，可稍后重试或切换其他图片模型。'
+}
+
 const buildProviderSecretDecryptMessage = () => {
   return '厂商 API Key 解密失败，请检查环境变量 PROVIDER_CONFIG_SECRET 是否与录入厂商密钥时一致；如已变更，请重新保存对应厂商的 API Key。'
 }
@@ -192,6 +196,16 @@ export const normalizeGenerationErrorMessage = (input: unknown, fallback = '任�
   }
 
   const detail = extractUpstreamErrorDetail(rawMessage)
+
+  if (
+    detail.code === 'moderation_blocked'
+    || /moderation_blocked/i.test(rawMessage)
+    || /rejected by the safety system/i.test(detail.message)
+    || /rejected by the safety system/i.test(rawMessage)
+    || /safety_violations\s*=/i.test(rawMessage)
+  ) {
+    return buildModerationBlockedMessage()
+  }
 
   if (detail.code === 'content_policy_violation' || /content_policy_violation/i.test(rawMessage)) {
     return buildContentPolicyViolationMessage()

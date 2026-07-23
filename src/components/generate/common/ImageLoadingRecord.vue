@@ -114,7 +114,15 @@
                   <div class="context-menu-trigger-WJ6VDZ">
                     <div class="slot-card-container-gulhrr image-card-container-dFemyw">
                       <div class="content-container-z0JOWv">
-                        <div class="image-card-container-qy7ui4">
+                        <div
+                          class="image-card-container-qy7ui4 image-card-preview-trigger"
+                          role="button"
+                          tabindex="0"
+                          :aria-label="`预览生成图片 ${i + 1}`"
+                          @click="handlePreview(i)"
+                          @keydown.enter.prevent="handlePreview(i)"
+                          @keydown.space.prevent="handlePreview(i)"
+                        >
                           <div class="container-bG3PQ9 image-GnB1sY">
                             <div style="transition:opacity 300ms;opacity:1">
                               <img class="image-TLmgkP"
@@ -122,8 +130,7 @@
                                    draggable="false"
                                    loading="lazy"
                                    decoding="async"
-                                   :src="buildThumbnailUrl(url, 960)"
-                                   @click.stop="handlePreview(i)" />
+                                   :src="buildThumbnailUrl(url, 960)" />
                             </div>
                           </div>
                         </div>
@@ -549,6 +556,22 @@ onUnmounted(() => {
   transform: translateZ(0);
   width: 100%;
   z-index: 5;
+}
+
+/* 整张结果卡片都应能打开预览；事件绑在卡片而不是图片节点上，
+   避免 object-fit 留白、图片拖拽及上层布局命中差异造成“点了没反应”。 */
+.image-card-preview-trigger {
+  cursor: zoom-in;
+  outline: none;
+}
+
+.image-card-preview-trigger:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--brand-main-default, #7c5cff);
+}
+
+.image-card-preview-trigger .image-TLmgkP {
+  pointer-events: none;
+  user-select: none;
 }
 
 .vertical-divider {

@@ -1,6 +1,7 @@
 <template>
-  <div v-if="visible" class="container-kvmiPn">
-    <div class="preview-area-TnDJHN">
+  <Teleport to="body">
+    <div v-if="visible" class="container-kvmiPn" role="dialog" aria-modal="true" aria-label="图片预览">
+      <div class="preview-area-TnDJHN">
       <div class="container-T1jCWT">
         <div class="preview-area-QscVpt">
           <div class="image-player">
@@ -84,7 +85,7 @@
       </div>
     </div>
 
-    <div class="operation-area-EihPQ7">
+      <div class="operation-area-EihPQ7">
       <div class="switch-area">
         <button class="collapse-button operation-icon-w5Y4Pg" type="button">
           <svg width="20" height="20" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" fill="none" role="presentation" xmlns="http://www.w3.org/2000/svg">
@@ -129,7 +130,7 @@
       </button>
     </div>
 
-    <div class="detail-area">
+      <div class="detail-area">
       <div class="container-LTKJ3M">
         <div class="operation-area-uoDdSN">
           <div class="publish-button-jPQ6gf">
@@ -487,12 +488,13 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { buildThumbnailUrl } from '@/api/http'
 
 interface ImageItem {
@@ -557,6 +559,24 @@ watch(internalIndex, (newIndex) => {
 const closePreview = () => {
   emit('update:visible', false)
 }
+
+const handleKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && props.visible) {
+    closePreview()
+  }
+}
+
+watch(() => props.visible, (visible) => {
+  if (visible) {
+    window.addEventListener('keydown', handleKeydown)
+    return
+  }
+  window.removeEventListener('keydown', handleKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+})
 
 const prevImage = () => {
   if (internalIndex.value > 0) {
