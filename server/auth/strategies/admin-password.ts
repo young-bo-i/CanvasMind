@@ -1,5 +1,12 @@
 import type { AuthStrategy } from '../types'
-import { createUserSession, getUserByUsername, isValidAdminPassword, isValidAdminUsername, toAuthUserProfile, verifyUserPassword } from '../service'
+import {
+  createUserSession,
+  getUserByUsername,
+  isValidAdminUsername,
+  isValidLoginPassword,
+  toAuthUserProfile,
+  verifyUserPassword,
+} from '../service'
 
 // 管理员账号密码登录策略。
 export const adminPasswordStrategy: AuthStrategy = {
@@ -14,8 +21,8 @@ export const adminPasswordStrategy: AuthStrategy = {
       throw new Error('请输入 4-32 位账号，只能包含字母、数字、下划线或中划线')
     }
 
-    if (!isValidAdminPassword(password)) {
-      throw new Error('请输入 8-64 位登录密码')
+    if (!isValidLoginPassword(password)) {
+      throw new Error(password ? '登录密码不能超过 64 位' : '请输入登录密码')
     }
 
     // 账号密码登录对所有角色开放：任何有 username + passwordHash 的用户都能登录，

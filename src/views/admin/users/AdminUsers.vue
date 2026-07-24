@@ -495,6 +495,14 @@
             <span class="admin-chip">{{ isCreateMode ? '创建账号' : '资料编辑' }}</span>
             <span class="admin-user-dialog-hero__text">{{ isCreateMode ? '创建后用户即可用「账号 + 密码」登录。' : '统一维护昵称、联系方式与账号状态。' }}</span>
           </div>
+          <div
+            v-if="editSubmitError"
+            class="admin-user-form-error"
+            role="alert"
+            aria-live="polite"
+          >
+            {{ editSubmitError }}
+          </div>
           <div class="admin-user-dialog-summary">
             <div class="admin-user-dialog-summary__item">
               <span class="admin-user-dialog-summary__label">{{ isCreateMode ? '创建模式' : '当前用户' }}</span>
@@ -513,11 +521,32 @@
             <!-- 账号 + 密码：建号必填，建后即可账号密码登录 -->
             <div v-if="isCreateMode" class="admin-form__field">
               <label class="admin-form__label">登录账号</label>
-              <input v-model.trim="editForm.username" class="admin-input" type="text" autocomplete="off" placeholder="4-32 位，字母开头">
+              <input
+                v-model.trim="editForm.username"
+                class="admin-input"
+                :class="{ 'is-error': usernameValidationError }"
+                type="text"
+                autocomplete="off"
+                placeholder="4-32 位，字母开头"
+                :aria-invalid="Boolean(usernameValidationError)"
+                @input="clearEditSubmitError"
+              >
+              <span v-if="usernameValidationError" class="admin-user-field-error">{{ usernameValidationError }}</span>
             </div>
             <div v-if="isCreateMode" class="admin-form__field">
               <label class="admin-form__label">登录密码</label>
-              <input v-model.trim="editForm.password" class="admin-input" type="password" autocomplete="new-password" placeholder="8-64 位">
+              <input
+                v-model.trim="editForm.password"
+                class="admin-input"
+                :class="{ 'is-error': passwordValidationError }"
+                type="password"
+                autocomplete="new-password"
+                placeholder="8-64 位"
+                maxlength="64"
+                :aria-invalid="Boolean(passwordValidationError)"
+                @input="clearEditSubmitError"
+              >
+              <span v-if="passwordValidationError" class="admin-user-field-error">{{ passwordValidationError }}</span>
             </div>
             <div class="admin-form__field">
               <label class="admin-form__label">邮箱</label>
@@ -798,6 +827,10 @@ import {
 } from '@/api/admin-users'
 import { listMembershipLevels, type MembershipLevelItem } from '@/api/admin-marketing'
 import { useAuthStore } from '@/stores/auth'
+import {
+  getAccountUsernameValidationMessage,
+  getNewAccountPasswordValidationMessage,
+} from '@/shared/account-credentials'
 
 // 超管才显示「设为管理员 / 删除用户」等敏感入口。
 const authStore = useAuthStore()
@@ -818,6 +851,8 @@ const { confirmDanger } = useAdminConfirm()
 
 const editDialogVisible = ref(false)
 const editMode = ref<'create' | 'edit'>('edit')
+const editFormSubmitted = ref(false)
+const editSubmitError = ref('')
 const pointDialogVisible = ref(false)
 const membershipDialogVisible = ref(false)
 const membershipOrdersDialogVisible = ref(false)
@@ -907,6 +942,18 @@ const filterChipGroups = computed((): AdminFilterChipGroup[] => [
 const adminCount = computed(() => users.value.filter(user => user.role === 'ADMIN').length)
 const activeCount = computed(() => users.value.filter(user => user.status === 'ACTIVE').length)
 const isCreateMode = computed(() => editMode.value === 'create')
+const usernameValidationError = computed(() => {
+  if (!isCreateMode.value || (!editFormSubmitted.value && !editForm.username)) {
+    return ''
+  }
+  return getAccountUsernameValidationMessage(editForm.username)
+})
+const passwordValidationError = computed(() => {
+  if (!isCreateMode.value || (!editFormSubmitted.value && !editForm.password)) {
+    return ''
+  }
+  return getNewAccountPasswordValidationMessage(editForm.password)
+})
 const pointCurrentBalance = computed(() => {
   if (selectedUserDetail.value?.id === pointForm.id) {
     return Number(selectedUserDetail.value.currentPointBalance || 0)
@@ -1142,6 +1189,12 @@ const resetEditForm = () => {
   editForm.password = ''
   editForm.role = 'USER'
   editForm.status = 'ACTIVE'
+  editFormSubmitted.value = false
+  editSubmitError.value = ''
+}
+
+const clearEditSubmitError = () => {
+  editSubmitError.value = ''
 }
 
 const resetPointForm = () => {
@@ -1233,6 +1286,14 @@ const handleSubmitEdit = async () => {
   if (!isCreateMode.value && !editForm.id) {
     return
   }
+
+  editFormSubmitted.value = true
+  editSubmitError.value = ''
+  if (isCreateMode.value && (usernameValidationError.value || passwordValidationError.value)) {
+    editSubmitError.value = usernameValidationError.value || passwordValidationError.value
+    return
+  }
+
   submitting.value = true
   try {
     if (isCreateMode.value) {
@@ -1262,6 +1323,8 @@ const handleSubmitEdit = async () => {
     })
     closeEditDialog()
     await refreshAfterUserMutation(targetUserId)
+  } catch (error: any) {
+    editSubmitError.value = String(error?.message || '保存失败，请检查填写内容后重试')
   } finally {
     submitting.value = false
   }
@@ -1838,6 +1901,28 @@ onMounted(async () => {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.admin-user-form-error {
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, #ff5a5f 42%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #ff5a5f 10%, transparent);
+  color: #ff666b;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.admin-user-field-error {
+  color: #ff666b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.admin-input.is-error {
+  border-color: #ff5a5f;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ff5a5f 14%, transparent);
 }
 
 .admin-user-dialog-summary {

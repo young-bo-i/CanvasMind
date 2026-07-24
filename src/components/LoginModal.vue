@@ -98,6 +98,15 @@
                       </div>
                     </div>
                   </div>
+
+                  <div
+                    v-if="loginErrorMessage"
+                    class="login-error-message"
+                    role="alert"
+                    aria-live="polite"
+                  >
+                    {{ loginErrorMessage }}
+                  </div>
                 </div>
 
                 <div class="footer-X7PPzE">
@@ -195,6 +204,7 @@ import { createOAuthAuthorizeUrl, requestAuthVerificationCode } from '@/api/auth
 import { useAuthStore } from '@/stores/auth'
 import { useSystemSettingsStore } from '@/stores/system-settings'
 import { useAsyncAction } from '@/composables'
+import { isValidAccountLoginPassword } from '@/shared/account-credentials'
 
 const props = defineProps<{
   visible: boolean
@@ -219,6 +229,9 @@ const codeValue = ref('')
 
 // 密码输入值。
 const passwordValue = ref('')
+
+// 登录失败原因保留在表单内，避免全屏 loading 或 toast 消失后用户无从判断。
+const loginErrorMessage = ref('')
 
 // 最近一次下发的调试验证码。
 const issuedCode = ref('')
@@ -332,7 +345,7 @@ const canSendCode = computed(() => {
 // 是否可提交登录。
 const canSubmit = computed(() => {
   const hasCredential = currentPasswordMethod.value
-    ? passwordValue.value.length >= 8 && passwordValue.value.length <= 64
+    ? isValidAccountLoginPassword(passwordValue.value)
     : isCodeValid.value
 
   return Boolean(currentPrimaryMethod.value)
@@ -361,6 +374,7 @@ const resetForm = () => {
   targetValue.value = ''
   codeValue.value = ''
   passwordValue.value = ''
+  loginErrorMessage.value = ''
   issuedCode.value = ''
   agreementChecked.value = false
   countdown.value = 0
@@ -406,6 +420,7 @@ const selectMethod = (methodType: AuthMethodType) => {
   targetValue.value = ''
   codeValue.value = ''
   passwordValue.value = ''
+  loginErrorMessage.value = ''
   issuedCode.value = ''
   countdown.value = 0
   clearCountdownTimer()
@@ -455,12 +470,18 @@ const handleSendCode = async () => {
 // 避免依赖 isSubmitting 的 canSubmit 因 loading=true 被打回。
 const submitLoginAction = useAsyncAction(async () => {
   if (!currentPrimaryMethod.value) return
-  await authStore.login({
-    methodType: currentPrimaryMethod.value.methodType,
-    target: targetValue.value.trim(),
-    code: currentCodeMethod.value ? codeValue.value.trim() : undefined,
-    password: currentPasswordMethod.value ? passwordValue.value : undefined,
-  })
+  loginErrorMessage.value = ''
+  try {
+    await authStore.login({
+      methodType: currentPrimaryMethod.value.methodType,
+      target: targetValue.value.trim(),
+      code: currentCodeMethod.value ? codeValue.value.trim() : undefined,
+      password: currentPasswordMethod.value ? passwordValue.value : undefined,
+    })
+  } catch (error: any) {
+    loginErrorMessage.value = String(error?.message || '登录失败，请检查账号和密码后重试')
+    throw error
+  }
   ElMessage.success('登录成功')
   close()
 }, {
@@ -518,6 +539,11 @@ watch(interactiveMethods, () => {
 
 watch(targetValue, () => {
   issuedCode.value = ''
+  loginErrorMessage.value = ''
+})
+
+watch([passwordValue, codeValue], () => {
+  loginErrorMessage.value = ''
 })
 
 onBeforeUnmount(() => {

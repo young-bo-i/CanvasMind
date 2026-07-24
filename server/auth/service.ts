@@ -6,6 +6,11 @@ import { grantRegisterReward } from '../marketing-center/service'
 import { invalidateRedisCaches } from '../redis/cache-manager'
 import { getOrSetJsonCache } from '../redis/json-cache'
 import { redisKeys } from '../redis/keys'
+import {
+  isValidAccountLoginPassword,
+  isValidAccountUsername,
+  isValidNewAccountPassword,
+} from '../../src/shared/account-credentials'
 import type { AuthMethodConfigPayload, AuthUserProfile, PublicAuthMethod } from './types'
 
 // 验证码默认有效期，单位分钟。
@@ -149,10 +154,13 @@ export const maskEmail = (email: string) => {
 const buildDefaultUserName = (identifier: string) => `用户${identifier.slice(-4)}`
 
 // 管理员用户名校验规则。
-export const isValidAdminUsername = (username: string) => /^[a-zA-Z][a-zA-Z0-9_-]{3,31}$/.test(username)
+export const isValidAdminUsername = isValidAccountUsername
 
-// 管理员密码校验规则。
-export const isValidAdminPassword = (password: string) => password.length >= 8 && password.length <= 64
+// 新建或重置账号时的密码规则。
+export const isValidAdminPassword = isValidNewAccountPassword
+
+// 登录时只校验输入边界，兼容历史账号使用的短密码。
+export const isValidLoginPassword = isValidAccountLoginPassword
 
 // 生成 6 位随机验证码。
 export const generateVerificationCode = () => String(Math.floor(100000 + Math.random() * 900000))

@@ -268,6 +268,19 @@ body[lv-theme='light'] .login-modal-host {
   gap: 20px;
 }
 
+.login-error-message {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #ff5a5f 42%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #ff5a5f 10%, transparent);
+  color: #ff7378;
+  font-size: 13px;
+  line-height: 20px;
+  word-break: break-word;
+}
+
 .method-selector {
   display: flex;
   gap: 8px;
