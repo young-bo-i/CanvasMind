@@ -108,6 +108,26 @@
                                 <span>清空登录态</span>
                               </span>
                             </el-dropdown-item>
+                            <el-dropdown-item v-if="canResetUserPassword(user)" command="reset-password">
+                              <span class="admin-user-menu-item">
+                                <el-icon><RefreshLeft /></el-icon>
+                                <span>重置密码</span>
+                              </span>
+                            </el-dropdown-item>
+                            <el-dropdown-item
+                              v-if="canManageAccount(user)"
+                              command="toggle-status"
+                              :class="{ 'is-danger': user.status !== 'DISABLED' }"
+                              divided
+                            >
+                              <span class="admin-user-menu-item" :class="{ 'admin-user-menu-item--danger': user.status !== 'DISABLED' }">
+                                <el-icon>
+                                  <Unlock v-if="user.status === 'DISABLED'" />
+                                  <Lock v-else />
+                                </el-icon>
+                                <span>{{ user.status === 'DISABLED' ? '重新启用账号' : '停用账号' }}</span>
+                              </span>
+                            </el-dropdown-item>
                             <el-dropdown-item command="membership-orders">
                               <span class="admin-user-menu-item">
                                 <el-icon><Tickets /></el-icon>
@@ -476,6 +496,16 @@
             <button class="admin-button admin-button--secondary" type="button" @click="openMembershipDialog(selectedUserDetail)">调整会员</button>
             <button class="admin-button admin-button--secondary" type="button" @click="openPointDialog(selectedUserDetail)">调整积分</button>
             <button class="admin-button admin-button--secondary" type="button" @click="handleResetLoginState(selectedUserDetail)">清空登录态</button>
+            <button v-if="canResetUserPassword(selectedUserDetail)" class="admin-button admin-button--secondary" type="button" @click="openPasswordResetDialog(selectedUserDetail)">重置密码</button>
+            <button
+              v-if="canManageAccount(selectedUserDetail)"
+              class="admin-button"
+              :class="selectedUserDetail.status === 'DISABLED' ? 'admin-button--secondary' : 'admin-button--danger'"
+              type="button"
+              @click="handleToggleUserStatus(selectedUserDetail)"
+            >
+              {{ selectedUserDetail.status === 'DISABLED' ? '重新启用账号' : '停用账号' }}
+            </button>
             <button class="admin-button admin-button--secondary" type="button" @click="copyText(selectedUserDetail.id, '用户 ID 已复制')">复制用户 ID</button>
             <button class="admin-button admin-button--secondary" type="button" @click="copyText(buildUserDisplayNo(selectedUserDetail.id), '用户编号已复制')">复制用户编号</button>
           </div>
@@ -569,7 +599,7 @@
               <select v-model="editForm.status" class="admin-input">
                 <option value="ANONYMOUS">匿名</option>
                 <option value="ACTIVE">已激活</option>
-                <option value="DISABLED">已禁用</option>
+                <option value="DISABLED">已停用</option>
               </select>
             </div>
             <div class="admin-form__field admin-form__field--full">
@@ -584,6 +614,74 @@
             @cancel="closeEditDialog"
           />
         </form>
+    </AdminDialog>
+
+    <AdminDialog
+      :visible="passwordResetDialogVisible"
+      title="重置账号密码"
+      description="设置新的账号密码；保存后该用户所有设备上的现有登录会话都会失效。"
+      panel-class="admin-dialog--provider-form admin-user-manage-dialog"
+      :close-disabled="submitting"
+      @close="closePasswordResetDialog"
+    >
+      <form class="admin-dialog__body admin-form" @submit.prevent="handleSubmitPasswordReset">
+        <div class="admin-user-dialog-hero">
+          <span class="admin-chip">安全操作</span>
+          <span class="admin-user-dialog-hero__text">
+            {{ passwordResetForm.userName }} · 登录账号 {{ passwordResetForm.username }}
+          </span>
+        </div>
+        <div
+          v-if="passwordResetError"
+          class="admin-user-form-error"
+          role="alert"
+          aria-live="polite"
+        >
+          {{ passwordResetError }}
+        </div>
+        <div class="admin-user-security-notice">
+          新密码必须为 8-64 位。重置成功后，旧密码立即失效，该用户需要在所有设备上重新登录。
+        </div>
+        <div class="admin-form__grid">
+          <div class="admin-form__field">
+            <label class="admin-form__label">新密码</label>
+            <input
+              v-model="passwordResetForm.password"
+              class="admin-input"
+              :class="{ 'is-error': passwordResetValidationError }"
+              type="password"
+              autocomplete="new-password"
+              maxlength="64"
+              placeholder="请输入 8-64 位新密码"
+              :aria-invalid="Boolean(passwordResetValidationError)"
+              @input="passwordResetError = ''"
+            >
+            <span v-if="passwordResetValidationError" class="admin-user-field-error">{{ passwordResetValidationError }}</span>
+          </div>
+          <div class="admin-form__field">
+            <label class="admin-form__label">确认新密码</label>
+            <input
+              v-model="passwordResetForm.confirmPassword"
+              class="admin-input"
+              :class="{ 'is-error': passwordResetConfirmError }"
+              type="password"
+              autocomplete="new-password"
+              maxlength="64"
+              placeholder="请再次输入新密码"
+              :aria-invalid="Boolean(passwordResetConfirmError)"
+              @input="passwordResetError = ''"
+            >
+            <span v-if="passwordResetConfirmError" class="admin-user-field-error">{{ passwordResetConfirmError }}</span>
+          </div>
+        </div>
+        <AdminFormActions
+          submit-text="确认重置"
+          submitting-text="重置中..."
+          :submitting="submitting"
+          :disabled="submitting"
+          @cancel="closePasswordResetDialog"
+        />
+      </form>
     </AdminDialog>
 
     <AdminDialog
@@ -797,7 +895,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Coin, Delete, DocumentCopy, Edit, Key, Lightning, MoreFilled, Star, Tickets, User } from '@element-plus/icons-vue'
+import { Coin, Delete, DocumentCopy, Edit, Key, Lightning, Lock, MoreFilled, RefreshLeft, Star, Tickets, Unlock, User } from '@element-plus/icons-vue'
 import AdminFilterChips, { type AdminFilterChipGroup } from '@/components/admin/common/AdminFilterChips.vue'
 import AdminFilterToolbar from '@/components/admin/common/AdminFilterToolbar.vue'
 import AdminDialog from '@/components/admin/common/AdminDialog.vue'
@@ -817,9 +915,11 @@ import {
   getAdminUserDetail,
   listAdminUserMembershipOrders,
   listAdminUsers,
+  resetAdminUserPassword,
   resetAdminUserLoginState,
   updateAdminUserProfile,
   updateAdminUserRole,
+  updateAdminUserStatus,
   type AdminUserDetail,
   type AdminUserItem,
   type AdminUserMembershipOrderItem,
@@ -835,6 +935,7 @@ import {
 // 超管才显示「设为管理员 / 删除用户」等敏感入口。
 const authStore = useAuthStore()
 const isSuperAdmin = authStore.isSuperAdmin
+const currentAdminId = computed(() => authStore.currentUser.value?.id || '')
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -856,6 +957,9 @@ const editSubmitError = ref('')
 const pointDialogVisible = ref(false)
 const membershipDialogVisible = ref(false)
 const membershipOrdersDialogVisible = ref(false)
+const passwordResetDialogVisible = ref(false)
+const passwordResetSubmitted = ref(false)
+const passwordResetError = ref('')
 const membershipDurationPresets = [
   { label: '7 天', value: 7, unit: 'DAY' as const },
   { label: '30 天', value: 30, unit: 'DAY' as const },
@@ -893,6 +997,14 @@ const editForm = reactive({
   password: '',
   role: 'USER' as 'USER' | 'ADMIN',
   status: 'ACTIVE' as 'ANONYMOUS' | 'ACTIVE' | 'DISABLED',
+})
+
+const passwordResetForm = reactive({
+  userId: '',
+  userName: '',
+  username: '',
+  password: '',
+  confirmPassword: '',
 })
 
 const pointForm = reactive({
@@ -942,6 +1054,12 @@ const filterChipGroups = computed((): AdminFilterChipGroup[] => [
 const adminCount = computed(() => users.value.filter(user => user.role === 'ADMIN').length)
 const activeCount = computed(() => users.value.filter(user => user.status === 'ACTIVE').length)
 const isCreateMode = computed(() => editMode.value === 'create')
+const canManageAccount = (user: AdminUserItem | AdminUserDetail) => {
+  return user.role !== 'SUPER_ADMIN' && user.id !== currentAdminId.value
+}
+const canResetUserPassword = (user: AdminUserItem | AdminUserDetail) => {
+  return canManageAccount(user) && Boolean(String(user.username || '').trim())
+}
 const usernameValidationError = computed(() => {
   if (!isCreateMode.value || (!editFormSubmitted.value && !editForm.username)) {
     return ''
@@ -953,6 +1071,24 @@ const passwordValidationError = computed(() => {
     return ''
   }
   return getNewAccountPasswordValidationMessage(editForm.password)
+})
+const passwordResetValidationError = computed(() => {
+  if (!passwordResetSubmitted.value && !passwordResetForm.password) {
+    return ''
+  }
+  return getNewAccountPasswordValidationMessage(passwordResetForm.password)
+    .replace('登录密码', '新密码')
+})
+const passwordResetConfirmError = computed(() => {
+  if (!passwordResetSubmitted.value && !passwordResetForm.confirmPassword) {
+    return ''
+  }
+  if (!passwordResetForm.confirmPassword) {
+    return '请再次输入新密码'
+  }
+  return passwordResetForm.password === passwordResetForm.confirmPassword
+    ? ''
+    : '两次输入的新密码不一致'
 })
 const pointCurrentBalance = computed(() => {
   if (selectedUserDetail.value?.id === pointForm.id) {
@@ -1197,6 +1333,16 @@ const clearEditSubmitError = () => {
   editSubmitError.value = ''
 }
 
+const resetPasswordResetForm = () => {
+  passwordResetForm.userId = ''
+  passwordResetForm.userName = ''
+  passwordResetForm.username = ''
+  passwordResetForm.password = ''
+  passwordResetForm.confirmPassword = ''
+  passwordResetSubmitted.value = false
+  passwordResetError.value = ''
+}
+
 const resetPointForm = () => {
   pointForm.id = ''
   pointForm.action = 'INCREASE'
@@ -1230,6 +1376,19 @@ const closeEditDialog = () => {
   editDialogVisible.value = false
   editMode.value = 'edit'
   resetEditForm()
+}
+
+const openPasswordResetDialog = (user: AdminUserItem | AdminUserDetail) => {
+  resetPasswordResetForm()
+  passwordResetForm.userId = user.id
+  passwordResetForm.userName = user.name || buildUserDisplayNo(user.id)
+  passwordResetForm.username = String(user.username || '').trim()
+  passwordResetDialogVisible.value = true
+}
+
+const closePasswordResetDialog = () => {
+  passwordResetDialogVisible.value = false
+  resetPasswordResetForm()
 }
 
 const openPointDialog = async (user: AdminUserItem | AdminUserDetail) => {
@@ -1402,6 +1561,51 @@ const handleResetLoginState = async (user: AdminUserItem | AdminUserDetail) => {
   }
 }
 
+const handleToggleUserStatus = async (user: AdminUserItem | AdminUserDetail) => {
+  const isDisabled = user.status === 'DISABLED'
+  const nextStatus = isDisabled ? 'ACTIVE' : 'DISABLED'
+  await confirmDanger({
+    title: isDisabled ? '重新启用账号' : '停用账号',
+    message: isDisabled
+      ? `确定重新启用用户“${user.name || buildUserDisplayNo(user.id)}”吗？启用后该用户可以重新登录。`
+      : `确定停用用户“${user.name || buildUserDisplayNo(user.id)}”吗？停用后现有登录会话会立即失效，且该用户无法通过任何方式登录。`,
+    confirmText: isDisabled ? '确认启用' : '确认停用',
+  })
+
+  submitting.value = true
+  try {
+    await updateAdminUserStatus(user.id, nextStatus)
+    await refreshAfterUserMutation(user.id)
+  } finally {
+    submitting.value = false
+  }
+}
+
+const handleSubmitPasswordReset = async () => {
+  if (!passwordResetForm.userId) {
+    return
+  }
+
+  passwordResetSubmitted.value = true
+  passwordResetError.value = ''
+  if (passwordResetValidationError.value || passwordResetConfirmError.value) {
+    passwordResetError.value = passwordResetValidationError.value || passwordResetConfirmError.value
+    return
+  }
+
+  submitting.value = true
+  const targetUserId = passwordResetForm.userId
+  try {
+    await resetAdminUserPassword(targetUserId, passwordResetForm.password)
+    closePasswordResetDialog()
+    await refreshAfterUserMutation(targetUserId)
+  } catch (error: any) {
+    passwordResetError.value = String(error?.message || '密码重置失败，请稍后重试')
+  } finally {
+    submitting.value = false
+  }
+}
+
 const handleUserCommand = async (command: string, user: AdminUserItem) => {
   if (command === 'copy-user-id') {
     await copyText(user.id, '用户 ID 已复制')
@@ -1437,6 +1641,14 @@ const handleUserCommand = async (command: string, user: AdminUserItem) => {
   }
   if (command === 'reset-login-state') {
     await handleResetLoginState(user)
+    return
+  }
+  if (command === 'reset-password') {
+    openPasswordResetDialog(user)
+    return
+  }
+  if (command === 'toggle-status') {
+    await handleToggleUserStatus(user)
     return
   }
   if (command === 'delete') {
@@ -1912,6 +2124,16 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.55;
   word-break: break-word;
+}
+
+.admin-user-security-notice {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #f59e0b 34%, var(--line-divider, #00000014));
+  border-radius: 12px;
+  background: color-mix(in srgb, #f59e0b 8%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .admin-user-field-error {

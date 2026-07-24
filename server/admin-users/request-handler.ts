@@ -14,9 +14,11 @@ import {
   isUserOwnedByAdmin,
   listAdminUserMembershipOrders,
   listAdminUsers,
+  resetAdminUserPassword,
   resetAdminUserLoginState,
   updateAdminUserProfile,
   updateAdminUserRole,
+  updateAdminUserStatus,
   type ListAdminUsersOptions,
 } from './service'
 
@@ -67,6 +69,21 @@ const readAdminUserProfileBody = async (req: any) => {
     phone: payload?.phone,
     avatarUrl: payload?.avatarUrl,
     status,
+  }
+}
+
+const readAdminUserStatusBody = async (req: any) => {
+  const payload = await readRequestPayload<{ status?: UserStatus }>(req)
+  if (payload?.status !== 'ACTIVE' && payload?.status !== 'DISABLED') {
+    throw new Error('账号状态必须为启用或停用')
+  }
+  return { status: payload.status }
+}
+
+const readAdminUserPasswordResetBody = async (req: any) => {
+  const payload = await readRequestPayload<{ password?: string }>(req)
+  return {
+    password: String(payload?.password || ''),
   }
 }
 
@@ -284,6 +301,53 @@ export const handleAdminUsersRequest = async (req: any, res: any) => {
         afterJson: data,
       })
       sendJson(res, 200, { data, message: '用户资料已更新' })
+      return
+    }
+
+    if (req.method === 'POST' && targetUserId && action === 'status') {
+      const payload = await readAdminUserStatusBody(req)
+      const before = await getAdminUserDetail(targetUserId)
+      const data = await updateAdminUserStatus({
+        targetUserId,
+        currentUserId: currentUser.id,
+        status: payload.status,
+      })
+      await recordAdminAuditLog({
+        req,
+        operatorUserId: currentUser.id,
+        action: payload.status === 'DISABLED'
+          ? 'admin_user_disable'
+          : 'admin_user_enable',
+        targetType: 'app_user',
+        targetId: targetUserId,
+        beforeJson: before,
+        afterJson: data,
+      })
+      sendJson(res, 200, {
+        data,
+        message: payload.status === 'DISABLED' ? '账号已停用' : '账号已重新启用',
+      })
+      return
+    }
+
+    if (req.method === 'POST' && targetUserId && action === 'password-reset') {
+      const payload = await readAdminUserPasswordResetBody(req)
+      const data = await resetAdminUserPassword({
+        targetUserId,
+        currentUserId: currentUser.id,
+        password: payload.password,
+      })
+      await recordAdminAuditLog({
+        req,
+        operatorUserId: currentUser.id,
+        action: 'admin_user_password_reset',
+        targetType: 'app_user',
+        targetId: targetUserId,
+        beforeJson: null,
+        // 不记录密码或密码哈希，只记录被撤销的会话数量。
+        afterJson: data,
+      })
+      sendJson(res, 200, { data, message: '密码已重置，该用户需要重新登录' })
       return
     }
 

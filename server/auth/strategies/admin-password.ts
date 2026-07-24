@@ -32,7 +32,7 @@ export const adminPasswordStrategy: AuthStrategy = {
       throw new Error('账号或密码错误')
     }
     if (user.status === 'DISABLED') {
-      throw new Error('该账号已被禁用')
+      throw new Error('该账号已停用，请联系管理员')
     }
 
     const passwordMatched = await verifyUserPassword(password, user.passwordHash)

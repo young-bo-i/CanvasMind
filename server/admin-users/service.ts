@@ -17,6 +17,7 @@ import { buildPageResult, resolvePagination } from '../shared/pagination'
 
 interface AdminUserRecord {
   id: string
+  username: string | null
   name: string | null
   email: string | null
   phone: string | null
@@ -92,6 +93,18 @@ export interface UpdateAdminUserProfileInput {
   phone?: string
   avatarUrl?: string
   status?: UserStatus
+}
+
+export interface UpdateAdminUserStatusInput {
+  targetUserId: string
+  currentUserId: string
+  status: 'ACTIVE' | 'DISABLED'
+}
+
+export interface ResetAdminUserPasswordInput {
+  targetUserId: string
+  currentUserId: string
+  password?: string
 }
 
 export interface AdjustAdminUserPointsInput {
@@ -465,11 +478,13 @@ const getUserOperationalSummaryMaps = async (userIds: string[]) => {
 }
 
 const buildAdminUserItem = (user: AdminUserRecord, countMap?: AdminUserCountMap, operationalSummary?: AdminUserOperationalSummary) => {
+  const username = String(user.username || '').trim()
   const email = String(user.email || '').trim()
   const phone = String(user.phone || '').trim()
 
   return {
     id: user.id,
+    username,
     name: String(user.name || '').trim(),
     email,
     phone,
@@ -521,6 +536,7 @@ const buildUserWhereInput = (options: ListAdminUsersOptions): Prisma.AppUserWher
   if (keyword) {
     where.OR = [
       { id: { contains: keyword } },
+      { username: { contains: keyword } },
       { name: { contains: keyword } },
       { email: { contains: keyword } },
       { phone: { contains: keyword } },
@@ -535,6 +551,7 @@ const findAdminUserOrThrow = async (targetUserId: string) => {
     where: { id: targetUserId },
     select: {
       id: true,
+      username: true,
       name: true,
       email: true,
       phone: true,
@@ -827,6 +844,7 @@ export const listAdminUsers = async (options: ListAdminUsersOptions = {}) => {
         where,
         select: {
           id: true,
+          username: true,
           name: true,
           email: true,
           phone: true,
@@ -1031,6 +1049,7 @@ export const updateAdminUserRole = async (input: {
     },
     select: {
       id: true,
+      username: true,
       name: true,
       email: true,
       phone: true,
@@ -1059,10 +1078,13 @@ export const updateAdminUserProfile = async (input: UpdateAdminUserProfileInput)
     : undefined
 
   if (input.currentUserId === targetUserId && status === 'DISABLED') {
-    throw new Error('不能禁用当前登录管理员')
+    throw new Error('不能停用当前登录管理员')
   }
 
-  await findAdminUserOrThrow(targetUserId)
+  const existingUser = await findAdminUserOrThrow(targetUserId)
+  if (existingUser.role === 'SUPER_ADMIN' && status === 'DISABLED') {
+    throw new Error('不能停用超级管理员')
+  }
 
   const email = normalizeEmail(input.email)
   const phone = normalizePhone(input.phone)
@@ -1093,19 +1115,124 @@ export const updateAdminUserProfile = async (input: UpdateAdminUserProfileInput)
     }
   }
 
-  await prisma.appUser.update({
-    where: { id: targetUserId },
-    data: {
-      name: normalizeName(input.name),
-      email,
-      phone,
-      avatarUrl: normalizeAvatarUrl(input.avatarUrl),
-      ...(status ? { status } : {}),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.appUser.update({
+      where: { id: targetUserId },
+      data: {
+        name: normalizeName(input.name),
+        email,
+        phone,
+        avatarUrl: normalizeAvatarUrl(input.avatarUrl),
+        ...(status ? { status } : {}),
+      },
+    })
+
+    // 无论从快捷动作还是编辑表单停用，都必须立即让已有会话失效。
+    if (status === 'DISABLED') {
+      const now = new Date()
+      await tx.appSession.updateMany({
+        where: {
+          userId: targetUserId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: now,
+          updatedAt: now,
+        },
+      })
+    }
   })
 
   await invalidateAdminUsersCaches(targetUserId)
   return await buildAdminUserDetail(targetUserId)
+}
+
+export const updateAdminUserStatus = async (input: UpdateAdminUserStatusInput) => {
+  const targetUserId = String(input.targetUserId || '').trim()
+  if (!targetUserId) {
+    throw new Error('缺少目标用户 ID')
+  }
+
+  const nextStatus = input.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE'
+  if (input.currentUserId === targetUserId && nextStatus === 'DISABLED') {
+    throw new Error('不能停用当前登录管理员')
+  }
+
+  const existingUser = await findAdminUserOrThrow(targetUserId)
+  if (existingUser.role === 'SUPER_ADMIN' && nextStatus === 'DISABLED') {
+    throw new Error('不能停用超级管理员')
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.appUser.update({
+      where: { id: targetUserId },
+      data: { status: nextStatus },
+    })
+
+    if (nextStatus === 'DISABLED') {
+      const now = new Date()
+      await tx.appSession.updateMany({
+        where: {
+          userId: targetUserId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+  })
+
+  await invalidateAdminUsersCaches(targetUserId)
+  return await buildAdminUserDetail(targetUserId)
+}
+
+export const resetAdminUserPassword = async (input: ResetAdminUserPasswordInput) => {
+  const targetUserId = String(input.targetUserId || '').trim()
+  const password = String(input.password || '')
+  if (!targetUserId) {
+    throw new Error('缺少目标用户 ID')
+  }
+
+  ensureNotSelfDangerousAction(input.currentUserId, targetUserId, '密码重置')
+  if (!isValidAdminPassword(password)) {
+    throw new Error('请输入 8-64 位新密码')
+  }
+
+  const existingUser = await findAdminUserOrThrow(targetUserId)
+  if (existingUser.role === 'SUPER_ADMIN') {
+    throw new Error('不能在用户管理中重置超级管理员密码')
+  }
+  if (!existingUser.username) {
+    throw new Error('该用户未配置账号密码登录，无法重置密码')
+  }
+
+  const passwordHash = await hashUserPassword(password)
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.appUser.update({
+      where: { id: targetUserId },
+      data: { passwordHash },
+    })
+
+    const now = new Date()
+    return await tx.appSession.updateMany({
+      where: {
+        userId: targetUserId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: now,
+        updatedAt: now,
+      },
+    })
+  })
+
+  await invalidateAdminUsersCaches(targetUserId)
+  return {
+    success: true,
+    revokedCount: result.count,
+  }
 }
 
 export const adjustAdminUserPoints = async (input: AdjustAdminUserPointsInput) => {

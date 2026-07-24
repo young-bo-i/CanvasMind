@@ -2,6 +2,7 @@ import { adminDelete, adminGet, adminPatch, adminPost, adminPut } from './admin-
 
 export interface AdminUserItem {
   id: string
+  username: string
   name: string
   email: string
   phone: string
@@ -224,6 +225,28 @@ export const updateAdminUserProfile = async (id: string, payload: {
     showErrorMessage: true,
     successMessage: '用户资料已更新',
   })
+}
+
+// 快捷停用或重新启用账号；停用时服务端会同步撤销所有登录会话。
+export const updateAdminUserStatus = async (id: string, status: 'ACTIVE' | 'DISABLED') => {
+  return adminPost<AdminUserDetail>(`${ADMIN_USERS_BASE_PATH}/${encodeURIComponent(id)}/status`, { status }, {
+    showSuccessMessage: true,
+    showErrorMessage: true,
+    successMessage: status === 'DISABLED' ? '账号已停用' : '账号已重新启用',
+  })
+}
+
+// 重置账号密码并强制该用户所有设备重新登录。
+export const resetAdminUserPassword = async (id: string, password: string) => {
+  return adminPost<{ success: boolean; revokedCount: number }>(
+    `${ADMIN_USERS_BASE_PATH}/${encodeURIComponent(id)}/password-reset`,
+    { password },
+    {
+      showSuccessMessage: true,
+      showErrorMessage: true,
+      successMessage: '密码已重置，该用户需要重新登录',
+    },
+  )
 }
 
 // 调整用户积分。

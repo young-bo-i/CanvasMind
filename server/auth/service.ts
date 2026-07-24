@@ -675,6 +675,17 @@ export const createUserSession = async (input: {
   requesterIp?: string
   userAgent?: string
 }) => {
+  const user = await prisma.appUser.findUnique({
+    where: { id: input.userId },
+    select: { status: true },
+  })
+  if (!user) {
+    throw new Error('账号不存在')
+  }
+  if (user.status === 'DISABLED') {
+    throw new Error('该账号已停用，请联系管理员')
+  }
+
   const sessionToken = generateSessionToken()
   const sessionExpiresAt = new Date(Date.now() + readSessionExpireDays() * 24 * 60 * 60 * 1000)
 
@@ -756,12 +767,13 @@ export const getUserBySessionToken = async (sessionToken: string) => {
           email: true,
           avatarUrl: true,
           role: true,
+          status: true,
         },
       },
     },
   })
 
-  if (!session?.user) {
+  if (!session?.user || session.user.status === 'DISABLED') {
     return null
   }
 

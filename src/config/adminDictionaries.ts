@@ -11,7 +11,7 @@ export const adminUserStatusDictionary = {
     tone: 'success',
   },
   DISABLED: {
-    label: '已禁用',
+    label: '已停用',
     tone: 'danger',
   },
   ANONYMOUS: {
