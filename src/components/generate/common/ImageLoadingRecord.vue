@@ -134,6 +134,18 @@
                             </div>
                           </div>
                         </div>
+                        <button
+                          class="image-card-download-button"
+                          type="button"
+                          :aria-label="`下载第 ${i + 1} 张原图`"
+                          title="下载原图"
+                          @click.stop="$emit('download', i)"
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                          <span>下载原图</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -295,7 +307,7 @@ const props = defineProps({
   conversationEntries: { type: Array as PropType<ConversationEntry[]>, default: () => [] }
 })
 
-const emit = defineEmits(['edit', 'regenerate', 'more', 'preview', 'make-same'])
+const emit = defineEmits(['edit', 'regenerate', 'more', 'preview', 'download', 'make-same'])
 
 const handlePreview = (index: number) => {
   emit('preview', index)
@@ -572,6 +584,42 @@ onUnmounted(() => {
 .image-card-preview-trigger .image-TLmgkP {
   pointer-events: none;
   user-select: none;
+}
+
+.image-card-wrapper {
+  position: relative;
+}
+
+.image-card-download-button {
+  align-items: center;
+  backdrop-filter: blur(12px);
+  background: rgba(17, 18, 24, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  bottom: 12px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 6px;
+  line-height: 1;
+  padding: 9px 12px;
+  position: absolute;
+  right: 12px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  z-index: 8;
+}
+
+.image-card-download-button:hover {
+  background: rgba(91, 71, 255, 0.92);
+  border-color: rgba(255, 255, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+.image-card-download-button:focus-visible {
+  outline: 2px solid var(--brand-main-default, #7c5cff);
+  outline-offset: 2px;
 }
 
 .vertical-divider {

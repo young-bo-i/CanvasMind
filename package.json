@@ -17,6 +17,7 @@
     "storage:mkdir": "node -e \"require('node:fs').mkdirSync('uploads',{recursive:true})\"",
     "type-check": "vue-tsc --noEmit",
     "test:account-credentials": "node --import tsx --test tests/account-credentials.test.ts",
+    "test:generation-download": "node --import tsx --test tests/generation-image-download.test.ts",
     "test:generation-errors": "node --import tsx --test tests/generation-error.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",

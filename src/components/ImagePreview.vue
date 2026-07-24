@@ -148,7 +148,7 @@
                   </g>
                 </svg>
               </div>
-              <span>下载</span>
+              <span>下载原图</span>
             </button>
           </div>
 

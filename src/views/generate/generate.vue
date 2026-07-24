@@ -17,6 +17,7 @@ import { buildAgentChatMessages, getAgentSkillCatalogItem, isAgentWorkspaceSkill
 import {
   createGenerationRecord as createGenerationRecordRequest,
   deleteGenerationRecord as deleteGenerationRecordRequest,
+  downloadGenerationImage,
   listGenerationRecords as listGenerationRecordsRequest,
   updateGenerationRecord as updateGenerationRecordRequest,
   type GenerationRecordType,
@@ -145,6 +146,8 @@ interface GeneratePreviewImageItem {
   featureLabel?: string
   createDate?: string
   sourceRecordId?: number
+  sourceRecordDbId?: string
+  sourceImageIndex?: number
   type?: GenerationRecordType
   model?: string
   modelKey?: string
@@ -1018,6 +1021,8 @@ const buildPreviewImagesFromRecord = (record: GeneratingRecord): GeneratePreview
     featureLabel: record.feature,
     createDate: record.time,
     sourceRecordId: record.id,
+    sourceRecordDbId: record.dbId,
+    sourceImageIndex: index,
     type: record.type,
     model: record.model,
     modelKey: record.modelKey,
@@ -1134,7 +1139,34 @@ const handleRequeryVideoRecord = async (record: GeneratingRecord, manual = false
   }
 }
 
-// 下载生成结果（同源 /uploads 直接下载）。
+const saveDownloadedBlob = (blob: Blob, filename: string) => {
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+}
+
+const handleDownloadImageRecord = async (record: GeneratingRecord, imageIndex: number) => {
+  if (!record.dbId) {
+    ElMessage.warning('生成记录正在保存，请稍后再下载')
+    return
+  }
+
+  try {
+    const downloaded = await downloadGenerationImage(record.dbId, imageIndex)
+    saveDownloadedBlob(downloaded.blob, downloaded.filename)
+    ElMessage.success('原图下载已开始')
+  } catch (error: any) {
+    ElMessage.error(String(error?.message || '原图下载失败，请稍后重试'))
+  }
+}
+
+// 下载生成视频（图片原图统一走受保护的记录下载接口）。
 const handleDownloadResult = (url: string, kind: 'image' | 'video') => {
   const target = String(url || '').trim()
   if (!target) return
@@ -1169,11 +1201,14 @@ const handleDeleteRecord = async (record: GeneratingRecord) => {
 }
 
 const handlePreviewDownload = async (image: GeneratePreviewImageItem) => {
-  const anchor = document.createElement('a')
-  anchor.href = image.src
-  anchor.download = `generate-${Date.now()}.png`
-  anchor.rel = 'noopener'
-  anchor.click()
+  const sourceRecord = image.sourceRecordDbId
+    ? generatingRecords.value.find(record => record.dbId === image.sourceRecordDbId)
+    : findGeneratingRecordById(image.sourceRecordId)
+  if (!sourceRecord) {
+    ElMessage.error('未找到对应的生成记录，无法下载原图')
+    return
+  }
+  await handleDownloadImageRecord(sourceRecord, image.sourceImageIndex || 0)
 }
 
 const handlePreviewFavorite = () => {
@@ -3512,6 +3547,7 @@ onUnmounted(() => {
                     :conversation-entries="getRecordConversationEntries(record)"
                     :error="record.error ? formatGenerationError(record.error, '图片生成失败') : ''"
                     @preview="handlePreviewRecordImage(record, $event)"
+                    @download="handleDownloadImageRecord(record, $event)"
                     @edit="handleEditImageRecord(record)"
                     @regenerate="handleRegenerateImageRecord(record)"
                     @more="handleOpenImageRecordMore(record)"

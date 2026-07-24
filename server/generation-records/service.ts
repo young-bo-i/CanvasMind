@@ -901,6 +901,66 @@ export const getGenerationRecordById = async (id: string, currentUserId: string)
   return serializeGenerationRecord(record)
 }
 
+// 获取用户自己某一张生成图片的原始资源信息，供受保护的下载接口使用。
+// 下载端只接收记录 ID + 图片序号，不接受任意 URL，避免把下载接口变成开放代理。
+export const getGenerationImageOutputForDownload = async (
+  id: string,
+  currentUserId: string,
+  imageIndex: number,
+) => {
+  const normalizedRecordId = String(id || '').trim()
+  const normalizedUserId = String(currentUserId || '').trim()
+  if (!normalizedRecordId || !normalizedUserId || !Number.isInteger(imageIndex) || imageIndex < 0) {
+    return null
+  }
+
+  const record = await prisma.generationRecord.findFirst({
+    where: {
+      id: normalizedRecordId,
+      userId: normalizedUserId,
+    },
+    select: {
+      id: true,
+      createdAt: true,
+      outputs: {
+        where: {
+          outputType: 'IMAGE',
+          url: {
+            not: null,
+          },
+        },
+        orderBy: [
+          { sortOrder: 'asc' },
+          { createdAt: 'asc' },
+        ],
+        select: {
+          id: true,
+          url: true,
+          mimeType: true,
+          fileSizeBytes: true,
+          sortOrder: true,
+        },
+      },
+    },
+  })
+
+  const output = record?.outputs?.[imageIndex]
+  if (!record || !output?.url) {
+    return null
+  }
+
+  return {
+    recordId: record.id,
+    createdAt: record.createdAt,
+    outputId: output.id,
+    url: output.url,
+    mimeType: output.mimeType || '',
+    fileSizeBytes: output.fileSizeBytes,
+    sortOrder: output.sortOrder,
+    imageIndex,
+  }
+}
+
 // 创建一条新的生成记录，并同步写入输出与 Agent 过程
 export const createGenerationRecord = async (payload: GenerationRecordPayload, currentUserId: string) => {
   if (!String(payload.prompt || '').trim()) {
