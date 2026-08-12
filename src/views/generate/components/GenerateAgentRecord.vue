@@ -240,6 +240,18 @@
                                       decoding="async"
                                     >
                                   </div>
+                                  <button
+                                    type="button"
+                                    class="agent-image-download-button"
+                                    :aria-label="`下载第 ${slot.imageIndex! + 1} 张原图`"
+                                    title="下载原图"
+                                    @click.stop="emit('download', slot.imageIndex!)"
+                                  >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                      <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                    <span>下载原图</span>
+                                  </button>
                                 </div>
                                 <div v-else class="placeholder-card-inner">
                                   <div class="placeholder-shimmer"></div>
@@ -338,6 +350,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   stop: []
+  download: [imageIndex: number]
 }>()
 
 interface ContentSection {
@@ -366,6 +379,7 @@ interface ImageDisplaySlot {
   key: string
   kind: 'image' | 'placeholder'
   image?: AgentImageResult
+  imageIndex?: number
 }
 
 const maxVisibleReferenceCount = 4
@@ -536,10 +550,11 @@ const placeholderCount = computed(() => {
   return Math.max(expectedImageCount.value - images.value.length, 0)
 })
 const imageDisplaySlots = computed<ImageDisplaySlot[]>(() => {
-  const imageSlots = images.value.map((image) => ({
+  const imageSlots = images.value.map((image, imageIndex) => ({
     key: image.id,
     kind: 'image' as const,
     image,
+    imageIndex,
   }))
   const placeholderSlots = Array.from({ length: placeholderCount.value }, (_, index) => ({
     key: `placeholder-${index + 1}`,

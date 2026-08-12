@@ -50,9 +50,15 @@
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 0 0-14.9-2M4 15a8 8 0 0 0 14.9 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 做同款
               </button>
-              <button type="button" class="record-quick-action" @click="$emit('download', videos[0])">
+              <button
+                v-for="(_url, videoIndex) in videos"
+                :key="`download-${videoIndex}`"
+                type="button"
+                class="record-quick-action"
+                @click="$emit('download', videoIndex)"
+              >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                下载
+                {{ videos.length > 1 ? `下载视频 ${videoIndex + 1}` : '下载原视频' }}
               </button>
               <button type="button" class="record-quick-action record-quick-action--danger" @click="$emit('delete')">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

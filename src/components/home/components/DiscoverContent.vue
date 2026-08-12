@@ -265,6 +265,7 @@ const buildFeedItemFromAsset = (item) => {
   const isVideo = item.assetType === 'video'
   return {
     id: item.id,
+    downloadable: true,
     isVideo,
     // 图片用预览图；视频海报只用真实封面/缩略图（没有就留空，避免把 mp4 当海报导致黑块）
     src: buildAssetUrl(isVideo ? (item.coverUrl || item.thumbnailUrl || '') : (item.previewUrl || item.fileUrl)),
@@ -297,6 +298,7 @@ const buildFeedItemFromAsset = (item) => {
 const buildFallbackFeedItems = () => (
   discoverContent.feedItems.map((item) => ({
     id: item.id,
+    downloadable: false,
     src: item.imageSrc,
     alt: item.alt,
     promptText: item.promptText,
@@ -709,6 +711,7 @@ function openWorkDetailFromFeed(item, index) {
   emitOpenWorkDetail({
     gallery: displayedFeedItems.value.map(({ item: it }) => ({
       id: it.id,
+      downloadable: Boolean(it.downloadable),
       imageSrc: it.src,
       isVideo: Boolean(it.isVideo),
       // 详情播放用干净地址（去掉首帧预览的 #t 片段）
@@ -726,6 +729,7 @@ function openWorkDetailFromCarousel(item, index) {
   emitOpenWorkDetail({
     gallery: carouselItems.value.map((it) => ({
       id: it.id,
+      downloadable: false,
       imageSrc: it.image,
       promptText: it.promptText || it.title,
       user: it.user,

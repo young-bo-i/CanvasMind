@@ -240,6 +240,9 @@
       <HomeDetailModalFrom
           v-model="workDetailOpen"
           :image-src="workDetailImageSrc"
+          :is-video="workDetailIsVideo"
+          :video-src="workDetailVideoSrc"
+          :download-enabled="true"
           :owner-id="currentWorkDetailItem?.ownerId || ''"
           :prompt-text="workDetailPromptText"
           :author-name="workDetailAuthorName"
@@ -253,6 +256,7 @@
           :gallery-length="workDetailGallery.length"
           @gallery-nav="handleGalleryNav"
           @favorite="handleWorkDetailFavorite"
+          @download="handleWorkDetailDownload"
           @delete="handleWorkDetailDelete"
           @report="handleWorkDetailReport"
       />
@@ -265,8 +269,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import FrontstagePageShell from '@/components/layout/FrontstagePageShell.vue'
 import HomeDetailModalFrom from '@/components/home/components/HomeDetailModalFrom.vue'
-import { applyAssetAction, listAssetItems, type PersistedAssetItem } from '@/api/asset-items'
+import { applyAssetAction, buildAssetDownloadUrl, listAssetItems, type PersistedAssetItem } from '@/api/asset-items'
 import { buildAssetUrl, buildThumbnailUrl } from '@/api/http'
+import { triggerBrowserDownload } from '@/utils/download'
 import {
   buildPlainMasonryLayoutsFromSizes,
   computePlainMasonryMetrics,
@@ -280,6 +285,7 @@ interface AccountFeedItem {
   id: string
   ownerId: string
   imageSrc: string
+  videoSrc: string
   promptText: string
   authorName: string
   authorAvatarSrc: string
@@ -405,6 +411,10 @@ const currentWorkDetailItem = computed(() => {
 // 详情弹层主图。
 const workDetailImageSrc = computed(() => currentWorkDetailItem.value?.imageSrc || '')
 
+const workDetailIsVideo = computed(() => currentWorkDetailItem.value?.assetType === 'video')
+
+const workDetailVideoSrc = computed(() => currentWorkDetailItem.value?.videoSrc || '')
+
 // 详情弹层提示词。
 const workDetailPromptText = computed(() => currentWorkDetailItem.value?.promptText || '')
 
@@ -445,6 +455,7 @@ const mapAssetToFeedItem = (item: PersistedAssetItem): AccountFeedItem => {
     id: item.id,
     ownerId: item.owner?.id || '',
     imageSrc: buildAssetUrl(item.previewUrl || item.coverUrl || item.fileUrl),
+    videoSrc: item.assetType === 'video' ? buildAssetUrl(item.fileUrl) : '',
     promptText: item.promptText || '',
     authorName: authStore.currentUser.value?.name || item.owner?.name || '创作者',
     authorAvatarSrc: buildAssetUrl(authStore.currentUser.value?.avatarUrl || item.owner?.avatarSrc || EMPTY_AVATAR_DATA_URI),
@@ -585,6 +596,15 @@ const handleWorkDetailFavorite = async () => {
     currentItem.favoriteCount -= 1
     console.warn('个人中心点赞失败', error)
   }
+}
+
+const handleWorkDetailDownload = () => {
+  const currentItem = currentWorkDetailItem.value
+  if (!currentItem || !triggerBrowserDownload(buildAssetDownloadUrl(currentItem.id))) {
+    ElMessage.error('未能发起下载，请稍后重试')
+    return
+  }
+  ElMessage.success(currentItem.assetType === 'video' ? '原视频下载请求已发起' : '原图下载请求已发起')
 }
 
 const removeCurrentWorkDetailItem = () => {

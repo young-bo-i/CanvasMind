@@ -901,16 +901,19 @@ export const getGenerationRecordById = async (id: string, currentUserId: string)
   return serializeGenerationRecord(record)
 }
 
-// 获取用户自己某一张生成图片的原始资源信息，供受保护的下载接口使用。
-// 下载端只接收记录 ID + 图片序号，不接受任意 URL，避免把下载接口变成开放代理。
-export const getGenerationImageOutputForDownload = async (
+export type GenerationDownloadMediaKind = 'image' | 'video'
+
+// 获取用户自己某一个生成媒体的原始资源信息，供受保护的下载接口使用。
+// 下载端只接收记录 ID、媒体类型与序号，不接受任意 URL，避免把下载接口变成开放代理。
+export const getGenerationMediaOutputForDownload = async (
   id: string,
   currentUserId: string,
-  imageIndex: number,
+  mediaKind: GenerationDownloadMediaKind,
+  mediaIndex: number,
 ) => {
   const normalizedRecordId = String(id || '').trim()
   const normalizedUserId = String(currentUserId || '').trim()
-  if (!normalizedRecordId || !normalizedUserId || !Number.isInteger(imageIndex) || imageIndex < 0) {
+  if (!normalizedRecordId || !normalizedUserId || !Number.isInteger(mediaIndex) || mediaIndex < 0) {
     return null
   }
 
@@ -924,7 +927,7 @@ export const getGenerationImageOutputForDownload = async (
       createdAt: true,
       outputs: {
         where: {
-          outputType: 'IMAGE',
+          outputType: mediaKind === 'video' ? 'VIDEO' : 'IMAGE',
           url: {
             not: null,
           },
@@ -944,12 +947,13 @@ export const getGenerationImageOutputForDownload = async (
     },
   })
 
-  const output = record?.outputs?.[imageIndex]
+  const output = record?.outputs?.[mediaIndex]
   if (!record || !output?.url) {
     return null
   }
 
   return {
+    id: record.id,
     recordId: record.id,
     createdAt: record.createdAt,
     outputId: output.id,
@@ -957,6 +961,23 @@ export const getGenerationImageOutputForDownload = async (
     mimeType: output.mimeType || '',
     fileSizeBytes: output.fileSizeBytes,
     sortOrder: output.sortOrder,
+    mediaKind,
+    mediaIndex,
+  }
+}
+
+// 兼容已有图片下载调用；新调用统一使用 getGenerationMediaOutputForDownload。
+export const getGenerationImageOutputForDownload = async (
+  id: string,
+  currentUserId: string,
+  imageIndex: number,
+) => {
+  const output = await getGenerationMediaOutputForDownload(id, currentUserId, 'image', imageIndex)
+  if (!output) {
+    return null
+  }
+  return {
+    ...output,
     imageIndex,
   }
 }

@@ -219,7 +219,11 @@
       :src="imagePreview.src"
       :title="imagePreview.title"
       :description="imagePreview.description"
+      :open-url="imagePreview.openUrl"
+      :open-label="imagePreview.openLabel"
       :download-name="imagePreview.downloadName"
+      :download-url="imagePreview.downloadUrl"
+      :download-label="imagePreview.downloadLabel"
       :meta="imagePreview.meta"
     />
   </AdminPageContainer>
@@ -228,7 +232,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { buildThumbnailUrl } from '@/api/http'
+import { buildAssetUrl, buildThumbnailUrl } from '@/api/http'
 import AdminFilterChips, { type AdminFilterChipGroup } from '@/components/admin/common/AdminFilterChips.vue'
 import AdminFilterToolbar from '@/components/admin/common/AdminFilterToolbar.vue'
 import AdminPagination from '@/components/admin/common/AdminPagination.vue'
@@ -240,6 +244,7 @@ import { useAdminListFilters } from '@/composables/useAdminListFilters'
 import { resolveAdminDictionaryItem } from '@/config/adminDictionaries'
 import {
   applyAssetAction,
+  buildAssetDownloadUrl,
   listAdminAssetItems,
   type AssetActionType,
   type AssetKind,
@@ -256,14 +261,22 @@ const imagePreview = reactive<{
   src: string
   title: string
   description: string
+  openUrl: string
+  openLabel: string
   downloadName: string
+  downloadUrl: string
+  downloadLabel: string
   meta: Array<{ label: string; value: string | number }>
 }>({
   visible: false,
   src: '',
   title: '',
   description: '',
+  openUrl: '',
+  openLabel: '打开原图',
   downloadName: '',
+  downloadUrl: '',
+  downloadLabel: '下载原图',
   meta: [],
 })
 
@@ -559,7 +572,11 @@ const openImagePreview = (item: PersistedAssetItem) => {
   imagePreview.src = resolveAssetPreviewUrl(item)
   imagePreview.title = item.title || buildAssetFallbackTitle(item)
   imagePreview.description = item.promptText || item.description || ''
-  imagePreview.downloadName = `${item.id}.${item.assetType === 'video' ? 'jpg' : 'png'}`
+  imagePreview.openUrl = buildAssetUrl(item.fileUrl)
+  imagePreview.openLabel = item.assetType === 'video' ? '打开原视频' : '打开原图'
+  imagePreview.downloadName = ''
+  imagePreview.downloadUrl = buildAssetDownloadUrl(item.id)
+  imagePreview.downloadLabel = item.assetType === 'video' ? '下载原视频' : '下载原图'
   imagePreview.meta = [
     { label: '类型', value: item.assetType === 'video' ? '视频封面' : '图片' },
     { label: '尺寸', value: formatDimensions(item) },

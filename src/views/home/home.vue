@@ -28,6 +28,7 @@
         :image-src="workDetailImageSrc"
         :is-video="workDetailIsVideo"
         :video-src="workDetailVideoSrc"
+        :download-enabled="workDetailDownloadEnabled"
         :owner-id="workDetailOwnerId"
         :prompt-text="workDetailPromptText"
         :author-name="workDetailAuthorName"
@@ -41,6 +42,7 @@
         :gallery-length="workDetailGallery.length"
         @gallery-nav="handleGalleryNav"
         @favorite="handleWorkDetailFavorite"
+        @download="handleWorkDetailDownload"
         @delete="handleWorkDetailDelete"
         @report="handleWorkDetailReport"
         @make-same="handleWorkDetailMakeSame"
@@ -60,8 +62,9 @@ import TabsSection from '@components/home/components/TabsSection.vue'
 // 作品详情弹窗：用户点开作品时才需要，首屏不下载（节省 21KB JS + 74KB CSS）
 const HomeDetailModalFrom = defineAsyncComponent(() => import('@components/home/components/HomeDetailModalFrom.vue'))
 import HomeFooter from '@components/home/components/HomeFooter.vue'
-import { applyAssetAction } from '@/api/asset-items'
+import { applyAssetAction, buildAssetDownloadUrl } from '@/api/asset-items'
 import { useAuthStore } from '@/stores/auth'
+import { triggerBrowserDownload } from '@/utils/download'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -132,6 +135,12 @@ const workDetailVideoSrc = computed(() => {
   const g = workDetailGallery.value
   const i = workDetailGalleryIndex.value
   return g[i]?.videoSrc ?? ''
+})
+
+const workDetailDownloadEnabled = computed(() => {
+  const g = workDetailGallery.value
+  const i = workDetailGalleryIndex.value
+  return Boolean(g[i]?.downloadable)
 })
 
 /** 空字符串视为未传，弹层用内置模拟提示词 */
@@ -218,6 +227,7 @@ function handleOpenWorkDetail(payload) {
   } else {
     workDetailGallery.value = [{
       id: payload.id,
+      downloadable: Boolean(payload.downloadable),
       imageSrc: payload.imageSrc,
       promptText: payload.promptText,
       user: payload.user,
@@ -276,6 +286,15 @@ async function handleWorkDetailFavorite() {
     }
     console.warn('收藏作品失败', error)
   }
+}
+
+function handleWorkDetailDownload() {
+  const assetId = currentWorkDetailAssetId.value
+  if (!assetId || !triggerBrowserDownload(buildAssetDownloadUrl(assetId))) {
+    ElMessage.error('未能发起下载，请稍后重试')
+    return
+  }
+  ElMessage.success(workDetailIsVideo.value ? '原视频下载请求已发起' : '原图下载请求已发起')
 }
 
 function removeCurrentWorkDetailItem() {

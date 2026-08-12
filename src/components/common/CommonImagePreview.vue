@@ -9,22 +9,22 @@
           </div>
           <div class="common-image-preview__actions">
             <a
-              v-if="resolvedSrc"
+              v-if="resolvedOpenUrl"
               class="common-image-preview__button"
-              :href="resolvedSrc"
+              :href="resolvedOpenUrl"
               target="_blank"
               rel="noreferrer"
             >
-              打开原图
+              {{ openLabel }}
             </a>
-            <a
-              v-if="resolvedSrc"
+            <button
+              v-if="resolvedDownloadUrl"
               class="common-image-preview__button"
-              :href="resolvedSrc"
-              :download="downloadName || title || 'image'"
+              type="button"
+              @click="handleDownload"
             >
-              下载
-            </a>
+              {{ downloadLabel }}
+            </button>
             <button class="common-image-preview__close" type="button" @click="closePreview">×</button>
           </div>
         </header>
@@ -48,6 +48,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { buildAssetUrl } from '@/api/http'
+import { triggerBrowserDownload } from '@/utils/download'
 
 export interface CommonImagePreviewMetaItem {
   label: string
@@ -59,14 +60,22 @@ const props = withDefaults(defineProps<{
   src?: string
   title?: string
   description?: string
+  openUrl?: string
+  openLabel?: string
   downloadName?: string
+  downloadUrl?: string
+  downloadLabel?: string
   meta?: CommonImagePreviewMetaItem[]
   closeOnMask?: boolean
 }>(), {
   src: '',
   title: '',
   description: '',
+  openUrl: '',
+  openLabel: '打开原图',
   downloadName: '',
+  downloadUrl: '',
+  downloadLabel: '下载原图',
   meta: () => [],
   closeOnMask: true,
 })
@@ -77,7 +86,17 @@ const emit = defineEmits<{
 }>()
 
 const resolvedSrc = computed(() => buildAssetUrl(props.src || ''))
+const resolvedOpenUrl = computed(() => buildAssetUrl(props.openUrl || props.src || ''))
+// 下载按钮只在调用方提供受保护附件地址时显示，避免重新退化成跨域原始 URL 的空壳下载。
+const resolvedDownloadUrl = computed(() => buildAssetUrl(props.downloadUrl || ''))
 const metaItems = computed(() => props.meta.filter(item => item.label && String(item.value || '').trim()))
+
+const handleDownload = () => {
+  triggerBrowserDownload(resolvedDownloadUrl.value, {
+    // 留空时由受保护接口的 Content-Disposition 决定真实扩展名与文件名。
+    downloadName: props.downloadName || undefined,
+  })
+}
 
 const closePreview = () => {
   emit('update:visible', false)

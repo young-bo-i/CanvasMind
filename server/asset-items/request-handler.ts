@@ -2,11 +2,31 @@ import { sendJson } from '../shared/http'
 import { requireAdminSessionUser, requireCurrentSessionUser } from '../auth/session'
 import { isPrismaConfigured } from '../db/prisma'
 import { readAssetActionBody, readAssetListQuery, sendAssetItemsError } from './shared'
-import { applyAssetAction, listAllAssetItems, listMineAssetItems, listPublicAssetItems } from './service'
+import {
+  applyAssetAction,
+  getAssetItemForDownload,
+  listAllAssetItems,
+  listMineAssetItems,
+  listPublicAssetItems,
+  recordAssetItemDownload,
+} from './service'
 import { ASSET_ITEMS_BASE_PATH } from './constants'
+import { resolveMediaDownloadStatus, sendMediaDownload } from '../generation-records/download'
 
 // 处理资源列表请求。
 export const handleAssetItemsRequest = async (req: any, res: any) => {
+  const parsedRequestUrl = new URL(String(req.url || ''), 'http://localhost')
+  const pathname = parsedRequestUrl.pathname
+  const relativeRequestPath = pathname.startsWith(`${ASSET_ITEMS_BASE_PATH}/`)
+    ? pathname.slice(ASSET_ITEMS_BASE_PATH.length + 1)
+    : ''
+  const requestPathSegments = relativeRequestPath
+    .split('/')
+    .map(segment => decodeURIComponent(segment))
+    .filter(Boolean)
+  const assetId = requestPathSegments[0] || ''
+  const action = requestPathSegments[1] || ''
+
   try {
     if (!isPrismaConfigured()) {
       sendAssetItemsError(res, 500, '缺少 DATABASE_URL，暂时无法使用资源存储。')
@@ -14,7 +34,6 @@ export const handleAssetItemsRequest = async (req: any, res: any) => {
     }
 
     const requestUrl = String(req.url || '')
-    const pathname = requestUrl.split('?')[0]
 
     if (req.method === 'GET' && pathname === ASSET_ITEMS_BASE_PATH) {
       const query = readAssetListQuery(requestUrl)
@@ -45,6 +64,30 @@ export const handleAssetItemsRequest = async (req: any, res: any) => {
       return
     }
 
+    if (req.method === 'GET' && assetId && action === 'download') {
+      const currentUser = await requireCurrentSessionUser(req, res)
+      if (!currentUser) {
+        return
+      }
+
+      const source = await getAssetItemForDownload(assetId, {
+        id: currentUser.id,
+        role: currentUser.role,
+      })
+      if (!source) {
+        sendAssetItemsError(res, 404, '资源不存在或无权下载')
+        return
+      }
+
+      await sendMediaDownload(res, source)
+      try {
+        await recordAssetItemDownload(source.assetId)
+      } catch (error) {
+        console.warn('记录资源下载次数失败', error)
+      }
+      return
+    }
+
     if (req.method === 'POST' && pathname === `${ASSET_ITEMS_BASE_PATH}/actions`) {
       const currentUser = await requireCurrentSessionUser(req, res)
       if (!currentUser) {
@@ -70,6 +113,21 @@ export const handleAssetItemsRequest = async (req: any, res: any) => {
 
     sendAssetItemsError(res, 405, 'Method Not Allowed')
   } catch (error: any) {
-    sendAssetItemsError(res, 500, error?.message || '处理资源请求失败')
+    if (res.writableEnded) {
+      return
+    }
+    if (res.headersSent) {
+      try {
+        res.destroy()
+      } catch {
+        // 下载流已经开始，无法再返回 JSON。
+      }
+      return
+    }
+    sendAssetItemsError(
+      res,
+      action === 'download' ? resolveMediaDownloadStatus(error) : 500,
+      error?.message || (action === 'download' ? '资源下载失败' : '处理资源请求失败'),
+    )
   }
 }

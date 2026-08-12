@@ -351,6 +351,92 @@ export const listAllAssetItems = async (query: AssetListQuery, viewer?: AssetVie
   })
 }
 
+// 资源下载只接受资源 ID，并在服务端按当前用户权限解析真实 fileUrl。
+// 普通用户可下载自己的资源和已公开资源；管理员还可下载自己名下用户的资源；超管不受归属限制。
+export const getAssetItemForDownload = async (
+  assetId: string,
+  viewer: AssetViewer,
+) => {
+  const normalizedAssetId = String(assetId || '').trim()
+  const normalizedViewerId = String(viewer?.id || '').trim()
+  if (!normalizedAssetId || !normalizedViewerId) {
+    return null
+  }
+
+  const publicAssetWhere: Prisma.AssetItemWhereInput = {
+    visibility: 'PUBLIC',
+    publishStatus: 'PUBLISHED',
+    reviewStatus: 'APPROVED',
+  }
+  const accessWhere: Prisma.AssetItemWhereInput = viewer.role === 'SUPER_ADMIN'
+    ? {}
+    : viewer.role === 'ADMIN'
+      ? {
+          OR: [
+            { userId: normalizedViewerId },
+            { user: { ownerAdminId: normalizedViewerId } },
+            publicAssetWhere,
+          ],
+        }
+      : {
+          OR: [
+            { userId: normalizedViewerId },
+            publicAssetWhere,
+          ],
+        }
+
+  const record = await prisma.assetItem.findFirst({
+    where: {
+      id: normalizedAssetId,
+      isDeleted: false,
+      ...accessWhere,
+    },
+    select: {
+      id: true,
+      assetType: true,
+      fileUrl: true,
+      createdAt: true,
+      generationOutput: {
+        select: {
+          mimeType: true,
+        },
+      },
+    },
+  })
+  if (!record?.fileUrl) {
+    return null
+  }
+
+  const mediaKind = record.assetType === 'VIDEO' ? 'video' : 'image'
+  const date = record.createdAt.toISOString().slice(0, 10).replace(/-/g, '')
+  return {
+    id: record.id,
+    assetId: record.id,
+    createdAt: record.createdAt,
+    url: record.fileUrl,
+    mimeType: record.generationOutput?.mimeType || '',
+    mediaKind,
+    mediaIndex: 0,
+    filenameBase: `canana-${mediaKind}-${date}-${record.id.slice(-8)}`,
+  } as const
+}
+
+// 下载响应完整传输后再记一次成功下载；计数失败不应影响已经完成的文件响应。
+export const recordAssetItemDownload = async (assetId: string) => {
+  const result = await prisma.assetItem.updateMany({
+    where: {
+      id: String(assetId || '').trim(),
+      isDeleted: false,
+    },
+    data: {
+      downloadCount: {
+        increment: 1,
+      },
+    },
+  })
+  return result.count
+}
+
 // 批量更新资源状态。
 export const applyAssetAction = async (
   payload: AssetActionPayload,

@@ -267,6 +267,17 @@
                                   class="home-work-detail-operation-menu"
                               >
                                 <button
+                                    v-if="downloadEnabled"
+                                    type="button"
+                                    class="home-work-detail-operation-menu-item operation-menu-content-item"
+                                    @click.stop="handleDownload"
+                                >
+                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                                  </svg>
+                                  <span>{{ isVideo ? '下载原视频' : '下载原图' }}</span>
+                                </button>
+                                <button
                                     v-if="isAuthor"
                                     type="button"
                                     class="home-work-detail-operation-menu-item operation-menu-content-item"
@@ -447,9 +458,11 @@ const props = defineProps({
   useAsReferenceLabel: { type: String, default: '用作参考图' },
   /** 右侧「使用提示词」，点击后展示底部 ContentGenerator */
   usePromptLabel: { type: String, default: '使用提示词' },
+  /** 仅真实资产 ID 可走受保护下载；静态演示内容应隐藏下载入口。 */
+  downloadEnabled: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'gallery-nav', 'content-send', 'favorite', 'delete', 'report', 'make-same', 'use-as-reference'])
+const emit = defineEmits(['update:modelValue', 'close', 'gallery-nav', 'content-send', 'favorite', 'download', 'delete', 'report', 'make-same', 'use-as-reference'])
 
 const dialogRef = ref(/** @type {HTMLElement | null} */ (null))
 const contentGeneratorRef = ref(/** @type {InstanceType<typeof ContentGenerator> | null} */ (null))
@@ -547,6 +560,11 @@ function toggleOperationMenu() {
 function handleDelete() {
   operationMenuVisible.value = false
   emit('delete')
+}
+
+function handleDownload() {
+  operationMenuVisible.value = false
+  emit('download')
 }
 
 function handleReport() {

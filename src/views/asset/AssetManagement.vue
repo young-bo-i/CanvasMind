@@ -44,12 +44,19 @@
           :video-filter-options="videoFilterOptions"
           :video-filter="videoFilter"
           :video-groups="videoGroups"
+          :is-batch-mode="isBatchMode"
+          :selected-count="selectedCount"
+          :is-selected="isSelected"
           :loading="videoLoading"
           :loading-more="videoLoadingMore"
           :has-more="videoHasMore"
           @set-video-filter="setVideoFilter"
           @enter-batch-mode="enterBatchMode"
+          @exit-batch-mode="exitBatchMode"
+          @batch-download="handleBatchDownload"
+          @asset-click="handleAssetClick"
           @edit-in-capcut="handleEditInCapCut"
+          @download="handleVideoDownload"
           @load-more="loadMoreVideoAssets"
       />
       <AssetEditorTab
@@ -119,8 +126,9 @@ import {
   storyFilterOptions,
   audioFilterOptions,
 } from '@/views/asset/constants'
-import { applyAssetAction } from '@/api/asset-items'
+import { applyAssetAction, buildAssetDownloadUrl } from '@/api/asset-items'
 import { AUTH_LOGIN_SUCCESS_EVENT } from '@/stores/auth'
+import { triggerBrowserDownload, triggerBrowserDownloads } from '@/utils/download'
 import type {
   AudioFilterType,
   EditorFilterType,
@@ -295,12 +303,21 @@ const handleBatchDelete = async () => {
   ElMessage.success(`已删除 ${itemIds.length} 项内容`)
 }
 
-const handleBatchDownload = async () => {
+const handleBatchDownload = () => {
   const itemIds = Array.from(selectedItems.value)
   if (!itemIds.length) return
 
-  await applyAssetAction('download', itemIds)
-  ElMessage.success(`已记录 ${itemIds.length} 项下载`)
+  const startedCount = triggerBrowserDownloads(itemIds.map(buildAssetDownloadUrl))
+  if (!startedCount) {
+    ElMessage.error('未能发起下载，请稍后重试')
+    return
+  }
+  ElMessage.success(
+    startedCount > 1
+      ? `已向浏览器提交 ${startedCount} 项${activeTab.value === 'video' ? '原视频' : '原图'}下载请求；如浏览器询问，请允许多个文件下载`
+      : `${activeTab.value === 'video' ? '原视频' : '原图'}下载请求已发起`,
+  )
+  exitBatchMode()
 }
 
 const handleBatchPublish = async () => {
@@ -334,9 +351,19 @@ watch(activeTab, () => {
 
 // 图片预览事件处理
 const handlePreviewDownload = (image: ImageItem) => {
-  void applyAssetAction('download', [image.id]).then(() => {
-    ElMessage.success('已记录下载')
-  })
+  if (!triggerBrowserDownload(buildAssetDownloadUrl(image.id))) {
+    ElMessage.error('未能发起下载，请稍后重试')
+    return
+  }
+  ElMessage.success('原图下载请求已发起，请在浏览器下载列表中查看')
+}
+
+const handleVideoDownload = (itemId: string) => {
+  if (!triggerBrowserDownload(buildAssetDownloadUrl(itemId))) {
+    ElMessage.error('未能发起下载，请稍后重试')
+    return
+  }
+  ElMessage.success('原视频下载请求已发起，请在浏览器下载列表中查看')
 }
 
 const handlePreviewFavorite = (image: ImageItem) => {

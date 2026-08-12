@@ -18,6 +18,7 @@ import {
   createGenerationRecord as createGenerationRecordRequest,
   deleteGenerationRecord as deleteGenerationRecordRequest,
   buildGenerationImageDownloadUrl,
+  buildGenerationMediaDownloadUrl,
   listGenerationRecords as listGenerationRecordsRequest,
   updateGenerationRecord as updateGenerationRecordRequest,
   type GenerationRecordType,
@@ -65,6 +66,7 @@ import type {
 import GenerateSessionList from './components/GenerateSessionList.vue'
 import GenerateConversationSidebar, { type GenerateConversationSidebarItem } from './components/GenerateConversationSidebar.vue'
 import { parseStageConversationEntries, stringifyStageConversationEntries } from './stage-conversation'
+import { triggerBrowserDownload } from '@/utils/download'
 
 const route = useRoute()
 const router = useRouter()
@@ -1139,37 +1141,25 @@ const handleRequeryVideoRecord = async (record: GeneratingRecord, manual = false
   }
 }
 
-const triggerStreamingDownload = (downloadUrl: string) => {
-  const anchor = document.createElement('a')
-  anchor.href = downloadUrl
-  anchor.download = ''
-  anchor.rel = 'noopener'
-  anchor.target = '_blank'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-}
-
 const handleDownloadImageRecord = (record: GeneratingRecord, imageIndex: number) => {
   if (!record.dbId) {
     ElMessage.warning('生成记录正在保存，请稍后再下载')
     return
   }
 
-  triggerStreamingDownload(buildGenerationImageDownloadUrl(record.dbId, imageIndex))
-  ElMessage.success('原图下载已开始，请在浏览器下载列表中查看')
+  triggerBrowserDownload(buildGenerationImageDownloadUrl(record.dbId, imageIndex))
+  ElMessage.success('原图下载请求已发起，请在浏览器下载列表中查看')
 }
 
-// 下载生成视频（图片原图统一走受保护的记录下载接口）。
-const handleDownloadResult = (url: string, kind: 'image' | 'video') => {
-  const target = String(url || '').trim()
-  if (!target) return
-  const anchor = document.createElement('a')
-  anchor.href = target
-  anchor.download = `canana-${kind}-${Date.now()}.${kind === 'video' ? 'mp4' : 'png'}`
-  anchor.rel = 'noopener'
-  anchor.target = '_blank'
-  anchor.click()
+// 视频同样按记录 ID + 序号走受保护的附件响应，避免跨域直链只打开播放器而不保存。
+const handleDownloadVideoRecord = (record: GeneratingRecord, videoIndex: number) => {
+  if (!record.dbId) {
+    ElMessage.warning('生成记录正在保存，请稍后再下载')
+    return
+  }
+
+  triggerBrowserDownload(buildGenerationMediaDownloadUrl(record.dbId, 'video', videoIndex))
+  ElMessage.success('原视频下载请求已发起，请在浏览器下载列表中查看')
 }
 
 // 删除记录：确认后调后端删除（级联清理输出与资产），并从当前列表移除。
@@ -3464,6 +3454,7 @@ onUnmounted(() => {
                     :reference-images="record.referenceImages || []"
                     :error-text="record.error ? formatGenerationError(record.error, '任务执行失败') : ''"
                     @stop="handleStopAgentExecution(record)"
+                    @download="handleDownloadImageRecord(record, $event)"
                 />
                 <ResearchReportRecord
                     v-else-if="isResearchReportRecord(record)"
@@ -3518,7 +3509,7 @@ onUnmounted(() => {
                     :error="record.error ? formatGenerationError(record.error, '视频生成失败') : ''"
                     :requerying="Boolean(record.requerying)"
                     @make-same="handleMakeSameRecord(record)"
-                    @download="handleDownloadResult($event, 'video')"
+                    @download="handleDownloadVideoRecord(record, $event)"
                     @delete="handleDeleteRecord(record)"
                     @requery="handleRequeryVideoRecord(record, true)"
                 />

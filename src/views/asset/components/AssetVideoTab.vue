@@ -16,7 +16,26 @@
                   {{ option.label }}
                 </div>
               </div>
-              <div class="select-ald">
+              <div v-if="isBatchMode" class="operationWrap-oqo">
+                <div class="select-zkx text-5vo">已选择 {{ selectedCount }} 项内容</div>
+                <div class="style-ctWQJ"></div>
+                <button
+                  class="btn-7n1 btn-secondary-y4e btn-rec btn-3qb"
+                  type="button"
+                  :disabled="selectedCount === 0"
+                  @click="emit('batch-download')"
+                >
+                  <div class="button-flt">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="text-5vo">下载原视频</span>
+                  </div>
+                </button>
+                <div class="divider-4o4"></div>
+                <button class="asset-video-cancel-selection" type="button" @click="emit('exit-batch-mode')">取消选择</button>
+              </div>
+              <div v-else class="select-ald">
                 <div class="select-cff"></div>
                 <div class="operateArea-aqq">
                   <div class="search-7ey">
@@ -99,6 +118,8 @@
                           v-observe-video
                           :data-video-id="video.id"
                           class="image-bqm"
+                          :class="{ 'select-1kz': isBatchMode && isSelected(video.id) }"
+                          @click="isBatchMode && emit('asset-click', video.id)"
                         >
                           <div>
                             <div class="container-pm3">
@@ -110,7 +131,7 @@
                                 class="image-w9g"
                                 :src="video.src"
                                 :poster="video.poster"
-                                controls
+                                :controls="!isBatchMode"
                                 playsinline
                                 preload="metadata"
                                 @loadedmetadata="renderVideoFirstFrame"
@@ -120,6 +141,32 @@
                                 class="image-w9g video-poster-placeholder"
                                 :style="video.poster ? { backgroundImage: `url(${video.poster})` } : undefined"
                               ></div>
+                              <button
+                                v-if="!isBatchMode"
+                                type="button"
+                                class="asset-video-download-button"
+                                :aria-label="`下载视频 ${video.id}`"
+                                title="下载原视频"
+                                @click.stop="emit('download', video.id)"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                  <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <span>下载原视频</span>
+                              </button>
+                              <button
+                                v-else
+                                type="button"
+                                class="asset-video-batch-overlay"
+                                :aria-label="isSelected(video.id) ? `取消选择视频 ${video.id}` : `选择视频 ${video.id}`"
+                                @click.stop="emit('asset-click', video.id)"
+                              >
+                                <span class="asset-video-selection-indicator">
+                                  <svg v-if="isSelected(video.id)" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="m5 12 4 4L19 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                                  </svg>
+                                </span>
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -153,6 +200,9 @@ const props = withDefaults(defineProps<{
   videoFilterOptions: FilterOption<VideoFilterType>[]
   videoFilter: VideoFilterType
   videoGroups: VideoGroup[]
+  isBatchMode: boolean
+  selectedCount: number
+  isSelected: (itemId: string) => boolean
   loading?: boolean
   loadingMore?: boolean
   hasMore?: boolean
@@ -165,7 +215,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'set-video-filter': [filter: VideoFilterType]
   'enter-batch-mode': []
+  'exit-batch-mode': []
+  'batch-download': []
+  'asset-click': [itemId: string]
   'edit-in-capcut': []
+  'download': [itemId: string]
   'load-more': []
 }>()
 
@@ -255,6 +309,97 @@ const renderVideoFirstFrame = (event: Event) => {
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
+}
+
+.asset-video-download-button {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 18, 25, 0.78);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  backdrop-filter: blur(8px);
+  transition: opacity .18s ease, background-color .18s ease;
+}
+
+.container-pm3 {
+  container-type: inline-size;
+}
+
+@container (max-width: 130px) {
+  .asset-video-download-button span {
+    display: none;
+  }
+
+  .asset-video-download-button {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+.asset-video-batch-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.asset-video-selection-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(12, 15, 22, 0.42);
+  color: #fff;
+}
+
+.select-1kz .asset-video-selection-indicator {
+  background: var(--brand-main-default, #635bff);
+}
+
+.asset-video-cancel-selection {
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.image-bqm:hover .asset-video-download-button,
+.asset-video-download-button:focus-visible {
+  opacity: 1;
+}
+
+.asset-video-download-button:hover {
+  background: rgba(15, 18, 25, 0.94);
+}
+
+@media (hover: none) {
+  .asset-video-download-button {
+    opacity: 1;
+  }
 }
 
 /* 骨架屏瓦片 + 增量加载提示 */

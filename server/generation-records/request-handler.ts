@@ -4,7 +4,7 @@ import { isPrismaConfigured } from '../db/prisma'
 import {
   createGenerationRecord,
   deleteGenerationRecord,
-  getGenerationImageOutputForDownload,
+  getGenerationMediaOutputForDownload,
   getGenerationRecordById,
   listGenerationRecords,
   updateGenerationRecord,
@@ -14,8 +14,8 @@ import { readGenerationRecordBody, sendGenerationRecordError } from './shared'
 import { writeScopedLog } from '../shared/logging'
 import type { GenerationRecordPayload } from './shared'
 import {
-  resolveGenerationImageDownloadStatus,
-  sendGenerationImageDownload,
+  resolveMediaDownloadStatus,
+  sendMediaDownload,
 } from './download'
 
 // 统一输出生成记录接口的异常诊断日志，便于线上定位具体失败分支。
@@ -76,23 +76,33 @@ export const handleGenerationRecordsRequest = async (req: any, res: any) => {
     }
 
     if (req.method === 'GET' && recordId && action === 'download') {
-      const imageIndex = Number(parsedRequestUrl.searchParams.get('index') || 0)
-      if (!Number.isInteger(imageIndex) || imageIndex < 0) {
-        sendGenerationRecordError(res, 400, '图片序号无效')
+      const rawMediaKind = String(
+        parsedRequestUrl.searchParams.get('type')
+        || parsedRequestUrl.searchParams.get('kind')
+        || 'image',
+      ).trim().toLowerCase()
+      if (rawMediaKind !== 'image' && rawMediaKind !== 'video') {
+        sendGenerationRecordError(res, 400, '媒体类型无效')
+        return
+      }
+      const mediaIndex = Number(parsedRequestUrl.searchParams.get('index') || 0)
+      if (!Number.isInteger(mediaIndex) || mediaIndex < 0) {
+        sendGenerationRecordError(res, 400, '媒体序号无效')
         return
       }
 
-      const output = await getGenerationImageOutputForDownload(
+      const output = await getGenerationMediaOutputForDownload(
         recordId,
         String(currentUser.id || ''),
-        imageIndex,
+        rawMediaKind,
+        mediaIndex,
       )
       if (!output) {
-        sendGenerationRecordError(res, 404, '生成图片不存在或无权下载')
+        sendGenerationRecordError(res, 404, `生成${rawMediaKind === 'video' ? '视频' : '图片'}不存在或无权下载`)
         return
       }
 
-      await sendGenerationImageDownload(res, output)
+      await sendMediaDownload(res, output)
       return
     }
 
@@ -155,8 +165,8 @@ export const handleGenerationRecordsRequest = async (req: any, res: any) => {
     }
     sendGenerationRecordError(
       res,
-      action === 'download' ? resolveGenerationImageDownloadStatus(error) : 500,
-      error?.message || (action === 'download' ? '原图下载失败' : '处理生成记录失败'),
+      action === 'download' ? resolveMediaDownloadStatus(error) : 500,
+      error?.message || (action === 'download' ? '原始媒体下载失败' : '处理生成记录失败'),
     )
   }
 }

@@ -67,6 +67,11 @@ interface ListAssetItemsOptions {
 
 const ASSET_ITEMS_API_PATH = '/api/asset-items'
 
+// 按资源 ID 构建受保护的原始文件下载地址；文件名与 MIME 由服务端附件响应决定。
+export const buildAssetDownloadUrl = (assetId: string) => {
+  return buildApiUrl(`${ASSET_ITEMS_API_PATH}/${encodeURIComponent(assetId)}/download`)
+}
+
 // 统一兼容旧数组结构和新分页结构。
 const normalizeAssetListResult = (payload: PersistedAssetItem[] | AssetListResult | null | undefined): AssetListResult => {
   if (Array.isArray(payload)) {

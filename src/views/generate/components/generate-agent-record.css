@@ -758,6 +758,45 @@
     overflow: hidden
 }
 
+.container-bG3PQ9.image-GnB1sY {
+    position: relative
+}
+
+.agent-image-download-button {
+    align-items: center;
+    background: rgba(15, 18, 25, .82);
+    border: 1px solid rgba(255, 255, 255, .2);
+    border-radius: 8px;
+    bottom: 10px;
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    min-height: 34px;
+    opacity: 0;
+    padding: 0 11px;
+    position: absolute;
+    right: 10px;
+    transition: opacity .18s ease, background-color .18s ease;
+    z-index: 2
+}
+
+.container-bG3PQ9.image-GnB1sY:hover .agent-image-download-button,
+.agent-image-download-button:focus-visible {
+    opacity: 1
+}
+
+.agent-image-download-button:hover {
+    background: rgba(15, 18, 25, .96)
+}
+
+@media (hover: none) {
+    .agent-image-download-button {
+        opacity: 1
+    }
+}
+
 .placeholder-card-inner {
     aspect-ratio: 1;
     background: linear-gradient(180deg, rgba(255, 255, 255, .03), rgba(255, 255, 255, .01));

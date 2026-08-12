@@ -88,16 +88,27 @@ export interface GenerationRecordUpsertPayload {
 
 const GENERATION_RECORDS_API_PATH = '/api/generation-records'
 
-// 生成受保护的原图下载地址。浏览器直接导航到该附件响应，后端会边读边传，
-// 避免先 fetch + response.blob() 把整张 2K/4K 图片缓冲完才弹出保存。
+// 生成受保护的原始媒体下载地址。浏览器直接导航到附件响应，后端会边读边传，
+// 避免先 fetch + response.blob() 把 2K/4K 图片或视频完整缓冲进页面内存。
+export const buildGenerationMediaDownloadUrl = (
+  recordId: string,
+  mediaKind: 'image' | 'video',
+  mediaIndex: number,
+): string => {
+  const query = new URLSearchParams({
+    type: mediaKind,
+    index: String(mediaIndex),
+  })
+  return buildApiUrl(
+    `${GENERATION_RECORDS_API_PATH}/${encodeURIComponent(recordId)}/download?${query.toString()}`,
+  )
+}
+
+// 保留图片专用构造器，兼容现有图片卡片与大图预览调用。
 export const buildGenerationImageDownloadUrl = (
   recordId: string,
   imageIndex: number,
-): string => {
-  return buildApiUrl(
-    `${GENERATION_RECORDS_API_PATH}/${encodeURIComponent(recordId)}/download?index=${imageIndex}`,
-  )
-}
+): string => buildGenerationMediaDownloadUrl(recordId, 'image', imageIndex)
 
 // 获取已持久化的生成记录
 export const listGenerationRecords = async () => {
